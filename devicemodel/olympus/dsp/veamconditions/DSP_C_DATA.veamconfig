@@ -1,0 +1,9 @@
+# File generated on Thu Nov 07 21:39:14 PST 2013
+# Number of configurations for DSP_C_DATA: 2
+# Backup Veam attributes: CREG 1
+set backupVeamAttributes [::report_timing_arcs::getVeamAttributes {DSP48E2_inst/DSP_C_DATA_INST}]
+puts -nonewline { [1/2]}; report_timing_arcs -timer -dotlib -of [get_cells DSP48E2_inst/DSP_C_DATA_INST] -veamattr {CREG 1} -veamlog DSP_C_DATA.CREG_1.veam -file DSP_C_DATA.CREG_1.arcs
+puts -nonewline { [2/2]}; report_timing_arcs -timer -dotlib -of [get_cells DSP48E2_inst/DSP_C_DATA_INST] -veamattr {CREG 0} -veamlog DSP_C_DATA.CREG_0.veam -file DSP_C_DATA.CREG_0.arcs
+# Restore Veam attributes
+::report_timing_arcs::setVeamAttributes {DSP48E2_inst/DSP_C_DATA_INST} $backupVeamAttributes
+# ::report_timing_arcs::setVeamAttributes {DSP48E2_inst/DSP_C_DATA_INST} [list CREG 1]

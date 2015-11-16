@@ -1,0 +1,327 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+lappend auto_path /wrk/hdstaff/dpefour/support/Olympus/assets/sqlite3.8.0.2
+package require sqlite3
+
+# Execute the SQL command. When failed, retry until the database is unlocked
+proc wait_db_ready { &SQL {cmd {pragma integrity_check} } } {
+  upvar &SQL SQL
+  # Wait for the database to be unlocked
+  while {[catch { SQL eval $cmd } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      puts "SQL database locked ..."
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      puts "SQL database read-only ..."
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+  return 0
+}
+
+proc list2csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+foreach atom [list \
+    DSP_M_DATA        \
+    DSP_C_DATA        \
+    DSP_PREADD_DATA   \
+    DSP_MULTIPLIER    \
+    DSP_A_B_DATA      \
+    DSP_OUTPUT        \
+    DSP_ALU           \
+  ] {
+
+  if {![file exists kintex8_${atom}.db]} {
+    puts " Processing $atom ... missing kintex8_${atom}.db"
+    continue
+  }
+
+  puts " Processing $atom ([file normalize kintex8_${atom}.db])"
+
+  sqlite3 SQL {:memory:} -create true
+  # Copy the tables
+#   SQL eval " ATTACH DATABASE 'kintex8_${atom}.db' AS original "
+  wait_db_ready SQL " ATTACH DATABASE 'kintex8_${atom}.db' AS original "
+  SQL eval { CREATE TABLE param AS SELECT * FROM original.param }
+  SQL eval { CREATE TABLE cell AS SELECT * FROM original.cell }
+  SQL eval { CREATE TABLE pin AS SELECT * FROM original.pin }
+  SQL eval { CREATE TABLE timing AS SELECT * FROM original.timing }
+  SQL eval { CREATE TABLE arc AS SELECT * FROM original.arc }
+  SQL eval { CREATE TABLE timer_arc AS SELECT * FROM original.timer_arc }
+  SQL eval { CREATE TABLE veam_arc AS SELECT * FROM original.veam_arc }
+  SQL eval { CREATE TABLE veam_config AS SELECT * FROM original.veam_config }
+  SQL eval { CREATE TABLE fpga_condition AS SELECT * FROM original.fpga_condition }
+  SQL eval { DETACH DATABASE original }
+
+  if {1} {
+    ########################################################################################
+    ##
+    ## Search for pins reported by the timer that have both combinational and CLK->Q arcs
+    ## enabled at the same time
+    ##
+    ########################################################################################
+
+    set cellid [SQL eval { SELECT id FROM cell WHERE name=$atom; }]
+    set veam_config_ids [SQL eval { SELECT id FROM veam_config WHERE cellid=$cellid; }]
+
+    set FH [open ${atom}.comb_edge.csv {w}]
+    puts $FH "# List pins reported by the timer that have both combinational and CLK->Q arcs enabled at the same time"
+    puts $FH [list2csv [list {cell} {from} {to} {timing type} {timing sense} {veam configuration} {veam attributes} ] ,]
+
+    foreach veam_config_id $veam_config_ids {
+      set ids [SQL eval { SELECT id FROM timer_arc WHERE veam_config_id=$veam_config_id; }]
+      if {[llength $ids] == 0} {
+        continue
+      }
+      set veam_config [SQL eval { SELECT name FROM veam_config WHERE id=$veam_config_id; } ]
+      set veam_attribute [SQL eval { SELECT attribute FROM veam_config WHERE id=$veam_config_id; } ]
+      puts " -I- veam config $veam_config (id=$veam_config_id)"
+      puts " -I- veam attributes:  $veam_attribute"
+      puts " -I- [llength $ids] arc(s) found"
+
+      set pinids [SQL eval {
+        SELECT pinid FROM timer_arc WHERE veam_config_id=$veam_config_id AND (timing_type LIKE '%combinational%')
+        INTERSECT
+        SELECT pinid FROM timer_arc WHERE veam_config_id=$veam_config_id AND (timing_type LIKE '%edge%')
+        ;
+      }]
+
+      if {$pinids != {}} {
+        foreach pinid $pinids {
+          set pinname [SQL eval { SELECT name FROM pin WHERE id=$pinid }]
+          puts " -W- pin $pinname has following arcs enabled at the same time"
+          SQL eval { SELECT * FROM timer_arc WHERE pinid=$pinid AND veam_config_id=$veam_config_id AND ( (timing_type LIKE '%combinational%') OR (timing_type LIKE '%edge%') ) } values {
+            set relatedpinname [SQL eval " SELECT name FROM pin WHERE id=$values(relatedpinid)" ]
+  #           puts "         $values(relatedpinid) -> $values(pinid) ($values(timing_type), $values(timing_sense)) ($veam_config)"
+            puts "         $relatedpinname -> $pinname ($values(timing_type), $values(timing_sense)) ($veam_config)"
+            puts $FH [regsub -all {(\{|\})} [list2csv [list $atom $relatedpinname $pinname $values(timing_type) $values(timing_sense) $veam_config $veam_attribute] ,] {} ]
+          }
+        }
+      }
+
+    }
+    close $FH
+  }
+
+  if {1} {
+    ########################################################################################
+    ##
+    ## Search for pins that have a setup/hold and recovery/removal timing arcs at the
+    ## same time
+    ##
+    ########################################################################################
+
+    set cellid [SQL eval { SELECT id FROM cell WHERE name=$atom; }]
+    set veam_config_ids [SQL eval { SELECT id FROM veam_config WHERE cellid=$cellid; }]
+
+    set FH [open ${atom}.sh_rr.csv {w}]
+    puts $FH "# List pins reported by the timer that have a setup/hold and recovery/removal timing arcs at the same time"
+    puts $FH [list2csv [list {cell} {from} {to} {timing type} {timing sense} {veam configuration} {veam attributes} ] ,]
+
+    foreach veam_config_id $veam_config_ids {
+      set ids [SQL eval { SELECT id FROM timer_arc WHERE veam_config_id=$veam_config_id; }]
+      if {[llength $ids] == 0} {
+        continue
+      }
+      set veam_config [SQL eval { SELECT name FROM veam_config WHERE id=$veam_config_id; } ]
+      set veam_attribute [SQL eval { SELECT attribute FROM veam_config WHERE id=$veam_config_id; } ]
+      puts " -I- veam config $veam_config (id=$veam_config_id)"
+      puts " -I- veam attributes:  $veam_attribute"
+      puts " -I- [llength $ids] arc(s) found"
+
+      set pinids [SQL eval {
+        SELECT pinid FROM timer_arc WHERE veam_config_id=$veam_config_id AND (timing_type LIKE '%setup%') OR (timing_type LIKE '%hold%')
+        INTERSECT
+        SELECT pinid FROM timer_arc WHERE veam_config_id=$veam_config_id AND (timing_type LIKE '%recovery%') OR (timing_type LIKE '%removal%')
+        ;
+      }]
+
+      if {$pinids != {}} {
+        foreach pinid $pinids {
+          set pinname [SQL eval { SELECT name FROM pin WHERE id=$pinid }]
+          puts " -W- pin $pinname has following arcs enabled at the same time"
+          SQL eval { SELECT *
+                     FROM timer_arc
+                     WHERE pinid=$pinid AND veam_config_id=$veam_config_id
+                     AND (
+                         (timing_type LIKE '%setup%')
+                         OR (timing_type LIKE '%hold%')
+                         OR (timing_type LIKE '%recovery%')
+                         OR (timing_type LIKE '%removal%')
+                         ) } values {
+            set relatedpinname [SQL eval " SELECT name FROM pin WHERE id=$values(relatedpinid)" ]
+  #           puts "         $values(relatedpinid) -> $values(pinid) ($values(timing_type), $values(timing_sense)) ($veam_config)"
+            puts "         $relatedpinname -> $pinname ($values(timing_type), $values(timing_sense)) ($veam_config)"
+            puts $FH [regsub -all {(\{|\})} [list2csv [list $atom $relatedpinname $pinname $values(timing_type) $values(timing_sense) $veam_config $veam_attribute] ,] {} ]
+          }
+        }
+      }
+
+    }
+    close $FH
+  }
+
+  if {1} {
+    ########################################################################################
+    ##
+    ## Search for zero delay values
+    ##
+    ########################################################################################
+
+    set cellid [SQL eval { SELECT id FROM cell WHERE name=$atom; }]
+    set veam_config_ids [SQL eval { SELECT id FROM veam_config WHERE cellid=$cellid; }]
+
+    set FH [open ${atom}.0delay.csv {w}]
+    puts $FH "# List timing arcs with a zero delay value"
+    puts $FH [list2csv [list {cell} {from} {to} {timing type} {timing sense} {delay_max_rise} {delay_max_fall} {delay_min_rise} {delay_min_fall} {veam configuration} {veam attributes} ] ,]
+
+    foreach veam_config_id $veam_config_ids {
+      set ids [SQL eval { SELECT id FROM timer_arc WHERE veam_config_id=$veam_config_id; }]
+      if {[llength $ids] == 0} {
+        continue
+      }
+      set veam_config [SQL eval { SELECT name FROM veam_config WHERE id=$veam_config_id; } ]
+      set veam_attribute [SQL eval { SELECT attribute FROM veam_config WHERE id=$veam_config_id; } ]
+      puts " -I- veam config $veam_config (id=$veam_config_id)"
+      puts " -I- veam attributes:  $veam_attribute"
+      puts " -I- [llength $ids] arc(s) found"
+
+      set arcids [SQL eval {
+        SELECT id FROM timer_arc WHERE veam_config_id=$veam_config_id AND (delay_max_rise=0.0 OR delay_max_fall=0.0 OR delay_min_rise=0.0 OR delay_min_fall=0.0)
+        ;
+      }]
+
+      if {$arcids != {}} {
+        foreach arcid $arcids {
+          SQL eval " SELECT
+                         (SELECT name FROM pin WHERE pin.id=timer_arc.pinid) AS pinname,
+                         (SELECT name FROM pin WHERE pin.id=timer_arc.relatedpinid) AS relatedpinname,
+                         timing_type,
+                         timing_sense,
+                         delay_max_rise,
+                         delay_max_fall,
+                         delay_min_rise,
+                         delay_min_fall
+                     FROM timer_arc
+                     WHERE id=$arcid
+                   " values {
+            puts " -W- $values(relatedpinname) -> $values(pinname) ($values(timing_type), $values(timing_sense)) $values(delay_max_rise) $values(delay_max_fall) $values(delay_min_rise) $values(delay_min_fall) ($veam_config)"
+            puts $FH [regsub -all {(\{|\})} [list2csv [list $atom $values(relatedpinname) $values(pinname) $values(timing_type) $values(timing_sense) $values(delay_max_rise) $values(delay_max_fall) $values(delay_min_rise) $values(delay_min_fall) $veam_config $veam_attribute] ,] {} ]
+          }
+        }
+      }
+
+    }
+    close $FH
+  }
+
+  if {1} {
+    ########################################################################################
+    ##
+    ## Search for delay differences between bits of same bus to be less than 50ps
+    ##
+    ########################################################################################
+    set cellid [SQL eval { SELECT id FROM cell WHERE name=$atom; }]
+    set veam_config_ids [SQL eval { SELECT id FROM veam_config WHERE cellid=$cellid; }]
+    set buses [SQL eval " SELECT DISTINCT bus FROM pin WHERE cellid = $cellid AND bus NOT NULL; "]
+    puts " -I- List of buses: $buses"
+
+    set FH [open ${atom}.bitbusdelay.csv {w}]
+    puts $FH "# List timing arcs that show a max difference between all bits of the same bus of 50ps and more"
+    puts $FH [list2csv [list {cell} {delay type} {bus name} {timing type} {timing sense} {Above Threshold} {delay_max_rise} {delay_max_fall} {delay_min_rise} {delay_min_fall} {veam configuration} {veam attributes} ] ,]
+
+    foreach veam_config_id $veam_config_ids {
+      set ids [SQL eval { SELECT id FROM timer_arc WHERE veam_config_id=$veam_config_id; }]
+      if {[llength $ids] == 0} {
+        continue
+      }
+      set veam_config [SQL eval { SELECT name FROM veam_config WHERE id=$veam_config_id; } ]
+      set veam_attribute [SQL eval { SELECT attribute FROM veam_config WHERE id=$veam_config_id; } ]
+      puts " -I- veam config $veam_config (id=$veam_config_id)"
+      puts " -I- veam attributes:  $veam_attribute"
+      puts " -I- [llength $ids] arc(s) found"
+      
+      # Check the buses one by one
+      foreach bus $buses {
+        puts " -I- Processing bus: $bus"
+        set pinofbusesids [SQL eval " SELECT DISTINCT id FROM pin WHERE cellid = $cellid AND bus = '$bus'; "]
+        set arcids [SQL eval "
+          SELECT
+            id
+          FROM
+            timer_arc
+          WHERE
+            veam_config_id=$veam_config_id
+            AND (pinid IN ('[join $pinofbusesids ',']'))
+          ;
+        "]
+  
+        if {$arcids != {}} {
+          SQL eval " SELECT
+                         (SELECT bus FROM pin WHERE pin.id=timer_arc.pinid) AS busname,
+                         timing_type,
+                         timing_sense,
+                         max(delay_max_rise) AS MAX_delay_max_rise,
+                         max(delay_max_fall) AS MAX_delay_max_fall,
+                         max(delay_min_rise) AS MAX_delay_min_rise,
+                         max(delay_min_fall) AS MAX_delay_min_fall,
+                         min(delay_max_rise) AS MIN_delay_max_rise,
+                         min(delay_max_fall) AS MIN_delay_max_fall,
+                         min(delay_min_rise) AS MIN_delay_min_rise,
+                         min(delay_min_fall) AS MIN_delay_min_fall
+                     FROM timer_arc
+                     WHERE id IN ('[join $arcids ',']')
+                     GROUP BY busname, timing_type, timing_sense
+                     ;
+                   " values {
+            set threshold 0
+            if {([expr double($values(MAX_delay_max_rise)) - double($values(MIN_delay_max_rise))] > 0.050)
+                 || ([expr double($values(MAX_delay_max_fall)) - double($values(MIN_delay_max_fall))] > 0.050)
+                 || ([expr double($values(MAX_delay_min_rise)) - double($values(MIN_delay_min_rise))] > 0.050)
+                || ([expr double($values(MAX_delay_min_fall)) - double($values(MIN_delay_min_fall))] > 0.050)} {
+              puts " -W- Bus $values(busname) ($values(timing_type), $values(timing_sense))"
+              puts "       MAX:  $values(MAX_delay_max_rise) $values(MAX_delay_max_fall) $values(MAX_delay_min_rise) $values(MAX_delay_min_fall) ($veam_config)"
+              puts "       MIN:  $values(MIN_delay_max_rise) $values(MIN_delay_max_fall) $values(MIN_delay_min_rise) $values(MIN_delay_min_fall) ($veam_config)"
+              set threshold 1
+            } else {
+              puts " -I- Bus $values(busname) ($values(timing_type), $values(timing_sense))"
+              puts "       MAX:  $values(MAX_delay_max_rise) $values(MAX_delay_max_fall) $values(MAX_delay_min_rise) $values(MAX_delay_min_fall) ($veam_config)"
+              puts "       MIN:  $values(MIN_delay_max_rise) $values(MIN_delay_max_fall) $values(MIN_delay_min_rise) $values(MIN_delay_min_fall) ($veam_config)"
+            }
+            puts $FH [regsub -all {(\{|\})} [list2csv [list $atom {MAX} $values(busname) $values(timing_type) $values(timing_sense) $threshold $values(MAX_delay_max_rise) $values(MAX_delay_max_fall) $values(MAX_delay_min_rise) $values(MAX_delay_min_fall) $veam_config $veam_attribute] ,] {} ]
+            puts $FH [regsub -all {(\{|\})} [list2csv [list $atom {MIN} $values(busname) $values(timing_type) $values(timing_sense) $threshold $values(MIN_delay_max_rise) $values(MIN_delay_max_fall) $values(MIN_delay_min_rise) $values(MIN_delay_min_fall) $veam_config $veam_attribute] ,] {} ]
+            puts $FH [regsub -all {(\{|\})} [list2csv [list $atom {DIFF} $values(busname) $values(timing_type) $values(timing_sense) $threshold [expr $values(MAX_delay_max_rise) - $values(MIN_delay_max_rise)] [expr $values(MAX_delay_max_fall) - $values(MIN_delay_max_fall)] [expr $values(MAX_delay_min_rise) - $values(MIN_delay_min_rise)] [expr $values(MAX_delay_min_fall) - $values(MIN_delay_min_fall)] $veam_config $veam_attribute] ,] {} ]
+          }
+      }
+
+      }
+
+    }
+    close $FH
+  }
+
+  # Closing the SQLite3 database
+  SQL close
+
+}
+
+exit 0

@@ -1,0 +1,48 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+if {![file exists ./lsf.pid]} {
+  puts " -I- file ./lsf.pid does not exists"
+  exit 0
+}
+
+set FH [open ./lsf.pid {r}]
+set content [read $FH]
+close $FH
+
+foreach line [split $content \n] {
+  # E.g:
+  #    7783480 dpefour RUN   long       xsjdpefour40 xsjl24559   vivado -mode batch -source /wrk/SSI_HighUtilSLRs/run.tcl -log /wrk/SSI_HighUtilSLRs/run.log -jou /wrk/SSI_HighUtilSLRs/run.jou Oct 16 13:57
+  set dir {<UNKNOWN>}
+  regexp {/([^/]+)/run.tcl} $line -- dir
+  if {[regexp {^([0-9]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+} $line -- jobid]} {
+    if {[catch { exec bjobs $jobid } errorstring]} {
+      # Job <6149992> is not found
+      puts " LSF job $jobid is not running ($dir)"
+    } else {
+      # errorstring is formated as below (2 lines):
+      #   JOBID   USER    STAT  QUEUE      FROM_HOST   EXEC_HOST   JOB_NAME   SUBMIT_TIME
+      #   6236161 dpefour RUN   long       xsjdpefour4 teapot5     *m/run.jou Apr  9 11:21
+      # Only the 2nd line is of interest
+      set line [lindex [split $errorstring \n] 1]
+      if {[regexp -nocase {\s(DONE|EXIT)\s} $line]} {
+        # 6149986 dpefour EXIT  long       xsjdpefour4 xsjl24046   *h/run.jou Apr  8 17:23
+        # 6149986 dpefour DONE  long       xsjdpefour4 xsjl24046   *h/run.jou Apr  8 17:23
+        puts " LSF job $jobid is not running ($dir)"
+      } elseif {[regexp -nocase {\sRUN\s} $line]} {
+        # 5609838 dpefour RUN   long       xsjdpefour4 xsjl24537   xterm      Apr  6 14:26
+        puts " LSF job $jobid is running ($dir)"
+      } elseif {[regexp -nocase {\sPEND\s} $line]} {
+        # 5609838 dpefour PEND   long       xsjdpefour4 xsjl24537   xterm      Apr  6 14:26
+        puts " LSF job $jobid is pending ($dir)"
+      } else {
+        set status "<UNKNOWN>"
+        regexp {^\s*[0-9]+\s+[^\s]+\s+([^\s]+)\s+} $line - status
+        puts " LSF job $jobid status is unknown ($dir) ($status)"
+      }
+    }
+  }
+}
+
+exit 0

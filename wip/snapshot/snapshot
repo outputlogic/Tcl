@@ -1,0 +1,78 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2015.04.07
+## Tool Version:   Vivado 2014.1
+## Description:    This script import all the file related to the snapshot utility
+##
+########################################################################################
+
+########################################################################################
+## 2015.04.07 - Minor fix
+## 2014.06.23 - Initial release
+########################################################################################
+
+# Proc to reload current script
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+
+# package require snapshot
+
+# set DEBUG 1
+
+# source [file join [file dirname [info script]] snapshot_core.tcl]
+# source [file join [file dirname [info script]] snapshot_helpers.tcl]
+# source [file join [file dirname [info script]] snapshot_db2csv.tcl]
+# source [file join [file dirname [info script]] snapshot_db2dir.tcl]
+# source [file join [file dirname [info script]] snapshot_ext.tcl]
+# source [file join [file dirname [info script]] extract.tcl]
+
+# Find the directory where the current script is (i.e trace back links)
+set sfile [info script]
+while {[file type $sfile] eq "link"} {
+    set sfile [file readlink $sfile]
+}
+set dir [file dirname $sfile]
+
+# Source snapshot related files from the same directory as the current script
+source [file join $dir snapshot_core.tcl]
+source [file join $dir snapshot_helpers.tcl]
+source [file join $dir snapshot_db2csv.tcl]
+source [file join $dir snapshot_db2dir.tcl]
+source [file join $dir snapshot_ext.tcl]
+source [file join $dir extract.tcl]
+
+if {[file tail [info script]]==[file tail $argv0]} {
+  # This file is executed from tclsh
+  if {$argv != {}} {
+    # The script can be executed to run any of the sub-methods
+    if {[catch {set res [eval [concat ::tb::snapshot $argv]]} errorstring]} {
+      puts $errorstring
+    } else {
+      catch { puts $res }
+    }
+  } else {
+    ::tb::snapshot -help
+  }
+} else {
+  # This file is sourced
+  # The step name can be coded inside the filename: snapshot.<step>.tcl
+#   if {[regexp {^snapshot\.(.+)\.tcl$} [file tail [info script]] - ___step___]} {}
+  if {[regexp {^snapshot\.(.+)$} [file tail [info script]] - ___step___]} {
+    ::tb::snapshot::method:configure -step $___step___
+  }
+  catch {unset ___step___}
+}

@@ -1,0 +1,149 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+# source snapshot.tcl
+# source snapshot_ext.tcl
+# tb::open_snapshot_db -db metrics.db
+# tb::get_projects
+# set l [tb::get_snapshot_ids -project project1]
+# tb::get_experiments
+# tb::get_experiments  [tb::get_snapshot_ids -project project1]
+# tb::get_experiments -glob {%lm100%}
+# tb::close_snapshot_db
+# 
+# 
+# tb::get_metric_values -ids [tb::get_metric_ids -glob report.timing_summary.tns]
+
+# foreach experiment [lsort [tb::get_experiments]] {
+#   foreach id [tb::get_snapshot_ids -expriment $experiment] {
+# #     puts "$experiment / [tb::get_steps -id $id] => [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob report.timing_summary.tns]]"
+#     set wns [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.wns}]]
+#     set tns [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.tns}]]
+#     set tnsFailing [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.tns.failing}]]
+#     set whs [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.whs}]]
+#     set ths [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.ths}]]
+#     set thsFailing [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.ths.failing}]]
+# #     puts "($id) $experiment / [tb::get_steps -id $id] => [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob %tns%]]"
+#     puts "($id) $experiment / [tb::get_steps -id $id] => WNS:$wns TNS:$tns #:$tnsFailing / WHS:$whs THS:$ths #:$thsFailing"
+#   }
+# }
+
+# source snapshot
+# tb::open_snapshot_db -db metrics.db
+
+# package require prettyTable
+package require toolbox
+
+set filename {}
+set help 0
+set error 0
+if {[llength $::argv] == 0} {
+  set help 1
+}
+while {[llength $::argv]} {
+  set name [tb::lshift ::argv]
+  switch -exact -- $name {
+    -db -
+    -db {
+         set filename [lshift ::argv]
+    }
+    default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option."
+            incr error
+          } else {
+            set filename [lshift ::argv]
+          }
+    }
+  }
+}
+
+if {$help} {
+  puts [format {
+Usage: extract_sum
+            [-db <filename>]
+            [-help|-h]
+
+Description: Extract summary metrics from snapshot database
+
+Example:
+   extract_sum -db metrics
+} ]
+  # HELP -->
+
+  puts ""
+  exit 0
+}
+
+if {$filename == {}} {
+  puts " -E- no snapshot db provided (-db)"
+  incr error
+}
+
+if {$error} {
+  puts " -E- some error(s) happened. Cannot continue.\n"
+  exit 1
+}
+
+tb::open_snapshot_db -db $filename
+
+proc get_timing_info {experiment step} {
+  set id [tb::get_snapshot_ids -experiment %$experiment% -step %$step%]
+# puts "<id:$id>"
+  if {$id == {}} { return [list {} {} {} {} {} {}] }
+  set wns [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.wns}]]
+  set tns [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.tns}]]
+  set tnsFailing [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.tns.failing}]]
+  set whs [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.whs}]]
+  set ths [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.ths}]]
+  set thsFailing [tb::get_metric_values -ids [tb::get_metric_ids -ids $id -glob {report.timing_summary.ths.failing}]]
+  return [list $wns $tns $tnsFailing $whs $ths $thsFailing]
+}
+
+# foreach experiment [lsort [tb::get_experiments]] {
+#   puts "$experiment / place_design:[get_timing_info $experiment place_design]"
+#   puts "$experiment / route_design:[get_timing_info $experiment route_design]"
+#   
+# }
+
+set tbl [tb::prettyTable]
+$tbl header [list Experiment Directive Step WNS TNS # Step WNS TNS # WHS THS # Step WNS TNS # WHS THS #]
+
+foreach experiment [lsort [tb::get_experiments]] {
+  set placeTim [list]
+  set physOptTim [list]
+  set routeTim [list]
+  foreach step [tb::get_steps -ids [tb::get_snapshot_ids -experiment]] {
+    switch -regexp -- $step {
+      {^.*place_design.*$} {
+        set placeTim [get_timing_info $experiment $step]
+      }
+      {^.*phys_opt_design.*$} {
+        set physOptTim [get_timing_info $experiment $step]
+      }
+      {^.*route_design.*$} {
+        set routeTim [get_timing_info $experiment $step]
+      }
+      default {
+      }
+    }
+  }
+  set exp {}
+  set directive {}
+  regexp {^(.*)(Default|Explore|ExtraNetDelay_high|ExtraNetDelay_low|ExtraNetDelay_medium|ExtraPostPlacementOpt|LateBlockPlacement|SSI_HighUtilSLRs|SpreadLogic_high|SpreadLogic_low|SpreadLogic_medium|WLDrivenBlockPlacement)$} $experiment -- exp directive
+  # Remove last dot(s) from the experiment name $exp
+  regsub -all {(\.*)$} $exp {} exp
+  $tbl addrow [concat $exp $directive place_design [lrange $placeTim 0 2] phys_opt_design $physOptTim route_design $routeTim] 
+  puts "$experiment / place_design:$placeTim"
+  puts "$experiment / phys_opt_design:$physOptTim"
+  puts "$experiment / route_design:$routeTim"
+  
+}
+
+puts [$tbl print]
+
+catch {$tbl destroy}
+
+# tb::close_snapshot_db
+

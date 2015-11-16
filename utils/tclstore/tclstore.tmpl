@@ -1,0 +1,115 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    Utility to interact with the Xilinx Tcl Store repository
+##
+########################################################################################
+
+########################################################################################
+## 2015.04.16 - Added support for new HTTP redirection when requesting a patch (Git)
+## 2015.03.05 - Enforced -app for 'package_app'
+## 2015.01.30 - Do not append to log file when requesting help with -h/-help
+## 2015.01.08 - Replaced curly brackets by double-quotes in examples
+## 2014.12.10 - Removed some checks when only the release XML is generated
+## 2014.12.04 - Added support for log file
+## 2014.12.02 - Added -vivado as alias to -vivadobin to specify the path to Vivado
+##              Updated Help accordingly
+## 2014.11.27 - Added support for Windows
+## 2014.11.24 - Added support for -shallow/-clone_all_branches/-no_release_xml/-only_release_xml 
+##              for 'package_app'
+##            - Added 'update_repo' for gatekeeper
+##            - Added support for proxy/no proxy
+##            - Many improvements
+## 2014.11.11 - Initial release
+########################################################################################
+
+# vivado -exec xilcurl
+# /proj/xbuilds/HEAD_INT_daily_latest/installs/nt64/Vivado/HEAD/tps/win64/git-1.8.3/bin/git.exe
+# /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/tps/lnx64/git-1.8.3/bin/git
+
+# if {[file tail [info script]]!=[file tail $argv0]} {
+#   # This file is sourced
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+# }
+
+namespace eval ::tclapp {}
+
+namespace eval ::tclapp::tclstore {
+  namespace export clone_repo
+  namespace export package_app
+
+  variable SCRIPT_VERSION {04-16-2015}
+  variable verbose 0
+  variable debug 0
+
+  catch {unset params}
+  array set params [list repository {} app {} catalog {} proxy.http {http://proxy:80} proxy.https {https://proxy:80}]
+  array set params [list gitbin {/tools/batonroot/rodin/devkits/lnx64/git-1.8.3/bin/git} gituser {} gitbranch {} gitversion {}]
+  array set params [list curlbin {curl} vivadobin {vivado} vivadoversion {}]
+  array set params [list initialized 0 flow {contributor}]
+  array set params [list log.fh {} log.filename {tclstore.log} log.mode {a} ]
+}
+
+# Create alias: 'tclstore' -> '::tclapp::tclstore::tclstore'
+interp alias {} tclstore {} ::tclapp::tclstore::tclstore
+
+#<include:tclstore.core.tcl>
+
+#<include:tclstore.clone_repo.tcl>
+
+#<include:tclstore.package_app.tcl>
+
+##-----------------------------------------------------------------------
+## Create aliases for methods
+##-----------------------------------------------------------------------
+
+foreach procname [info proc ::tclapp::tclstore::method:*] {
+  regsub {::tclapp::tclstore::method:} $procname {} procname
+  if {$procname == {?}} { continue }
+#   puts "<procname:$procname>"
+  eval [list interp alias {} $procname {} ::tclapp::tclstore::method:${procname} ]
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::tclapp::tclstore::verbose 0
+set ::tclapp::tclstore::debug 0
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tclapp::tclstore::tclstore
+} else {
+  set exitCode 0
+  if {[catch {eval [concat ::tclapp::tclstore::tclstore $argv]} errorstring]} {
+    puts $errorstring
+    set exitCode 1
+  }
+  # Close log file
+  if {$::tclapp::tclstore::params(log.fh) != {}} {
+    ::tclapp::tclstore::print log {}
+    ::tclapp::tclstore::print info "Stop logging messages to '$::tclapp::tclstore::params(log.filename)' on [exec date].\n"
+    close $::tclapp::tclstore::params(log.fh)
+    set ::tclapp::tclstore::params(log.fh) {}
+  }
+  # Exit
+  exit $exitCode
+}

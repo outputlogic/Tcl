@@ -1,0 +1,456 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+# Compare 2 SQLite3 databases
+
+set SCRIPT_VERSION {11-21-2013}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+lappend auto_path /wrk/hdstaff/dpefour/support/Olympus/assets/sqlite3.8.0.2
+package require sqlite3
+
+
+array set cellNameRemap {}
+set pinNameRemap [list]
+array set headerRemap {}
+set COEGroups [list]
+
+# Load external cell/pin/csv header name mapping if file exists
+if {[file exists [file join [file dirname [info script]] mapping.ftcl]]} {
+  puts " Mapping file found: [file normalize [file join [file dirname [info script]] mapping.ftcl]]"
+  source [file join [file dirname [info script]] mapping.ftcl]
+}
+
+# Execute the SQL command. When failed, retry until the database is unlocked
+proc wait_db_ready { &SQL {cmd {pragma integrity_check} } } {
+  upvar &SQL SQL
+  # Wait for the database to be unlocked
+  while {[catch { SQL eval $cmd } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      puts "SQL database locked ..."
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      puts "SQL database read-only ..."
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+  return 0
+}
+
+proc progressBar {cur tot} {
+  # http://wiki.tcl.tk/16939
+  # if you don't want to redraw all the time, uncomment and change ferquency
+  #if {$cur % ($tot/300)} { return }
+  # set to total width of progress bar
+  set total 76
+  set half [expr {$total/2}]
+  set percent [expr {100.*$cur/$tot}]
+  set val (\ [format "%6.2f%%" $percent]\ )
+  set str "\r|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
+  set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
+  puts -nonewline stderr $str
+}
+
+proc intersect args {
+  set res {}
+    foreach element [lindex $args 0] {
+      set found 1
+      foreach list [lrange $args 1 end] {
+        if {[lsearch -exact $list $element] < 0} {
+          set found 0; break
+        }
+      }
+      if {$found} {lappend res $element}
+   }
+   set res
+}
+
+# SQLite3 databases to compare
+set database1 {kintex7.db}
+set database2 {kintex8.db}
+
+set reportfilename {}
+set filemode {w}
+set format {table}
+
+# Split Summary CSV by COE group
+set splitCSVByCOEGrp 0
+
+set error 0
+set show_help 0
+set VERBOSE 0
+set DEBUG 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -db1 -
+    --db1 {
+      set database1 [::tb::lshift argv]
+    }
+    -db2 -
+    --db2 {
+      set database2 [::tb::lshift argv]
+    }
+    -file {
+      set reportfilename [::tb::lshift argv]
+    }
+    -a -
+    -append {
+      set filemode {a}
+    }
+    -table {
+      set format {table}
+    }
+    -csv {
+      set format {csv}
+    }
+    -split_by_coe -
+    --split_by_coe {
+      set splitCSVByCOEGrp 1
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: dbCmp
+                [-db1 <sqlite3 database>]
+                [-db2 <sqlite3 database>]
+                [-file <filename>]
+                [-a|-append]
+                [-table|-csv]
+                [-split_by_coe]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to compare 2 SQLite3 database
+
+      The -table|-csv select the output format. The default is -table that
+      generates a tabular format. The -csv generates a CSV format.
+
+      The -split_by_coe option only works if -csv and -file have been specified.
+
+    Version: %s
+
+    Example:
+       dbCmp -db1 ./kintex7.db -db2 ./kintex8.db
+       dbCmp -db1 ./kintex7.db -db2 ./kintex8.db -csv -file k7k8diff.csv -split_by_coe
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+# Check SQLite3 databasea
+if {![file exists $database1]} {
+  puts " File '$database1' does not exist"
+  incr error
+}
+if {![file exists $database2]} {
+  puts " File '$database2' does not exist"
+  incr error
+}
+
+if {$splitCSVByCOEGrp && ($reportfilename == {})} {
+  puts " -split_by_coe is only valid if -file has been specified"
+  incr error
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+set arcsSummary [::tb::prettyTable "Timing Arcs Summary"]
+# $arcsSummary header [list {cellname} {From Pin} {To Pin} {7-Serie} {UltraScale} {Note}]
+$arcsSummary header [list {cellname} {From Pin} {To Pin} {7-Serie} {UltraScale}]
+
+sqlite3 SQL {:memory:} -create true
+# sqlite3 SQL {foo.db} -create true
+
+# Copy the tables
+# SQL eval " ATTACH DATABASE '$database1' AS K7 "
+wait_db_ready SQL " ATTACH DATABASE '$database1' AS DB1 "
+# SQL eval " ATTACH DATABASE '$database2' AS K8 "
+wait_db_ready SQL " ATTACH DATABASE '$database2' AS DB2 "
+SQL eval { CREATE TABLE DB1_cell AS SELECT * FROM DB1.cell ORDER BY id; }
+SQL eval { CREATE TABLE DB1_pin AS SELECT * FROM DB1.pin ORDER BY id; }
+SQL eval { CREATE TABLE DB1_arc AS SELECT * FROM DB1.arc ORDER BY id; }
+SQL eval { CREATE TABLE DB1_timing AS SELECT * FROM DB1.timing ORDER BY id; }
+SQL eval { CREATE TABLE DB2_cell AS SELECT * FROM DB2.cell ORDER BY id; }
+SQL eval { CREATE TABLE DB2_pin AS SELECT * FROM DB2.pin ORDER BY id; }
+SQL eval { CREATE TABLE DB2_arc AS SELECT * FROM DB2.arc ORDER BY id; }
+SQL eval { CREATE TABLE DB2_timing AS SELECT * FROM DB2.timing ORDER BY id; }
+SQL eval { DETACH DATABASE DB1 }
+SQL eval { DETACH DATABASE DB2 }
+
+set K7Cells [SQL eval {SELECT COALESCE(alias,name) AS name FROM DB1_cell ORDER BY name ASC; } ]
+set K8Cells [SQL eval {SELECT COALESCE(alias,name) AS name FROM DB2_cell ORDER BY name ASC; } ]
+
+catch {unset DB}
+
+set allCells [lsort -unique -dictionary [concat $K7Cells $K8Cells]]
+set count 0
+foreach cell $allCells {
+  incr count
+  if {[lsearch -exact $K7Cells $cell] == -1} {
+    if {$::VERBOSE} { puts "  Processing $cell ... skipped (missing in K7)" }
+    continue
+  }
+  if {[lsearch -exact $K8Cells $cell] == -1} {
+    if {$::VERBOSE} { puts "  Processing $cell ... skipped (missing in K8)" }
+    continue
+  }
+  if {$::VERBOSE} {
+    puts "  Processing $cell"
+  } else {
+    progressBar $count [llength $allCells]
+  }
+  set K7Cellid [SQL eval "SELECT id FROM DB1_cell WHERE COALESCE(alias,name)='$cell'; " ]
+  set K8Cellid [SQL eval "SELECT id FROM DB2_cell WHERE COALESCE(alias,name)='$cell'; " ]
+  set K7Pins [SQL eval "SELECT COALESCE(alias,name) AS name FROM DB1_pin WHERE cellid='$K7Cellid' ORDER BY name ASC; " ]
+  set K8Pins [SQL eval "SELECT COALESCE(alias,name) AS name FROM DB2_pin WHERE cellid='$K8Cellid' ORDER BY name ASC; " ]
+  if {$::VERBOSE} {
+    puts "    K7Pins ([llength $$K7Pins]): $K7Pins"
+    puts "    K8Pins ([llength $$K8Pins]): $K8Pins"
+  }
+
+  # Tcl list of pair <from> <to> for each timing arc found in the K8 & K7 cell
+  set fromto [list]
+
+  set num 0
+  SQL eval "
+         SELECT DB1_arc.id,
+                (SELECT COALESCE(alias,name) FROM DB1_cell WHERE DB1_cell.id=DB1_arc.cellid) AS cellname,
+                (SELECT COALESCE(alias,name) FROM DB1_pin WHERE DB1_pin.id=DB1_arc.relatedpinid) AS relatedpinname,
+                (SELECT COALESCE(alias,name) FROM DB1_pin WHERE DB1_pin.id=DB1_arc.pinid) AS pinname,
+                (SELECT timing_type FROM DB1_timing WHERE DB1_timing.id=DB1_arc.timingid) AS timing_type,
+                (SELECT timing_sense FROM DB1_timing WHERE DB1_timing.id=DB1_arc.timingid) AS timing_sense
+         FROM
+             DB1_arc
+         WHERE
+             DB1_arc.cellid='$K7Cellid'
+         ;
+       " values {
+    incr num
+#     puts "K7 arc (${values(cellname)}): ${values(relatedpinname)} -> ${values(pinname)} (${values(timing_type)},${values(timing_sense)})"
+    lappend fromto [list ${values(relatedpinname)} ${values(pinname)}]
+    if {![info exists DB(${cell}:${values(relatedpinname)}:${values(pinname)})]} {
+      set DB(${cell}:${values(relatedpinname)}:${values(pinname)}) [list]
+    }
+    lappend DB(${cell}:${values(relatedpinname)}:${values(pinname)}) [list  ${values(timing_type)} ${values(timing_sense)}]
+    if {![info exists DB(${cell}:${values(relatedpinname)}:${values(pinname)}:${values(timing_type)}:${values(timing_sense)})]} {
+      set DB(${cell}:${values(relatedpinname)}:${values(pinname)}:${values(timing_type)}:${values(timing_sense)}) [list]
+    }
+    lappend DB(${cell}:${values(relatedpinname)}:${values(pinname)}:${values(timing_type)}:${values(timing_sense)}) {DB1}
+  }
+  if {$::VERBOSE} { puts "    Number of K7 arc(s): $num" }
+
+  set num 0
+  SQL eval "
+         SELECT DB2_arc.id,
+                (SELECT COALESCE(alias,name) FROM DB2_cell WHERE DB2_cell.id=DB2_arc.cellid) AS cellname,
+                (SELECT COALESCE(alias,name) FROM DB2_pin WHERE DB2_pin.id=DB2_arc.relatedpinid) AS relatedpinname,
+                (SELECT COALESCE(alias,name) FROM DB2_pin WHERE DB2_pin.id=DB2_arc.pinid) AS pinname,
+                (SELECT timing_type FROM DB2_timing WHERE DB2_timing.id=DB2_arc.timingid) AS timing_type,
+                (SELECT timing_sense FROM DB2_timing WHERE DB2_timing.id=DB2_arc.timingid) AS timing_sense
+         FROM
+             DB2_arc
+         WHERE
+             DB2_arc.cellid='$K8Cellid'
+         ;
+       " values {
+    incr num
+#    puts "K8 arc  (${values(cellname)}): ${values(relatedpinname)} -> ${values(pinname)} (${values(timing_type)},${values(timing_sense)})"
+    lappend fromto [list ${values(relatedpinname)} ${values(pinname)}]
+    if {![info exists DB(${cell}:${values(relatedpinname)}:${values(pinname)})]} {
+      set DB(${cell}:${values(relatedpinname)}:${values(pinname)}) [list]
+    }
+    lappend DB(${cell}:${values(relatedpinname)}:${values(pinname)}) [list  ${values(timing_type)} ${values(timing_sense)}]
+    if {![info exists DB(${cell}:${values(relatedpinname)}:${values(pinname)}:${values(timing_type)}:${values(timing_sense)})]} {
+      set DB(${cell}:${values(relatedpinname)}:${values(pinname)}:${values(timing_type)}:${values(timing_sense)}) [list]
+    }
+    lappend DB(${cell}:${values(relatedpinname)}:${values(pinname)}:${values(timing_type)}:${values(timing_sense)}) {DB2}
+  }
+  if {$::VERBOSE} { puts "    Number of K8 arc(s): $num" }
+
+  # Order and uniquify the list
+  set fromto [lsort -index 1 -dictionary [lsort -index 0 -dictionary [lsort -unique $fromto]]]
+  foreach pinpair $fromto {
+    foreach {from to} $pinpair { break }
+    if {([lsearch -exact $K7Pins $from] == -1)} {
+      if {$::VERBOSE} {
+        puts "    Pin $from does not exists in K7. Skipping timing arc:\t $from\t -> \t$to \t([lsort -unique $DB(${cell}:${from}:${to})])"
+      }
+      continue
+    }
+    if {([lsearch -exact $K7Pins $to] == -1)} {
+      if {$::VERBOSE} {
+        puts "    Pin $to does not exists in K7. Skipping timing arc:\t $from\t -> \t$to \t([lsort -unique $DB(${cell}:${from}:${to})])"
+      }
+      continue
+    }
+    if {([lsearch -exact $K8Pins $from] == -1)} {
+      if {$::VERBOSE} {
+        puts "    Pin $from does not exists in K8. Skipping timing arc:\t $from\t -> \t$to \t([lsort -unique $DB(${cell}:${from}:${to})])"
+      }
+      continue
+    }
+    if {([lsearch -exact $K8Pins $to] == -1)} {
+      if {$::VERBOSE} {
+        puts "    Pin $to does not exists in K8. Skipping timing arc:\t $from\t -> \t$to \t([lsort -unique $DB(${cell}:${from}:${to})])"
+      }
+      continue
+    }
+    foreach elm [lsort -unique -dictionary $DB(${cell}:${from}:${to})] {
+      foreach {timing_type timing_sense} $elm { break }
+      set key "${cell}:${from}:${to}:${timing_type}:${timing_sense}"
+      if {([lsearch -exact $DB($key) {DB1}] != -1) && ([lsearch -exact $DB($key) {DB2}] != -1)} {
+        # This timing arc defined by <from>:<to>:<timing_type>:<timing_sense> has been found in
+        # both databases
+      } else {
+        set row [list]
+        set K7CellName [SQL eval "SELECT name FROM DB1_cell WHERE COALESCE(alias,name)='$cell'; "]
+        set K7FromName [SQL eval "SELECT name FROM DB1_pin WHERE cellid='$K7Cellid' AND COALESCE(alias,name)='$from'; "]
+        set K7ToName [SQL eval "SELECT name FROM DB1_pin WHERE cellid='$K7Cellid' AND COALESCE(alias,name)='$to'; "]
+        set K8CellName [SQL eval "SELECT name FROM DB2_cell WHERE COALESCE(alias,name)='$cell'; "]
+        set K8FromName [SQL eval "SELECT name FROM DB2_pin WHERE cellid='$K8Cellid' AND COALESCE(alias,name)='$from'; "]
+        set K8ToName [SQL eval "SELECT name FROM DB2_pin WHERE cellid='$K8Cellid' AND COALESCE(alias,name)='$to'; "]
+        if {$K8CellName == $K7CellName} {
+          lappend row [regsub -all "(\{|\})" $K8CellName ""]
+        } else {
+          lappend row [regsub -all "(\{|\})" "$K8CellName ($K7CellName)" ""]
+        }
+        if {$K8FromName == $K7FromName} {
+          lappend row [regsub -all "(\{|\})" $K8FromName ""]
+        } else {
+          lappend row [regsub -all "(\{|\})" "$K8FromName ($K7FromName)" ""]
+        }
+        if {$K8ToName == $K7ToName} {
+          lappend row [regsub -all "(\{|\})" $K7ToName ""]
+        } else {
+          lappend row [regsub -all "(\{|\})" "$K8ToName ($K7ToName)" ""]
+        }
+        if {[lsearch -exact $DB($key) {DB1}] == -1}  {
+          lappend row {}
+          lappend row "$timing_type $timing_sense"
+        } else {
+          lappend row "$timing_type $timing_sense"
+          lappend row {}
+        }
+        $arcsSummary addrow $row
+      }
+    }
+  }
+
+}
+
+puts ""
+
+# Closing the SQLite3 database
+SQL close
+
+# Sort table
+$arcsSummary sort -dictionary +0 +1 +2
+
+if {$reportfilename == {}} {
+  switch $format {
+    table {
+      puts [$arcsSummary print]
+    }
+    csv {
+      puts [$arcsSummary export -format csv]
+    }
+    default {
+    }
+  }
+} else {
+  set reportFH [open $reportfilename $filemode]
+  switch $format {
+    table {
+      puts $reportFH [$arcsSummary print]
+    }
+    csv {
+      puts $reportFH [$arcsSummary export -format csv]
+    }
+    default {
+    }
+  }
+  close $reportFH
+  puts " File [file normalize $reportfilename] generated"
+
+  if {$splitCSVByCOEGrp} {
+    foreach {name cells} $COEGroups {
+      set tbl [::prettyTable]
+      $tbl configure -title [subst $${arcsSummary}::params(title)]
+      $tbl header [subst $${arcsSummary}::header]
+      foreach row [subst $${arcsSummary}::table] {
+        # The cell name could have the format 'FIFO18E2 (FIFO18E1)' and in this case, the K8 name is the first one
+        set cell [lindex [split [lindex $row 0] " "] 0]
+        if {[regexp "^([join $cells |])\$" $cell]} {
+          $tbl addrow $row
+        }
+      }
+      set filename [file rootname $reportfilename].${name}[file extension $reportfilename]
+      set FH [open $filename {w}]
+      switch $format {
+        table {
+          puts $FH [$tbl print]
+        }
+        csv {
+          puts $FH [$tbl export -format csv]
+        }
+        default {
+        }
+      }
+      close $FH
+      if {[$tbl numrows] == 0} {
+        # Remove the file if it is empty
+        file delete -force $filename
+      } else {
+        puts " File [file normalize $filename] generated"
+      }
+      catch {$tbl destroy}
+    }
+  }
+
+}
+
+catch {$arcsSummary destroy}
+
+exit 0

@@ -1,0 +1,174 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+# Convert Xilinx Sitemap2.xml files into fragment of Tcl code that can be used to re-create the data structure of the ar
+#      array set myarray [source <fragment>]
+# Below is an example on how to go over the data structure
+#      foreach cell [lsort -dictionary [array names all]] {
+#        puts "CELL=$cell"
+#        puts "++++++++++++++++"
+#        array set foo $all($cell)
+#        puts "\n[parray foo]"
+#        unset -nocomplain foo
+#      }
+
+########################################################################################
+## 05-01-2015 - Added support for path with directories provided with -file
+## 10-25-2013 - Initial release
+########################################################################################
+
+set SCRIPT_VERSION {05-01-2015}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+# Files to process
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex7/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/spartan3e/spartan3e/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/spartan3e/aspartan3e/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/spartan3e/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex4/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/zynq/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/spartan3/aspartan3/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/spartan3/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/spartan3a/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/holistic8/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/elbertevalarch/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/v7evalarch/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/artix7/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex8/Sitemap2.g2gen.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex8/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/spartan3adsp/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex5/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex6/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex8/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/olyevalarch/Sitemap2.xml
+# /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/spartan6/Sitemap2.xml
+# set files [glob /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex{7,8}/Sitemap2.xml]
+# set files [glob ./kintex*Sitemap2.xml]
+set files [list]
+
+set output {sitemap2.ftcl}
+
+set error 0
+set show_help 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -xml -
+    --xml {
+      set files [concat $files [glob -nocomplain [::tb::lshift argv]]]
+    }
+    -file -
+    --file {
+      set output [::tb::lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: sitemap2tcl
+                [-xml <filename or file pattern>]
+                [-file <output file>]
+                [-verbose|-v]
+                [-help|-h]
+                
+    Description: Utility to convert Sitemap2.xml to Tcl fragment
+
+    Version: %s
+
+    Example:
+       sitemap2tcl -xml /proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex8/Sitemap2.xml -file kintex8_sitemap2.xml
+  
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+set ::CELL {}
+catch {unset ::cellinfo}
+
+foreach file $files {
+  catch {unset ar}
+  if {![file exists $file]} { puts " Error - $file does not exist"; continue }
+  puts " Processing $file"
+  set FH [open $file]
+  while {![eof $FH]} {
+    gets $FH line
+    if {[regexp -nocase -- {^\s*<cell>\s*([^\s]+)(\s|$)} $line - ::CELL]} {
+      set ar($::CELL) [list]
+      set ::cellinfo(cfg_element) [list]
+    # {} elseif {[regexp -nocase -- {^\s*<cfg\s+element.+elementattr\s*=\s*\"\s*([^\s\"]+)\s*\"} $line - property]} {}
+    } elseif {[regexp -nocase -- {^\s*<cfg\s+element.+cellviewattr\s*=\s*\"\s*([^\s\"]+)\s*\"} $line - property]} {
+      # Add the property if not already in the list
+      if {[lsearch $::cellinfo(cfg_element) $property] == -1} {
+        lappend ::cellinfo(cfg_element) $property
+      }
+    } elseif {[regexp -nocase -- {^\s*</cell>(\s|$)} $line]} {
+      set ar($::CELL) [array get ::cellinfo]
+      set ::CELL {}
+      unset -nocomplain ::cellinfo
+    }
+  }
+  close $FH
+  
+  # Some stats
+  puts "    -> [llength [array names ::ar]] cell(s) found"
+
+  # Saving the data structure
+  if {$output != {}} {
+    set filename $output
+  } else {
+    set filename "[file rootname [file tail $file]].ftcl"
+  }
+  puts " File [file normalize $filename] has been generated"
+  set outputDir [file dirname $filename]
+  file mkdir $outputDir
+  set FH [open $filename w]
+  puts $FH "# This file can be imported with:  array set myarray \[source $filename\]"
+  puts $FH "return {"
+  foreach cell [lsort -dictionary [array names ::ar]] {
+    puts $FH "   $cell { $::ar($cell) }"
+  }
+  puts $FH "}"
+  close $FH
+
+}

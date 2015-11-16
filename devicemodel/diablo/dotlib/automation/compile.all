@@ -1,0 +1,62 @@
+#!/bin/bash
+
+DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+
+if [ -z "$SCR" ]; then
+    # Environment variable SCR is not set. Point to default location
+    SCR="/proj/xsjhdstaff2/dpefour/support/Olympus/dotlib/scripts_DEV"
+fi
+                                                                                          
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintex7   /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/devint/kintex7.lib
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtex7   /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex7/devint/virtex7.lib
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintexu   /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexu/devint/kintexu/timing/prod_ver2/kintexu.lib
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtexu   /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexu/devint/virtexu/timing/prod_ver1/virtexu.lib
+# # bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash zynquplus /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/zynquplus/devint/zynqupluses1/timing/es1/zynquplus.lib
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash zynquplus /proj/xbuilds/2015.2_zub2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/zynquplus/zynqupluses1/timing/es1/zynquplus.lib
+
+# # 2015.1
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintex7_2015.1   /proj/xbuilds/2015.1_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/kintex7.lib
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtex7_2015.1   /proj/xbuilds/2015.1_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex7/virtex7.lib
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintexu_2015.1   /proj/xbuilds/2015.1_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexu/kintexu/kintexu.lib
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtexu_2015.1   /proj/xbuilds/2015.1_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexu/virtexu/virtexu.lib
+
+# 2015.2
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintex7_2015.2   /proj/xbuilds/2015.2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/kintex7.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtex7_2015.2   /proj/xbuilds/2015.2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex7/virtex7.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintexu_2015.2   /proj/xbuilds/2015.2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexu/kintexu/timing/prod_ver2/kintexu.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtexu_2015.2   /proj/xbuilds/2015.2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexu/virtexu/timing/prod_ver1/virtexu.lib
+
+# 2015.2_ZUB2
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintex7_2015.2_zub2   /proj/xbuilds/2015.2_zub2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/kintex7.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtex7_2015.2_zub2   /proj/xbuilds/2015.2_zub2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex7/virtex7.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintexu_2015.2_zub2   /proj/xbuilds/2015.2_zub2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexu/kintexu/timing/prod_ver2/kintexu.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtexu_2015.2_zub2   /proj/xbuilds/2015.2_zub2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexu/virtexu/timing/prod_ver/virtexu.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash zynquplus_2015.2_zub2 /proj/xbuilds/2015.2_zub2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/zynquplus/zynqupluses1/timing/es1/zynquplus.lib
+
+# 2015.3
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintex7_2015.3     /proj/xbuilds/2015.3_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/devint/kintex7.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtex7_2015.3     /proj/xbuilds/2015.3_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex7/devint/virtex7.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintexu_2015.3     /proj/xbuilds/2015.3_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexu/devint/kintexu/timing/prod_ver2/kintexu.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtexu_2015.3     /proj/xbuilds/2015.3_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexu/devint/virtexu/timing/prod_ver1/virtexu.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintexuplus_2015.3 /proj/xbuilds/2015.3_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexuplus/devint/kintexupluses1/timing/es1/kintexuplus.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtexuplus_2015.3 /proj/xbuilds/2015.3_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexuplus/devint/virtexupluses1/timing/es1/virtexuplus.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash zynquplus_2015.3   /proj/xbuilds/2015.3_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/zynquplus/devint/zynqupluses1/timing/es1/zynquplus.lib
+
+# 2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintex7_2015.4     /proj/xbuilds/2015.4_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/devint/kintex7.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtex7_2015.4     /proj/xbuilds/2015.4_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex7/devint/virtex7.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintexu_2015.4     /proj/xbuilds/2015.4_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexu/devint/kintexu/timing/prod_ver2/kintexu.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtexu_2015.4     /proj/xbuilds/2015.4_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexu/devint/virtexu/timing/prod_ver1/virtexu.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintexuplus_2015.4 /proj/xbuilds/2015.4_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexuplus/devint/kintexupluses1/timing/es1_eval/kintexuplus.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtexuplus_2015.4 /proj/xbuilds/2015.4_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexuplus/devint/virtexupluses1/timing/es1/virtexuplus.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash zynquplus_2015.4   /proj/xbuilds/2015.4_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/zynquplus/devint/zynqupluses1/timing/es1_eval/zynquplus.lib
+
+# 2016.1 HEAD
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintex7_2016.1     /proj/xbuilds/HEAD_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/devint/kintex7.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtex7_2016.1     /proj/xbuilds/HEAD_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex7/devint/virtex7.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintexu_2016.1     /proj/xbuilds/HEAD_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexu/devint/kintexu/timing/prod_ver4/kintexu.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtexu_2016.1     /proj/xbuilds/HEAD_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexu/devint/virtexu/timing/prod_ver2/virtexu.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash kintexuplus_2016.1 /proj/xbuilds/HEAD_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexuplus/devint/kintexupluses1/timing/es1_eval/kintexuplus.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash virtexuplus_2016.1 /proj/xbuilds/HEAD_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexuplus/devint/virtexupluses1/timing/es1/virtexuplus.lib
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compile.bash zynquplus_2016.1   /proj/xbuilds/HEAD_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/zynquplus/devint/zynqupluses1/timing/es1_eval/zynquplus.lib
+

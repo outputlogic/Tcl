@@ -1,0 +1,224 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+set WDIR [file dirname [file normalize [info script]]]
+
+proc lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc getListVars { str } {
+  set res [lsort -unique [regexp -inline -all -- {\%\{[^\{\}\s\%]+\}} $str]]
+  set matches [list]
+  foreach el $res {
+    if {[regexp {^\%\{(.+)\}$} $el - match]} {
+      lappend matches $match
+    }
+  }
+  return $matches
+}
+
+proc main {args} {
+
+  set verbose 0
+  set debug 0
+  set SCRIPT_VERSION {04-14-2015}
+
+  set ifilename {}
+  set ofilename {}
+  set mode {strict} ; # strict | loose
+  set action {replace} ; # replace | check
+  set force 0
+  set strings [list]
+  set error 0
+  set show_help 0
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-i$} {
+        set ifilename [lshift args]
+      }
+      {^-o$} {
+        set ofilename [lshift args]
+      }
+      {^-l$} -
+      {^-loose$} -
+      {^-l(o(o(se?)?)?)?$} {
+          set mode {loose}
+      }
+      {^-s$} -
+      {^-strict$} -
+      {^-s(t(r(i(ct?)?)?)?)?$} {
+          set mode {strict}
+      }
+      {^-f$} -
+      {^-force$} -
+      {^-f(o(r(ce?)?)?)?$} {
+          set force 1
+      }
+      {^-c$} -
+      {^-check$} -
+      {^-c(h(e(ck?)?)?)?$} {
+          set action {check}
+      }
+      {^-v$} -
+      {^-verbose$} -
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+          set verbose 1
+      }
+      {^-d$} -
+      {^-debug$} -
+      {^-d(e(b(ug?)?)?)?$} {
+          set debug 1
+          set verbose 1
+      }
+      {^-h$} -
+      {^-help$} -
+      {^-h(e(lp?)?)?$} {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+#             puts " -E- option '$name' is not a valid option"
+#             incr error
+            if {[regexp {^\-(.+)=(.*)\s*$} $name - var value]} {
+              lappend strings [list $var $value]
+# puts "<$var>=<$value>"
+            } else {
+              puts " -E- option '$name' is not a valid option"
+              incr error
+            }
+          } else {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: smtpl
+                  -i <filename>
+                  [-o <filename>]
+                  [-strict|-s][-loose|-l]
+                  [-check|-c]
+                  [-force|-f]
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Smart template
+
+      Version: %s
+
+        xxx
+
+      Example:
+         smtpl -i <filename> -o <filename> -dir=/home/dpefour
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if {$ifilename == {}} {
+    puts " -E- no input filename specified (-i)"
+    incr error
+  } else {
+    if {![file exists $ifilename]} {
+      puts " -E- filename '$ifilename' does not exist"
+      incr error
+    }
+  }
+
+  if {$ofilename != {}} {
+    if {[file exists $ofilename] && !$force} {
+      puts " -E- filename '$ofilename' already exists"
+      incr error
+    } else {
+      set dir [file normalize [file dirname $ofilename]]
+      if {![file isdirectory $dir] && !$force} {
+        puts " -E- directory '$dir' does not exist (-force)"
+        incr error
+      }
+    }
+  }
+
+  if {$error} {
+    puts "\n Some error(s) occured. Cannot continue.\n"
+    exit -1
+  }
+
+  set FH [open $ifilename {r}]
+  set content [read $FH]
+  close $FH
+
+  switch $action {
+    replace {
+      set vars [getListVars $content]
+      foreach s $strings {
+        foreach {var value} $s { break }
+        if {[lsearch $vars $var] == -1} {
+          puts " -W- Invalid template variable '$var'"
+        }
+        if {$mode == {strict}} {
+          # %{var}
+          set count [regsub -all -- [format {%%{%s}} $var] $content $value content]
+        } else {
+          # var
+          set count [regsub -all -- [format {%s} $var] $content $value content]
+        }
+        if {!$count} {
+          puts " -W- No replacement for '$var'"
+        } else {
+          puts " -I- '$var' : $count instance(s)"
+        }
+      }
+      set matches [getListVars $content]
+      if {$matches != [list]} {
+        puts stderr " -W- Some template variable(s) have not been substituted: $matches"
+      }
+
+      if {$ofilename != {}} {
+        set dir [file normalize [file dirname $ofilename]]
+        if {![file isdirectory $dir]} {
+          puts " -I- Creating directory $dir"
+          file mkdir $dir
+        }
+        set FH [open $ofilename {w}]
+        puts $FH $content
+        close $FH
+        puts " -I- File [file normalize $ofilename] created"
+      } else {
+        puts $content
+      }
+
+    }
+    check {
+      puts " -I- Template: [file normalize $ifilename]"
+      set matches [getListVars $content]
+      puts " -I- List of template variables:"
+      foreach el $matches {
+        puts "       $el"
+      }
+      puts " -I- Use -<var>=<value> to replace variables inside the template"
+    }
+  }
+
+  return -code ok
+}
+
+eval [concat main $argv]
+
+exit 0

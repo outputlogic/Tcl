@@ -1,0 +1,941 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+########################################################################################
+## 02-27-2015 - Added additional checks related to clock attribute 'clock : true' inside
+##              Dotlib
+## 02-24-2015 - Added check for pins with clock attribute 'clock : true' inside Dotlib
+## 10-03-2014 - Initial release
+########################################################################################
+
+# Check for missing timing arcs inside Dotlib files.
+# The flow is to generate fragment files from Dotlib first with dotlib2tcl
+# Once this is done, this script can be run.
+
+set SCRIPT_VERSION {02-27-2015}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+lappend auto_path /wrk/hdstaff/dpefour/support/Olympus/assets/sqlite3.8.0.2
+package require sqlite3
+
+# Execute the SQL command. When failed, retry until the database is unlocked
+proc wait_db_ready { &SQL {cmd {pragma integrity_check} } } {
+  upvar &SQL SQL
+  # Wait for the database to be unlocked
+  while {[catch { SQL eval $cmd } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      puts "SQL database locked ..."
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      puts "SQL database read-only ..."
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+  return 0
+}
+
+# SQLite3 database
+# set filename {sqlite3.db}
+set filename {}
+
+set error 0
+set show_help 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -db -
+    --db {
+      set filename [::tb::lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: checkTimingArcsDotLib2
+                [-db <sqlite3 database>]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to perform various checks on the SQLite3 database
+
+    Version: %s
+
+    Example:
+       checkTimingArcsDotLib2
+       checkTimingArcsDotLib2 -db './kintex7.db'
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+# SQLite3 database
+if {![file exists $filename]} {
+  error " File '$filename' does not exist"
+}
+
+# Open SQLite3 database
+sqlite3 SQL $filename -readonly true
+wait_db_ready SQL
+
+# Get database version
+set dbVersion [SQL eval { SELECT value FROM param WHERE property='version' LIMIT 1; } ]
+
+set cells [SQL eval { SELECT name FROM cell ORDER BY name ASC }]
+
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins that are not involved in any timing arc
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  # Get all the pins that are involved in a timing arc
+  set pinids [concat [SQL eval { SELECT DISTINCT relatedpinid FROM arc; }] \
+                     [SQL eval { SELECT DISTINCT pinid FROM arc; }] \
+             ]
+  SQL eval "
+    SELECT cell.name AS 'cell',
+           pin.name AS 'pin'
+    FROM pin
+      JOIN cell ON cell.id = pin.cellid
+    WHERE
+      pin.id NOT IN ('[join $pinids ',']')
+    ORDER BY cell.name, pin.name;
+  " values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) $values(pin)
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach pin [::tb::collapseBusNames $DB($cell)] {
+      puts "   No timing arc association found for pin $pin"
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for asynchronous pins that are involved in a combinational timing arc
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  catch {unset dir}
+  set DB(cells) [list]
+
+  SQL eval {
+    SELECT (SELECT name FROM cell WHERE id=cellid) AS "cell",
+           (SELECT name FROM pin WHERE id=pinid) AS "pin",
+           (SELECT name FROM pin WHERE id=relatedpinid) AS "relatedpin",
+           (SELECT direction FROM pin WHERE id=relatedpinid) AS "direction"
+    FROM arc
+    WHERE
+      ((SELECT timing_type FROM timing WHERE id = arc.timingid) LIKE "%combinational%" )
+      AND (relatedpinid IN (SELECT pinid FROM timing WHERE timing_type LIKE "%removal%" OR timing_type LIKE "%recovery%" ))
+  } values {
+    lappend DB(cells) $values(cell)
+    if {![info exists DB($values(cell):$values(relatedpin))]} { set DB($values(cell):$values(relatedpin)) [list] }
+    lappend DB($values(cell):$values(relatedpin)) $values(pin)
+    set dir($values(cell):$values(relatedpin)) $values(direction)
+  }
+
+#   SQL eval {
+#     SELECT (SELECT name FROM cell WHERE id=cellid) AS "cell",
+#            (SELECT name FROM pin WHERE id=pinid) AS "pin",
+#            (SELECT name FROM pin WHERE id=relatedpinid) AS "relatedpin",
+#            (SELECT direction FROM pin WHERE id=relatedpinid) AS "direction"
+#     FROM arc
+#     WHERE
+#       timingid IN (SELECT id FROM timing WHERE timing_type LIKE "%combinational%" )
+#       AND (relatedpinid IN (SELECT pinid FROM timing WHERE timing_type LIKE "%removal%" OR timing_type LIKE "%recovery%" ))
+#   } values {
+#     lappend DB(cells) $values(cell)
+#     if {![info exists DB($values(cell):$values(relatedpin))]} { set DB($values(cell):$values(relatedpin)) [list] }
+#     lappend DB($values(cell):$values(relatedpin)) $values(pin)
+#     set dir($values(cell):$values(relatedpin)) $values(direction)
+#   }
+
+  foreach cell [lsort -dictionary [lsort -dictionary -unique $DB(cells)]] {
+    puts " Processing $cell"
+    set pins [list]
+    foreach elm [array names DB ${cell}:*] {
+      lappend pins [regsub "${cell}:" $elm {}]
+    }
+    set pins [lsort -dictionary -unique $pins]
+    # Do NOT collapse pins with [::tb::collapseBusNames $pins] since it does not sense here
+    # and can result in trying to acess associative array with invalid key
+    foreach pin $pins {
+      puts "   Combinational arc found from asynchronous $dir(${cell}:${pin}) pin '$pin' to pin(s) '[::tb::collapseBusNames [lsort -unique $DB(${cell}:${pin})]]'"
+    }
+  }
+
+}
+
+if {1} {
+  # Timing check from Brandon:
+  #   if {{timing_type==falling_edge || timing_type==rising_edge} && {timing_sense==”negative_unate” || timing_sense==”positive_unate”}}
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins that have a falling or rising edge arc defined with a negative or
+ ## positive unate in addition
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  catch {unset dir}
+  SQL eval {
+    SELECT (SELECT name FROM cell WHERE id = (SELECT cellid FROM pin WHERE id=pinid) ) AS "cell",
+           (SELECT name FROM pin WHERE id=pinid) AS "pin",
+           (SELECT direction FROM pin WHERE id=pinid) AS "direction"
+    FROM timing
+    WHERE
+      (timing_type LIKE "%falling_edge%" OR timing_type LIKE "%rising_edge%")
+      AND (timing_sense LIKE "%negative_unate%" OR timing_sense LIKE "%positive_unate%")
+  } values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) $values(pin)
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach pin [::tb::collapseBusNames $DB($cell)] {
+      puts "   Found pin '$pin' with falling_edge or rising_edge (timing_type) and negative_unate or positive_unate (timing_sense)"
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins that have a setup/hold and recovery/removal timing arcs at the
+ ## same time
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  catch {unset dir}
+  set pinids [SQL eval {
+    SELECT pinid FROM arc WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%') OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%hold%')
+    INTERSECT
+    SELECT pinid FROM arc WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%recovery%') OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%removal%')
+    ;
+  }]
+  SQL eval "
+    SELECT (SELECT name FROM cell WHERE id=cellid) AS 'cell',
+           (SELECT name FROM pin WHERE id=pinid) AS 'pin',
+           (SELECT name FROM pin WHERE id=relatedpinid) AS 'relatedpin',
+           (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS 'timing_type',
+           (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS 'timing_sense'
+    FROM arc
+    WHERE
+      pinid IN ('[join $pinids ',']')
+      AND (
+          ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+          OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%hold%')
+          OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%recovery%')
+          OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%removal%')
+          )
+    ORDER BY cellid, relatedpinid, pinid;
+  " values {
+    puts " -I- $values(cell): $values(relatedpin) -> $values(pin) ($values(timing_type), $values(timing_sense))"
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for existing min_pulse_width checks
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  SQL eval {
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id = (SELECT cellid FROM pin WHERE id=pinid) ) AS "cell",
+           (SELECT name FROM pin WHERE id=pinid) AS "pin",
+           (SELECT direction FROM pin WHERE id=pinid) AS "direction"
+    FROM timing
+    WHERE
+      timing_type = 'min_pulse_width'
+    ORDER BY cell, pin;
+  } values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) [list $values(pin) $values(direction)]
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach elm $DB($cell) {
+      foreach {pin dir} $elm { break }
+      puts "   Found $dir pin '$pin' with 'min_pulse_width' check"
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for missing min_pulse_width checks on clock pins and asynchronous pins
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  # Find id of clock pins
+  set clockpinids [lsort -unique [SQL eval {
+    SELECT DISTINCT relatedpinid
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%hold%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%recovery%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%removal%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%edge%')
+    ;
+  }] ]
+  # Find id of asynchronous pins
+  set asyncpinids [lsort -unique [SQL eval {
+    SELECT DISTINCT pinid
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%recovery%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%removal%')
+    ;
+  }] ]
+  # Find id of pins that have a min_pulse_width check
+  set minpulsewidthpinids [lsort -unique [SQL eval { SELECT DISTINCT pinid FROM timing WHERE timing_type = 'min_pulse_width' }] ]
+  SQL eval "
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id = pin.cellid ) AS 'cell',
+           id,
+           name AS 'pin',
+           direction
+    FROM pin
+    WHERE ( pin.id IN ('[join $clockpinids ',']')
+            OR pin.id IN ('[join $asyncpinids ',']')
+          )
+          AND pin.id NOT IN ('[join $minpulsewidthpinids ',']')
+    ORDER BY cell, pin;
+  " values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach elm $DB($cell) {
+      foreach {id pin dir} $elm { break }
+      if {[lsearch $clockpinids $id] != -1} {
+        puts "   Found clock $dir pin '$pin' with missing 'min_pulse_width' check"
+      } else {
+        puts "   Found asynchronous $dir pin '$pin' with missing 'min_pulse_width' check"
+      }
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins with min_pulse_width checks but without setup/hold/removal/recovery/edge
+ ## checks (FROM/TO)
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  # Find id of pins with setup/hold/removal/recovery/edge (FROM/TO)
+  set pinids [lsort -unique [SQL eval {
+    SELECT DISTINCT pinid
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%hold%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%recovery%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%removal%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%edge%')
+    ;
+  }] ]
+  set relatedpinids [lsort -unique [SQL eval {
+    SELECT DISTINCT relatedpinid
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%hold%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%recovery%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%removal%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%edge%')
+    ;
+  }] ]
+  # Find id of pins that have a min_pulse_width check
+  set minpulsewidthpinids [lsort -unique [SQL eval { SELECT DISTINCT pinid FROM timing WHERE timing_type = 'min_pulse_width' }] ]
+  SQL eval "
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id = pin.cellid ) AS 'cell',
+           id,
+           name AS 'pin',
+           direction
+    FROM pin
+    WHERE ( pin.id NOT IN ('[join $pinids ',']')
+            AND pin.id NOT IN ('[join $relatedpinids ',']')
+          )
+          AND pin.id IN ('[join $minpulsewidthpinids ',']')
+    ORDER BY cell, pin;
+  " values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach elm $DB($cell) {
+      foreach {id pin dir} $elm { break }
+      puts "   Found $dir pin '$pin' with 'min_pulse_width' check and no other setup/hold/removal/recovery/edge check associated"
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for existing minimum_period checks
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  SQL eval {
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id = (SELECT cellid FROM pin WHERE id=pinid) ) AS "cell",
+           (SELECT name FROM pin WHERE id=pinid) AS "pin",
+           (SELECT direction FROM pin WHERE id=pinid) AS "direction"
+    FROM timing
+    WHERE
+      timing_type = 'minimum_period'
+    ORDER BY cell, pin;
+  } values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) [list $values(pin) $values(direction)]
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach elm $DB($cell) {
+      foreach {pin dir} $elm { break }
+      puts "   Found $dir pin '$pin' with 'minimum_period' check"
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins with a function definition
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  SQL eval {
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id = pin.cellid ) AS "cell",
+           name AS "pin",
+           direction,
+           function
+    FROM pin
+    WHERE
+      function IS NOT NULL
+    ORDER BY cell, pin;
+  } values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) [list $values(pin) $values(direction) $values(function)]
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach elm $DB($cell) {
+      foreach {pin dir function} $elm { break }
+      puts "   Found $dir pin '$pin' with function '$function'"
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins that have multiple setup/recovery timing arcs
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  set DB(_) [list]
+  SQL eval "
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id=cellid) AS 'cell',
+           (SELECT direction FROM pin WHERE id=pinid) AS 'direction',
+           (SELECT name FROM pin WHERE id=pinid) AS 'pin',
+           (SELECT name FROM pin WHERE id=relatedpinid) AS 'relatedpin',
+           (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS 'timing_type',
+           (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS 'timing_sense',
+           (SELECT fpga_arc_condition FROM timing WHERE timing.id=arc.timingid) AS 'fpga_condition'
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%recovery%')
+    ORDER BY cell, relatedpin, pin;
+  " values {
+    if {![info exists DB($values(cell):$values(pin))]} { set DB($values(cell):$values(pin)) [list] }
+    lappend DB($values(cell):$values(pin)) [list $values(relatedpin) $values(pin) $values(direction) $values(timing_type) $values(timing_sense) $values(fpga_condition)]
+    lappend DB(_) $values(cell)
+  }
+
+  foreach cell [lsort -dictionary -unique $DB(_)] {
+    set first 1
+    foreach key [lsort -dictionary [array names DB ${cell}:*]] {
+      regexp {.+\:(.+)$} $key - pin
+      catch { unset ar }
+      # Now it becomes overly complicated since we need to sort the list of arcs per fpga condition
+      foreach elm $DB(${cell}:${pin}) {
+        foreach {relatedpin pin dir timing_type timing_sense fpga_condition} $elm { break }
+        if {![info exists ar($fpga_condition)]} { set ar($fpga_condition) [list] }
+        lappend ar($fpga_condition) [list $relatedpin $pin $dir $timing_type $timing_sense ]
+      }
+      # Let's iterate through all the fpga conditions that were found for this cell&pin
+      # so that we can check whether a particular fpga condition has more than 1 setup/recovery
+      # arc
+      foreach fpgacond [lsort -dictionary [array names ar]] {
+        if {[llength $ar($fpgacond)] > 1} {
+          set count 1
+          foreach elm [lsort -dictionary -index 1 $ar($fpgacond)] {
+            foreach {relatedpin pin dir timing_type timing_sense} $elm { break }
+            if {$first} {
+              puts " Processing $cell"
+              set first 0
+            }
+            if {$fpgacond != {}} {
+              puts "   Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"
+            } else {
+              puts "   Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"
+            }
+            incr count
+          }
+        }
+      }
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins that have multiple hold/removal timing arcs
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  set DB(_) [list]
+  SQL eval "
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id=cellid) AS 'cell',
+           (SELECT direction FROM pin WHERE id=pinid) AS 'direction',
+           (SELECT name FROM pin WHERE id=pinid) AS 'pin',
+           (SELECT name FROM pin WHERE id=relatedpinid) AS 'relatedpin',
+           (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS 'timing_type',
+           (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS 'timing_sense',
+           (SELECT fpga_arc_condition FROM timing WHERE timing.id=arc.timingid) AS 'fpga_condition'
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%recovery%')
+    ORDER BY cell, relatedpin, pin;
+  " values {
+    if {![info exists DB($values(cell):$values(pin))]} { set DB($values(cell):$values(pin)) [list] }
+    lappend DB($values(cell):$values(pin)) [list $values(relatedpin) $values(pin) $values(direction) $values(timing_type) $values(timing_sense) $values(fpga_condition)]
+    lappend DB(_) $values(cell)
+  }
+
+  foreach cell [lsort -dictionary -unique $DB(_)] {
+    set first 1
+    foreach key [lsort -dictionary [array names DB ${cell}:*]] {
+      regexp {.+\:(.+)$} $key - pin
+      catch { unset ar }
+      # Now it becomes overly complicated since we need to sort the list of arcs per fpga condition
+      foreach elm $DB(${cell}:${pin}) {
+        foreach {relatedpin pin dir timing_type timing_sense fpga_condition} $elm { break }
+        if {![info exists ar($fpga_condition)]} { set ar($fpga_condition) [list] }
+        lappend ar($fpga_condition) [list $relatedpin $pin $dir $timing_type $timing_sense ]
+      }
+      # Let's iterate through all the fpga conditions that were found for this cell&pin
+      # so that we can check whether a particular fpga condition has more than 1 hold/removal
+      # arc
+      foreach fpgacond [lsort -dictionary [array names ar]] {
+        if {[llength $ar($fpgacond)] > 1} {
+          set count 1
+          foreach elm [lsort -dictionary -index 1 $ar($fpgacond)] {
+            foreach {relatedpin pin dir timing_type timing_sense} $elm { break }
+            if {$first} {
+              puts " Processing $cell"
+              set first 0
+            }
+            if {$fpgacond != {}} {
+              puts "   Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"
+            } else {
+              puts "   Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"
+            }
+            incr count
+          }
+        }
+      }
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins with a clock attribute
+ ##
+ ########################################################################################
+}]
+
+  # Only for database version from 1.6 and upward
+  if {$dbVersion >= 1.6} {
+    catch {unset DB}
+    SQL eval {
+      SELECT DISTINCT
+             (SELECT name FROM cell WHERE id = pin.cellid ) AS "cell",
+             name AS "pin",
+             direction,
+             clock
+      FROM pin
+      WHERE
+        clock IS NOT NULL
+      ORDER BY cell, pin;
+    } values {
+      if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+      lappend DB($values(cell)) [list $values(pin) $values(direction) $values(clock)]
+    }
+
+    foreach cell [lsort -dictionary [array names DB]] {
+      puts " Processing $cell"
+      foreach elm $DB($cell) {
+        foreach {pin dir clock} $elm { break }
+        puts "   Found $dir pin '$pin' with clock attribute '$clock'"
+      }
+    }
+  } else {
+    puts " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins with min_pulse_width checks and an associated setup/hold check but 
+ ## without a clock attribute
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  # Find id of pins with setup/hold (FROM)
+  set relatedpinids [lsort -unique [SQL eval {
+    SELECT DISTINCT relatedpinid
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%hold%')
+    ;
+  }] ]
+  # Find id of pins that have a min_pulse_width check
+  set minpulsewidthpinids [lsort -unique [SQL eval { SELECT DISTINCT pinid FROM timing WHERE timing_type = 'min_pulse_width' }] ]
+  # Find id of pins that have a clock attribute
+  set clockpinids [lsort -unique [SQL eval { SELECT DISTINCT id FROM pin WHERE clock IS NOT NULL }] ]
+  SQL eval "
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id = pin.cellid ) AS 'cell',
+           id,
+           name AS 'pin',
+           direction
+    FROM pin
+    WHERE pin.id IN ('[join $relatedpinids ',']')
+          AND pin.id IN ('[join $minpulsewidthpinids ',']')
+          AND pin.id NOT IN ('[join $clockpinids ',']')
+    ORDER BY cell, pin;
+  " values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach elm $DB($cell) {
+      foreach {id pin dir} $elm { break }
+      puts "   Found $dir pin '$pin' with 'min_pulse_width' check and setup/hold check associated and no 'clock : true' attribute"
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins with an associated setup/hold check and a clock attribute but
+ ## without a min_pulse_width
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  # Find id of pins with setup/hold (FROM)
+  set relatedpinids [lsort -unique [SQL eval {
+    SELECT DISTINCT relatedpinid
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%hold%')
+    ;
+  }] ]
+  # Find id of pins that have a min_pulse_width check
+  set minpulsewidthpinids [lsort -unique [SQL eval { SELECT DISTINCT pinid FROM timing WHERE timing_type = 'min_pulse_width' }] ]
+  # Find id of pins that have a clock attribute
+  set clockpinids [lsort -unique [SQL eval { SELECT DISTINCT id FROM pin WHERE clock IS NOT NULL }] ]
+  SQL eval "
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id = pin.cellid ) AS 'cell',
+           id,
+           name AS 'pin',
+           direction
+    FROM pin
+    WHERE pin.id IN ('[join $relatedpinids ',']')
+          AND pin.id NOT IN ('[join $minpulsewidthpinids ',']')
+          AND pin.id IN ('[join $clockpinids ',']')
+    ORDER BY cell, pin;
+  " values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach elm $DB($cell) {
+      foreach {id pin dir} $elm { break }
+      puts "   Found $dir pin '$pin' with a setup/hold check associated and a 'clock : true' attribute but without 'min_pulse_width' check"
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins with min_pulse_width checks and a clock attribute but without
+ ## setup/hold check associated
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  # Find id of pins with setup/hold (FROM)
+  set relatedpinids [lsort -unique [SQL eval {
+    SELECT DISTINCT relatedpinid
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%hold%')
+    ;
+  }] ]
+  # Find id of pins that have a min_pulse_width check
+  set minpulsewidthpinids [lsort -unique [SQL eval { SELECT DISTINCT pinid FROM timing WHERE timing_type = 'min_pulse_width' }] ]
+  # Find id of pins that have a clock attribute
+  set clockpinids [lsort -unique [SQL eval { SELECT DISTINCT id FROM pin WHERE clock IS NOT NULL }] ]
+  SQL eval "
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id = pin.cellid ) AS 'cell',
+           id,
+           name AS 'pin',
+           direction
+    FROM pin
+    WHERE pin.id NOT IN ('[join $relatedpinids ',']')
+          AND pin.id IN ('[join $minpulsewidthpinids ',']')
+          AND pin.id IN ('[join $clockpinids ',']')
+    ORDER BY cell, pin;
+  " values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach elm $DB($cell) {
+      foreach {id pin dir} $elm { break }
+      puts "   Found $dir pin '$pin' with 'min_pulse_width' check and  a 'clock : true' attribute but without setup/hold check associated"
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins with a clock attribute but without related setup/hold check
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  # Find id of pins with setup/hold (FROM)
+  set relatedpinids [lsort -unique [SQL eval {
+    SELECT DISTINCT relatedpinid
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%hold%')
+    ;
+  }] ]
+  # Find id of pins that have a clock attribute
+  set clockpinids [lsort -unique [SQL eval { SELECT DISTINCT id FROM pin WHERE clock IS NOT NULL }] ]
+  SQL eval "
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id = pin.cellid ) AS 'cell',
+           id,
+           name AS 'pin',
+           direction
+    FROM pin
+    WHERE pin.id NOT IN ('[join $relatedpinids ',']')
+          AND pin.id IN ('[join $clockpinids ',']')
+    ORDER BY cell, pin;
+  " values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach elm $DB($cell) {
+      foreach {id pin dir} $elm { break }
+      puts "   Found $dir pin '$pin' with a 'clock : true' attribute but without setup/hold check associated"
+    }
+  }
+
+}
+
+if {1} {
+  puts [format {
+ ########################################################################################
+ ##
+ ## Search for pins with a related setup/hold check but without a clock attribute 
+ ##
+ ########################################################################################
+}]
+
+  catch {unset DB}
+  # Find id of pins with setup/hold (FROM)
+  set relatedpinids [lsort -unique [SQL eval {
+    SELECT DISTINCT relatedpinid
+           FROM arc
+           WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%setup%')
+              OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%hold%')
+    ;
+  }] ]
+  # Find id of pins that have a clock attribute
+  set clockpinids [lsort -unique [SQL eval { SELECT DISTINCT id FROM pin WHERE clock IS NOT NULL }] ]
+  SQL eval "
+    SELECT DISTINCT
+           (SELECT name FROM cell WHERE id = pin.cellid ) AS 'cell',
+           id,
+           name AS 'pin',
+           direction
+    FROM pin
+    WHERE pin.id IN ('[join $relatedpinids ',']')
+          AND pin.id NOT IN ('[join $clockpinids ',']')
+    ORDER BY cell, pin;
+  " values {
+    if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+    lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
+  }
+
+  foreach cell [lsort -dictionary [array names DB]] {
+    puts " Processing $cell"
+    foreach elm $DB($cell) {
+      foreach {id pin dir} $elm { break }
+      puts "   Found $dir pin '$pin' with a setup/hold check associated but without a 'clock : true' attribute"
+    }
+  }
+
+}
+
+# Closing the SQLite3 database
+SQL close
+
+exit 0

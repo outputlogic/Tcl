@@ -1,0 +1,679 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    This utility queries SQLLite3 database from Vivado Message files
+##
+########################################################################################
+
+########################################################################################
+## 2014.11.06 - Code reorganization under namespace ::tb::msgutil
+##            - Minor improvements
+## 2014.06.06 - Initial release
+########################################################################################
+
+namespace eval ::tb {}
+
+namespace eval ::tb::msgutil {
+  namespace export msgQuery
+
+  variable SCRIPT_MSGQUERY_VERSION {11-06-2014}
+  variable VERBOSE 0
+  variable DEBUG 0
+  variable QUIET 0
+  
+  variable SQL
+}
+
+if {[catch {package require prettyTable}]} {
+  lappend auto_path {/home/dpefour/git/scripts/toolbox}
+  package require prettyTable
+}
+
+if {[catch {package require sqlite3}]} {
+  lappend auto_path {/home/dpefour/root/usr/lib/sqlite3.8.0.2}
+  package require sqlite3
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::msgutil::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+# #------------------------------------------------------------------------
+# # lrevert
+# #------------------------------------------------------------------------
+# # Reverse a list
+# #------------------------------------------------------------------------
+# proc ::tb::msgutil::lrevert L {
+#    for {set res {}; set i [llength $L]} {$i>0} {#see loop} {
+#        lappend res [lindex $L [incr i -1]]
+#    }
+#    set res
+# }
+
+#------------------------------------------------------------------------
+# execSQL
+#------------------------------------------------------------------------
+# Execute SQL command
+#------------------------------------------------------------------------
+proc ::tb::msgutil::execSQL {&SQL {cmd {pragma integrity_check} } } {
+
+  variable VERBOSE
+  variable DEBUG
+  if {$DEBUG} {
+    puts " DEBUG - SQL command: $cmd"
+  }
+
+  # Wait for the database to be unlocked
+#   while {[catch { uplevel [list ${&SQL} eval $cmd] } errorstring]} {}
+  while {[catch { set res [uplevel [list ${&SQL} eval $cmd]] } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database locked ..." }
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database read-only ..." }
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+#   return 0
+  return $res
+}
+
+##-----------------------------------------------------------------------
+## msgQuery
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::msgQuery {args} {
+
+  variable SCRIPT_MSGQUERY_VERSION
+  variable QUIET
+  variable VERBOSE
+  variable DEBUG
+  variable SQL
+
+  # SQLite3 database
+  set sqliteinmemory 0
+  set sqlitefilename {}
+  set snapshotpattern {%}
+  set filepattern {%}
+  set subsystempattern {%}
+  set descriptionpattern {%}
+  set formatpattern {%}
+  set gidpattern {%}
+  set idpattern {%}
+  set keypattern {%}
+  set modified_format_strpattern {%}
+  set notespattern {%}
+  set ownerpattern {%}
+  set reference_cntpattern {%}
+  set resolutionpattern {%}
+  set review_datepattern {%}
+  set reviewerpattern {%}
+  set severitypattern {%}
+  set statepattern {%}
+  set tagspattern {%}
+
+  set table {message}
+  set limit 999999999
+
+  set reportfilename {}
+  set filemode {w}
+  set format {table}
+  set header [list {rowid} {snapshot} {file} {subsystem} {gid} {id} {owner} {reference_cnt} {severity} {state} {tags} {reviewer} {review_date}]
+
+  set error 0
+  set show_help 0
+  set VERBOSE 0
+  set DEBUG 0
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -in-memory -
+      --in-memory {
+        # Hidden option to force msgQuery use the SQL database loaded in memory
+        set sqliteinmemory 1
+      }
+      -db -
+      --db {
+        set sqlitefilename [lshift args]
+      }
+      -snapshot -
+      -snapshot {
+        set snapshotpattern [lshift args]
+      }
+      -msgfile -
+      -msgfile {
+        set filepattern [lshift args]
+      }
+      -subsystem -
+      -subsystem {
+        set subsystempattern [lshift args]
+      }
+      -d -
+      -description {
+        set descriptionpattern [lshift args]
+      }
+      -f -
+      -format {
+        set formatpattern [lshift args]
+      }
+      -gid -
+      -gid {
+        set gidpattern [lshift args]
+      }
+      -id -
+      -id {
+        set idpattern [lshift args]
+      }
+      -key -
+      -key {
+        set keypattern [lshift args]
+      }
+      -modified -
+      -modified_format -
+      -modified_format_str {
+        set modified_format_strpattern [lshift args]
+      }
+      -note -
+      -notes {
+        set notespattern [lshift args]
+      }
+      -o -
+      -owner {
+        set ownerpattern [lshift args]
+      }
+      -ref -
+      -reference -
+      -reference_cnt {
+        set reference_cntpattern [lshift args]
+      }
+      -resolution -
+      -resolution {
+        set resolutionpattern [lshift args]
+      }
+      -review -
+      -review_date {
+        set review_datepattern [lshift args]
+      }
+      -r -
+      -reviewer {
+        set reviewerpattern [lshift args]
+      }
+      -s -
+      -severity {
+        set severitypattern [lshift args]
+      }
+      -state -
+      -state {
+        set statepattern [lshift args]
+      }
+      -tag -
+      -tags {
+        set tagspattern [lshift args]
+      }
+      -header -
+      -header {
+        set header [lshift args]
+      }
+      -report_type -
+      -report_type {
+        set type [lshift args]
+        switch $type {
+          default {
+            set header [list {rowid} {snapshot} {file} {subsystem} {gid} {id} {owner} {reference_cnt} {severity} {state} {tags} {reviewer} {review_date}]
+          }
+          full {
+            set header [list {rowid} {snapshot} {file} {subsystem} \
+                             {gid} {id} {owner} {reference_cnt} {severity} {state} {tags} {reviewer} {review_date} \
+                             {format} {key} {modified_format_str} {notes} {description} {resolution} \
+                             ]
+          }
+          msg -
+          message {
+            set header [list {gid} {id} {owner} {reference_cnt} {severity} {state} {tags} {reviewer} {review_date} \
+                             {format} {key} {modified_format_str} {notes} {description} {resolution} \
+                             ]
+          }
+          default {
+            puts " -E- invalid header type '$type'. The valid values are: default|full|message"
+            incr error
+          }
+        }
+      }
+      -l -
+      -limit {
+        set limit [lshift args]
+      }
+      -expand -
+      -expand {
+        # Use the SQL table 'v_message' instead of 'message'.
+        # This means that each message gid can only appear once per subsystem
+        set table {v_message}
+      }
+      -file {
+        set reportfilename [lshift args]
+      }
+      -a -
+      -append {
+        set filemode {a}
+      }
+      -table {
+        set format {table}
+      }
+      -csv {
+        set format {csv}
+      }
+      -list {
+        set format {list}
+      }
+      -v -
+      -verbose {
+          set VERBOSE 1
+      }
+      -d -
+      -debug {
+          set DEBUG 1
+          set VERBOSE 1
+      }
+      -h -
+      -help {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            set sqlitefilename $name
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: msgQuery
+                  [<sqlite3 database>|-db <sqlite3 database>]
+                  [-snapshot <pattern>]
+                  [-msgfile <pattern>]
+                  [-subsystem <pattern>]
+               +-------------------------------------------+
+                  [-d|-description <pattern>]
+                  [-f|-format <pattern>]
+                  [-gid <pattern>]
+                  [-id <pattern>]
+                  [-key <pattern>]
+                  [-modified|-modified_format|-modified_format_str <pattern>]
+                  [-note|-notes <pattern>]
+                  [-o|-owner <pattern>]
+                  [-ref|-reference|-reference_cnt <pattern>]
+                  [-resolution <pattern>]
+                  [-review|-review_date <pattern>]
+                  [-r|-reviewer <pattern>]
+                  [-s|-severity <pattern>]
+                  [-state <pattern>]
+                  [-tag|-tags <pattern>]
+               +-------------------------------------------+
+                  [-l|-limit <integer>]
+                  [-header <list_message_parameters>|-report_type default|full|message]
+                  [-file <filename>]
+                  [-a|-append]
+                  [-table|-csv|-list]
+                  [-expand]
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Utility to query Vivado Message SQLite3 database
+        The wildcard character for the patterns is %%
+
+        The -table|-csv|-list select the output format. The default is -table that
+        generates a tabular format. The -csv generates a CSV format. The -list generates
+        a list format.
+
+      Version: %s
+
+      Example:
+         msgQuery './messages.db' -severity '%%WARNING' -file myreport.csv -csv
+
+    } $SCRIPT_MSGQUERY_VERSION ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  # SQLite3 database
+  if {![file exists $sqlitefilename] && !$sqliteinmemory} {
+    puts " -E- file '$sqlitefilename' does not exist"
+    incr error
+  }
+
+  if {$error} {
+    puts "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+    return -code error
+  }
+
+  if {!$sqliteinmemory} {
+    # Open SQLite3 database
+    sqlite3 SQL[pid] $sqlitefilename -readonly true
+    set SQL SQL[pid]
+  }
+  execSQL $SQL
+  set dbVersion [$SQL eval { SELECT value FROM param WHERE property='version'; } ]
+
+  # set ownerids [$SQL eval "SELECT rowid FROM owner WHERE (name LIKE '$ownerpattern')"]
+  # puts "<ownerids:$ownerids>"
+  # set reviewerids [$SQL eval "SELECT rowid FROM reviewer WHERE (name LIKE '$reviewerpattern')"]
+  # puts "<reviewerids:$reviewerids>"
+  # set severityids [$SQL eval "SELECT rowid FROM severity WHERE (name LIKE '$severitypattern')"]
+  # puts "<severityids:$severityids>"
+  # set stateids [$SQL eval "SELECT rowid FROM state WHERE (name LIKE '$statepattern')"]
+  # puts "<stateids:$stateids>"
+  # set tagids [$SQL eval "SELECT rowid FROM tag WHERE (name LIKE '$tagspattern')"]
+  # puts "<tagids:$tagids>"
+
+  set snapshots [$SQL eval "SELECT name FROM snapshot WHERE (name LIKE '$snapshotpattern')"]
+  set files [$SQL eval "SELECT name FROM file WHERE (name LIKE '$filepattern')"]
+  set subsystems [$SQL eval "SELECT name FROM subsystem WHERE (name LIKE '$subsystempattern')"]
+  set owners [$SQL eval "SELECT name FROM owner WHERE (name LIKE '$ownerpattern')"]
+  set reviewers [$SQL eval "SELECT name FROM reviewer WHERE (name LIKE '$reviewerpattern')"]
+  set severitys [$SQL eval "SELECT name FROM severity WHERE (name LIKE '$severitypattern')"]
+  set states [$SQL eval "SELECT name FROM state WHERE (name LIKE '$statepattern')"]
+  set tags [$SQL eval "SELECT name FROM tag WHERE (name LIKE '$tagspattern')"]
+  # puts "<snapshots:$snapshots>"
+  # puts "<files:$files>"
+  # puts "<subsystems:$subsystems>"
+  # puts "<owners:$owners>"
+  # puts "<reviewers:$reviewers>"
+  # puts "<severitys:$severitys>"
+  # puts "<states:$states>"
+  # puts "<tags:$tags>"
+
+  if {([llength $snapshots] == 0) && ($snapshotpattern != {%})} {
+    puts " error - no snapshot match '$snapshotpattern'"
+    incr error
+  }
+
+  if {([llength $files] == 0) && ($filepattern != {%})} {
+    puts " error - no file match '$filepattern'"
+    incr error
+  }
+
+  if {([llength $subsystems] == 0) && ($subsystempattern != {%})} {
+    puts " error - no subsystem match '$subsystempattern'"
+    incr error
+  }
+
+  if {([llength $owners] == 0) && ($ownerpattern != {%})} {
+    puts " error - no owner match '$ownerpattern'"
+    incr error
+  }
+
+  if {([llength $reviewers] == 0) && ($reviewerpattern != {%})} {
+    puts " error - no reviewer match '$reviewerpattern'"
+    incr error
+  }
+
+  if {([llength $severitys] == 0) && ($severitypattern != {%})} {
+    puts " error - no severity match '$severitypattern'"
+    incr error
+  }
+
+  if {([llength $states] == 0) && ($statepattern != {%})} {
+    puts " error - no state match '$statepattern'"
+    incr error
+  }
+
+  if {([llength $tags] == 0) && ($tagspattern != {%})} {
+    puts " error - no tag match '$tagspattern'"
+    incr error
+  }
+
+  if {$error} {
+    if {!$sqliteinmemory} {
+      # Only close the SQL database if an on-disk database is used
+      $SQL close
+      set SQL {}
+    }
+#     exit 1
+    return -code error
+  }
+
+  set CMD "SELECT rowid
+           FROM v_message
+           WHERE (description LIKE '$descriptionpattern')
+                 AND (format LIKE '$formatpattern')
+                 AND (gid LIKE '$gidpattern')
+                 AND (id LIKE '$idpattern')
+                 AND (key LIKE '$keypattern')
+                 AND (modified_format_str LIKE '$modified_format_strpattern')
+                 AND (notes LIKE '$notespattern')
+                 AND (reference_cnt LIKE '$reference_cntpattern')
+                 AND (resolution LIKE '$resolutionpattern')
+                 AND (review_date LIKE '$review_datepattern') "
+
+
+  if {$snapshotpattern == {%}} {
+    append CMD "\n               AND ((snapshot IN ('[join $snapshots ',']')) OR (snapshot IS NULL))"
+  } else {
+    append CMD "\n               AND (snapshot IN ('[join $snapshots ',']'))"
+  }
+
+  if {$filepattern == {%}} {
+    append CMD "\n               AND ((file IN ('[join $files ',']')) OR (file IS NULL))"
+  } else {
+    append CMD "\n               AND (file IN ('[join $files ',']'))"
+  }
+
+  if {$subsystempattern == {%}} {
+    append CMD "\n               AND ((subsystem IN ('[join $subsystems ',']')) OR (subsystem IS NULL))"
+  } else {
+    append CMD "\n               AND (subsystem IN ('[join $subsystems ',']'))"
+  }
+
+  if {$ownerpattern == {%}} {
+    append CMD "\n               AND ((owner IN ('[join $owners ',']')) OR (owner IS NULL))"
+  } else {
+    append CMD "\n               AND (owner IN ('[join $owners ',']'))"
+  }
+
+  if {$severitypattern == {%}} {
+    append CMD "\n               AND ((severity IN ('[join $severitys ',']')) OR (severity IS NULL))"
+  } else {
+    append CMD "\n               AND (severity IN ('[join $severitys ',']'))"
+  }
+
+  if {$reviewerpattern == {%}} {
+    append CMD "\n               AND ((reviewer IN ('[join $reviewers ',']')) OR (reviewer IS NULL))"
+  } else {
+    append CMD "\n               AND (reviewer IN ('[join $reviewers ',']'))"
+  }
+
+  if {$tagspattern == {%}} {
+    append CMD "\n               AND ((tags IN ('[join $tags ',']')) OR (tags IS NULL))"
+  } else {
+    append CMD "\n               AND (tags IN ('[join $tags ',']'))"
+  }
+
+  if {$statepattern == {%}} {
+    append CMD "\n               AND ((state IN ('[join $states ',']')) OR (state IS NULL))"
+  } else {
+    append CMD "\n               AND (state IN ('[join $states ',']'))"
+  }
+
+#   puts <CMD:$CMD>"
+  set messageids [lsort -unique -integer [$SQL eval $CMD]]
+  if {[llength $messageids] == 0} {
+    puts " error - no message match\n"
+    if {!$sqliteinmemory} {
+      # Only close the SQL database if an on-disk database is used
+      $SQL close
+      set ::tb::msgutil::SQL {}
+    }
+    return -code error
+#     exit 1
+  }
+  # puts "<messageids:$messageids>"
+
+  switch $table {
+    message {
+      set CMD "SELECT message.*,
+                  snapshot.name AS snapshot,
+                  file.name AS file,
+                  subsystem.name AS subsystem
+           FROM message
+           JOIN snapshot ON message.snapshotid = snapshot.rowid
+           JOIN file ON message.fileid = file.rowid
+           JOIN subsystem ON message.subsystemid = subsystem.rowid
+           WHERE message.rowid IN ('[join $messageids ',']')
+           ORDER BY rowid ASC
+           LIMIT ${limit}
+           "
+    }
+    v_message {
+      set CMD "SELECT *
+           FROM v_message
+           WHERE rowid IN ('[join $messageids ',']')
+           ORDER BY rowid ASC
+           LIMIT ${limit}
+           "
+    }
+    default {
+      puts " error - invalid table name '$table'\n"
+      return -code error
+    }
+  }
+
+  set tbl [::tb::prettyTable "Vivado Message Summary\nDatabase: [file normalize $sqlitefilename]"]
+#   $tbl header [list {#} {snapshot} {file} {subsystem} {gid} {id} {owner} {reference_cnt} {severity} {state} {tags} {reviewer} {review_date}]
+  $tbl header $header
+
+  set count 0
+  $SQL eval $CMD values {
+    foreach elm {snapshot file subsystem description format gid id key modified_format_str notes owner reference_cnt resolution review_date reviewer severity state tags} {
+      if {![info exists values($elm)]} { set values($elm) {} }
+    }
+    set row [list]
+#     foreach elm [list {rowid} {snapshot} {file} {subsystem} {gid} {id} {owner} {reference_cnt} {severity} {state} {tags} {reviewer} {review_date} ] { lappend row $values($elm) }
+    foreach elm $header { lappend row $values($elm) }
+    $tbl addrow $row
+    incr count
+  }
+
+  if {1} {
+    # Sorting table by gid column
+    set col [lsearch $header {gid}]
+    if {$col != -1} {
+      $tbl sort -dictionary +4
+    }
+  }
+
+  if {$reportfilename == {}} {
+    switch $format {
+      table {
+        puts [$tbl print]
+      }
+      csv {
+        puts [$tbl export -format csv]
+      }
+      list {
+        puts [$tbl export -format list]
+      }
+      default {
+      }
+    }
+  } else {
+    set reportFH [open $reportfilename $filemode]
+    switch $format {
+      table {
+        puts $reportFH [$tbl print]
+      }
+      csv {
+        puts $reportFH [$tbl export -format csv]
+      }
+      list {
+        puts $reportFH [$tbl export -format list]
+      }
+      default {
+      }
+    }
+    close $reportFH
+    puts " File [file normalize $reportfilename] generated"
+  }
+
+  puts "  Found $count row(s)"
+
+  catch {$tbl destroy}
+
+  if {!$sqliteinmemory} {
+    # Only close the SQL database if an on-disk database is used
+    $SQL close
+    set SQL {}
+  }
+
+  return -code ok
+}
+
+namespace eval ::tb {
+  namespace import ::tb::msgutil::msgQuery
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::tb::msgutil::QUIET 1
+set ::tb::msgutil::VERBOSE 0
+set ::tb::msgutil::DEBUG 0
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set ::tb::msgutil::QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$::tb::msgutil::QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tb::msgutil::msgQuery
+} else {
+  if {[catch {eval [concat ::tb::msgutil::msgQuery $argv]} errorstring]} {
+    puts $errorstring
+    # Closing the SQLite3 database
+    catch {$::tb::msgutil::SQL close}
+    exit 1
+  }
+  exit 0
+}

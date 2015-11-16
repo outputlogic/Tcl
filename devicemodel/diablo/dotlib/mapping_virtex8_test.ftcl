@@ -1,0 +1,116 @@
+
+# This file includes name mapping for cell names and pin names. it is used by various scripts like 'normalize'
+
+# VERSION: 05-07-2014
+
+array set cellNameRemap {
+  ABUS_SWITCH_TEST             ABUS_SWITCH         
+  BITSLICE_CONTROL_TEST        BITSLICE_CONTROL    
+  BITSLICE_FF_TEST             BITSLICE_FF         
+  BYTE_TEST                    BYTE                
+  CMAC_TEST                    CMAC                
+  FIFO36E2_TEST                FIFO36E2            
+  GTHE3_CHANNEL_TEST           GTHE3_CHANNEL       
+  GTHE3_COMMON_TEST            GTHE3_COMMON        
+  GTYE3_CHANNEL_TEST           GTYE3_CHANNEL       
+  GTYE3_COMMON_TEST            GTYE3_COMMON        
+  HARD_SYNC_TEST               HARD_SYNC           
+  HPIO_DIFFINBUF_TEST          HPIO_DIFFINBUF      
+  HPIO_DIFFOUTBUF_TEST         HPIO_DIFFOUTBUF     
+  HPIO_INBUF_TEST              HPIO_INBUF          
+  HPIO_OUTBUF_TEST             HPIO_OUTBUF         
+  HPIO_VREF_TEST               HPIO_VREF           
+  HRIO_DIFFINBUF_TEST          HRIO_DIFFINBUF      
+  HRIO_DIFFOUTBUF_TEST         HRIO_DIFFOUTBUF     
+  HRIO_INBUF_TEST              HRIO_INBUF          
+  HRIO_OUTBUF_TEST             HRIO_OUTBUF         
+  IBUFDS_GTE3_TEST             IBUFDS_GTE3         
+  IBUFDS_GTYE3_TEST            IBUFDS_GTYE3        
+  IDELAYE3_TEST                IDELAYE3            
+  ILKN_TEST                    ILKN                
+  ISERDESE3_TEST               ISERDESE3           
+  MMCME3_TEST                  MMCME3              
+  MTBF3_TEST                   MTBF3               
+  OBUFDS_GTE3_TEST             OBUFDS_GTE3         
+  OBUFDS_GTYE3_TEST            OBUFDS_GTYE3        
+  ODELAYE3_TEST                ODELAYE3            
+  OSERDESE3_TEST               OSERDESE3           
+  PCIE_3_1_TEST                PCIE_3_1            
+  PLL_SELECT_TEST              PLL_SELECT          
+  PLLE3_TEST                   PLLE3               
+  PMV2_TEST                    PMV2                
+  PMV_FPGA_TEST                PMV_FPGA            
+  PMV_TEST                     PMV                 
+  PMVIOB2_TEST                 PMVIOB2             
+  PMVIOB_TEST                  PMVIOB              
+  PULL_TEST                    PULL                
+  RAMB36E2_TEST                RAMB36E2            
+  RIU_OR_TEST                  RIU_OR              
+  RX_BITSLICE_TEST             RX_BITSLICE         
+  RXTX_BITSLICE_TEST           RXTX_BITSLICE       
+  SYSMONE1_TEST                SYSMONE1            
+  TX_BITSLICE_TEST             TX_BITSLICE         
+  TX_BITSLICE_TRI_TEST         TX_BITSLICE_TRI     
+}
+
+# The cell names inside the array below are after the cell name remapping
+# from K8 to K7:
+#   <cellpattern> { <pinpattern_k8> <pin_k7> }
+set pinNameRemap [list]
+
+array set headerRemap {
+  {Mapped Cell Name}                   {Mapped Cell Name}
+  {Mapped Pin Name}                    {Mapped Pin Name}
+  {Cell Name}                          {Cell Name}
+  {Pin Name}                           {Pin Name}
+  {IN}                                 {IN}
+  {OUT}                                {OUT}
+  {ARC}                                {ARC}
+  {RELATED PIN}                        {RELATED PIN}
+  {HAS FCT}                            {HAS FCT}
+  {FCT}                                {FCT}
+  {TIMING TYPE}                        {TIMING TYPE}
+  {TIMING SENSE}                       {TIMING SENSE}
+  {FPGA ARC CONDITION}                 {FPGA ARC CONDITION}
+  setup_falling|                       setup_fal
+  setup_rising|                        setup_ris
+  hold_falling|                        hold_fal
+  hold_rising|                         hold_ris
+  recovery_falling|                    rec_fal
+  recovery_rising|                     rec_ris
+  removal_falling|                     rem_fal
+  removal_rising|                      rem_ris
+  combinational|                       comb
+  combinational|negative_unate         comb_neg_una
+  combinational|positive_unate         comb_pos_una
+  clear|negative_unate                 cle_neg_una
+  preset|positive_unate                pre_pos_una
+  falling_edge|                        fal_edg
+  falling_edge|positive_unate          fal_edg_pos_una
+  rising_edge|                         ris_edg
+  rising_edge|negative_unate           ris_edg_neg_una
+  rising_edge|positive_unate           ris_edg_pos_una
+  three_state_disable|positive_unate   3state_dis_pos_una
+  three_state_enable|negative_unate    3state_ena_neg_una
+  min_pulse_width|                     min_pulse_width
+  minimum_period|                      min_period
+  skew_falling|                        skew_fal
+  skew_rising|                         skew_ris
+}
+
+set COEGroups [list \
+  {AMS}       { SYSMONE1 }                                                                                                                                                                               \
+  {CLB}       { AND2B1L CARRY8 CFGLUT5 FDCE FDPE FDRE FDSE HARD_SYNC INV LDCE LDPE LUT1 LUT2 LUT3 LUT4 LUT5 LUT6 MUXF7 MUXF8 MUXF9 OR2L RAMD32 RAMD64E RAMS32 RAMS64E RAMS64E1 SRL16E SRLC16E SRLC32E }  \
+  {CLOCK}     { BUFG_GT BUFCE_LEAF BUFCE_ROW BUFGCE BUFGCE_DIV BUFGCTRL MMCME3_ADV MMCME3_BASE PLLE3_ADV PLLE3_BASE }                                                                                    \
+  {CMAC}      { CMAC }                                                                                                                                                                                   \
+  {CONFIG}    { BSCANE2 DNA_PORTE2 EFUSE_USR FRAME_ECCE3 ICAPE3 INBUF MASTER_JTAG STARTUPE3 USR_ACCESSE2 }                                                                                               \
+  {DSP}       { DSP_ALU DSP_A_B_DATA DSP_C_DATA DSP_MULTIPLIER DSP_M_DATA DSP_OUTPUT DSP_PREADD DSP_PREADD_DATA }                                                                                        \
+  {GT}        { GTHE3_CHANNEL GTHE3_COMMON IBUFDS_GTE3 OBUFDS_GTE3 OBUFDS_GTE3_ADV }                                                                                                                     \
+  {ILKN}      { ILKN }                                                                                                                                                                                   \
+  {IO}        { DCIRESET DIFFINBUF HPIO_VREF IBUFCTRL KEEPER OBUF OBUFDS OBUFT OBUFTDS OBUFTDSE3 OBUFTDS_DCIEN OBUFTE3 OBUFT_DCIEN PULLDOWN PULLUP }                                                     \
+  {PCI}       { PCIE_3_1 }                                                                                                                                                                               \
+  {RAMB}      { FIFO18E2 FIFO36E2 RAMB18E2 RAMB36E2 }                                                                                                                                                    \
+  {XIPHY}     { BITSLICE_CONTROL IDELAYCTRL IDELAYE3 ISERDESE3 ODELAYE3 OSERDESE3 OSERDESE3_ODDR RIU_OR RXTX_BITSLICE RX_BITSLICE TX_BITSLICE TX_BITSLICE_TRI }                                          \
+  {MISC}      { VCC GND }
+]
+

@@ -1,0 +1,121 @@
+#!/bin/bash
+
+DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+
+if [ -z "$SCR" ]; then
+    # Environment variable SCR is not set. Point to default location
+    SCR="/proj/xsjhdstaff2/dpefour/support/Olympus/dotlib/scripts_DEV"
+fi
+
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7 zynquplus
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu zynquplus
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7 virtexu
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7 kintexu
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7 virtex7
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu virtexu
+
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.3 kintex7_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.3 virtex7_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.3 kintexu_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu_2015.3 virtexu_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexuplus_2015.3 kintexuplus_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexuplus_2015.3 virtexuplus_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash zynquplus_2015.3 zynquplus_2015.4
+
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.3 kintex7_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.3 virtex7_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.3 kintexu_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu_2015.3 virtexu_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexuplus_2015.3 kintexuplus_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexuplus_2015.3 virtexuplus_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash zynquplus_2015.3 zynquplus_2016.1
+
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.4 kintex7_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.4 virtex7_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.4 kintexu_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu_2015.4 virtexu_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexuplus_2015.4 kintexuplus_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexuplus_2015.4 virtexuplus_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash zynquplus_2015.4 zynquplus_2016.1
+
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.3 virtex7_2015.3
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.3 virtexu_2015.3
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexuplus_2015.3 virtexuplus_2015.3
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.3 kintexu_2015.3
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.3 kintexuplus_2015.3
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.3 virtexu_2015.3
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.3 virtexuplus_2015.3
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.3 zynquplus_2015.3
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.3 kintexuplus_2015.3
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu_2015.3 virtexuplus_2015.3
+
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.4 virtex7_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.4 virtexu_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexuplus_2015.4 virtexuplus_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.4 kintexu_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.4 kintexuplus_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.4 virtexu_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.4 virtexuplus_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.4 zynquplus_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.4 kintexuplus_2015.4
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu_2015.4 virtexuplus_2015.4
+
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2016.1 virtex7_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2016.1 virtexu_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexuplus_2016.1 virtexuplus_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2016.1 kintexu_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2016.1 kintexuplus_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2016.1 virtexu_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2016.1 virtexuplus_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2016.1 zynquplus_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2016.1 kintexuplus_2016.1
+bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu_2016.1 virtexuplus_2016.1
+
+
+
+####################################################################
+##
+## OLDER
+##
+####################################################################
+
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.1 virtex7_2015.2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.1 virtex7_2015.2_zub2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.1 virtex7_2015.3
+# 
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.1 kintex7_2015.2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.1 kintex7_2015.2_zub2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.1 kintex7_2015.3
+# 
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu_2015.1 virtexu_2015.2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu_2015.1 virtexu_2015.2_zub2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu_2015.1 virtexu_2015.3
+# 
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.1 kintexu_2015.2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.1 kintexu_2015.2_zub2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.1 kintexu_2015.3
+# 
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash zynquplus_2015.2_zub2 zynquplus_2015.3
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtexu_2015.2_zub2 zynquplus_2015.2_zub2
+# 
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.1 virtexu_2015.1
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.1 kintexu_2015.1
+# 
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.2 virtexu_2015.2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.2 kintexu_2015.2
+# 
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.2_zub2 virtexu_2015.2_zub2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.2_zub2 kintexu_2015.2_zub2
+# 
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash virtex7_2015.3 virtexu_2015.3
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.3 kintexu_2015.3
+# 
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.1 virtex7_2015.1
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.2 virtex7_2015.2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.2_zub2 virtex7_2015.2_zub2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintex7_2015.3 virtex7_2015.3
+# 
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.1 virtexu_2015.1
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.2 virtexu_2015.2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.2_zub2 virtexu_2015.2_zub2
+# bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long ${SCR}/compare.bash kintexu_2015.3 virtexu_2015.3

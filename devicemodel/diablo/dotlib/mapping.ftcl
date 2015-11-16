@@ -1,0 +1,252 @@
+
+# This file includes name mapping for cell names and pin names. it is used by various scripts like 'normalize'
+
+########################################################################################
+## 10-21-2015 - Added mapping for IBUFDS_GTE4, OBUFDS_GTE4_ADV, OBUFDS_GTE4, GTYE*_COMMON
+##              GTYE*_CHANNEL, MMCME4_ADV, PLLE4_ADV, PCIE40E4, CMACE4, ILKNE4
+## 05-12-2015 - headerRemap: added support for internal pins (DIR column vs IN/OUT columns) 
+##            - Added initial mappings for Diablo
+## 05-07-2014 - Initial release
+########################################################################################
+
+# VERSION: 10-21-2015
+
+array set cellNameRemap {
+  BSCANE2            BSCAN
+  CAPTUREE2          CAPTURE
+  CMAC               CMAC
+  CMACE4             CMAC
+  DNA_PORTE2         DNA_PORT
+  DSP48E1            DSP48
+  FIFO18E1           FIFO18
+  FIFO18E2           FIFO18
+  FIFO36E1           FIFO36
+  FIFO36E2           FIFO36
+  FRAME_ECCE2        FRAME_ECC
+  FRAME_ECCE3        FRAME_ECC
+  FRAME_ECCE4        FRAME_ECC
+  GTHE2_CHANNEL      GTH_CHANNEL
+  GTHE3_CHANNEL      GTH_CHANNEL
+  GTHE4_CHANNEL      GTH_CHANNEL
+  GTHE2_COMMON       GTH_COMMON
+  GTHE3_COMMON       GTH_COMMON
+  GTHE4_COMMON       GTH_COMMON
+  GTYE3_COMMON       GTY_COMMON
+  GTYE4_COMMON       GTY_COMMON
+  GTYE3_CHANNEL      GTY_CHANNEL
+  GTYE4_CHANNEL      GTY_CHANNEL
+  GTPE2_CHANNEL      GTP_CHANNEL
+  GTPE2_COMMON       GTP_COMMON
+  GTXE2_CHANNEL      GTX_CHANNEL
+  GTXE2_COMMON       GTX_COMMON
+  GTZE2_OCTAL        GTZ_OCTAL
+  IBUFDS_GTE2        IBUFDS_GT
+  IBUFDS_GTE3        IBUFDS_GT
+  IBUFDS_GTE4        IBUFDS_GT
+  ICAPE3             ICAP
+  ICAPE3             ICAP
+  IDELAYE2_FINEDELAY IDELAY_FINEDELAY
+  IDELAYE2           IDELAY
+  IDELAYE3           IDELAY
+  ILKN               ILKN
+  ILKNE4             ILKN
+  ISERDESE2          ISERDES
+  ISERDESE3          ISERDES
+  MMCME2_ADV         MMCM_ADV
+  MMCME3_ADV         MMCM_ADV
+  MMCME4_ADV         MMCM_ADV
+  MMCME2_BASE        MMCM_BASE
+  MMCME3_BASE        MMCM_BASE
+  OBUFDS_GTE3        OBUFDS_GT
+  OBUFDS_GTE4        OBUFDS_GT
+  OBUFDS_GTE3_ADV    OBUFDS_GT_ADV
+  OBUFDS_GTE4_ADV    OBUFDS_GT_ADV
+  OBUFTDSE3          OBUFTDS
+  OBUFTE3            OBUFT
+  ODELAYE2_FINEDELAY ODELAY_FINEDELAY
+  ODELAYE2           ODELAY
+  ODELAYE3           ODELAY
+  OSERDESE2          OSERDES
+  OSERDESE3          OSERDES
+  OSERDESE3_ODDR     OSERDES_ODDR
+  PLLE2_BASE         PLL_BASE
+  PLLE3_BASE         PLL_BASE
+  PLLE2_ADV          PLL_ADV
+  PLLE3_ADV          PLL_ADV
+  PLLE4_ADV          PLL_ADV
+  RAMB18E1           RAMB18
+  RAMB18E2           RAMB18
+  RAMB36E1           RAMB36
+  RAMB36E2           RAMB36
+  RAMS64E1           RAMS64
+  STARTUPE2          STARTUP
+  STARTUPE3          STARTUP
+  SYSMONE1           SYSMON
+  SYSMONE4           SYSMON
+  USR_ACCESSE2       USR_ACCESS
+  PCIE_3_0           PCIE3
+  PCIE_3_1           PCIE3
+  PCIE40E4           PCIE4
+}
+
+#  PCIE_2_1           PCIE
+#  PCIE_3_0           PCIE
+#  PCIE_3_1           PCIE
+
+
+# The cell names inside the array below are after the cell name remapping
+# from K8 to K7:
+#   <cellpattern> { <pinpattern_k8> <pin_k7> }
+set pinNameRemap [list]
+set pinNameRemap [list \
+  \
+  {^RAMB18$}        { {^DINADIN\[(.+)\]$}          {DIADI[\1]} }               \
+  {^RAMB18$}        { {^DINBDIN\[(.+)\]$}          {DIBDI[\1]} }               \
+  {^RAMB18$}        { {^DINPADINP\[(.+)\]$}        {DIPADIP[\1]} }             \
+  {^RAMB18$}        { {^DINPBDINP\[(.+)\]$}        {DIPBDIP[\1]} }             \
+  {^RAMB18$}        { {^DOUTADOUT\[(.+)\]$}        {DOADO[\1]} }               \
+  {^RAMB18$}        { {^DOUTBDOUT\[(.+)\]$}        {DOBDO[\1]} }               \
+  {^RAMB18$}        { {^DOUTPADOUTP\[(.+)\]$}      {DOPADOP[\1]} }             \
+  {^RAMB18$}        { {^DOUTPBDOUTP\[(.+)\]$}      {DOPBDOP[\1]} }             \
+  \
+  {^RAMB36$}        { {^DINADIN\[(.+)\]$}          {DIADI[\1]} }               \
+  {^RAMB36$}        { {^DINBDIN\[(.+)\]$}          {DIBDI[\1]} }               \
+  {^RAMB36$}        { {^DINPADINP\[(.+)\]$}        {DIPADIP[\1]} }             \
+  {^RAMB36$}        { {^DINPBDINP\[(.+)\]$}        {DIPBDIP[\1]} }             \
+  {^RAMB36$}        { {^DOUTADOUT\[(.+)\]$}        {DOADO[\1]} }               \
+  {^RAMB36$}        { {^DOUTBDOUT\[(.+)\]$}        {DOBDO[\1]} }               \
+  {^RAMB36$}        { {^DOUTPADOUTP\[(.+)\]$}      {DOPADOP[\1]} }             \
+  {^RAMB36$}        { {^DOUTPBDOUTP\[(.+)\]$}      {DOPBDOP[\1]} }             \
+  \
+  {^FIFO18$}        { {^DIN\[(.+)\]$}              {DI[\1]} }                  \
+  {^FIFO18$}        { {^DINP\[(.+)\]$}             {DIP[\1]} }                 \
+  {^FIFO18$}        { {^DOUT\[(.+)\]$}             {DO[\1]} }                  \
+  {^FIFO18$}        { {^DOUTP\[(.+)\]$}            {DOP[\1]} }                 \
+  \
+  {^FIFO36$}        { {^DIN\[(.+)\]$}              {DI[\1]} }                  \
+  {^FIFO36$}        { {^DINP\[(.+)\]$}             {DIP[\1]} }                 \
+  {^FIFO36$}        { {^DOUT\[(.+)\]$}             {DO[\1]} }                  \
+  {^FIFO36$}        { {^DOUTP\[(.+)\]$}            {DOP[\1]} }                 \
+  \
+  {^PLL_ADV$}       { {^CLKIN$}                    {CLKIN1} }                  \
+  \
+  {^PLL_BASE$}      { {^CLKIN$}                    {CLKIN1} }                  \
+  \
+  {^ODELAY$}        { {^CLK$}                      {C} }                       \
+  \
+  {^IDELAY$}        { {^CLK$}                      {C} }                       \
+  {^IDELAY$}        { {^LOAD$}                     {LD} }                      \
+  \
+  {^IDELAY$}        { {^CLK_B$}                    {CLKB} }                    \
+  {^ISERDES$}       { {^Q\[0\]$}                   {Q1} }                      \
+  {^ISERDES$}       { {^Q\[1\]$}                   {Q2} }                      \
+  {^ISERDES$}       { {^Q\[2\]$}                   {Q3} }                      \
+  {^ISERDES$}       { {^Q\[3\]$}                   {Q4} }                      \
+  {^ISERDES$}       { {^Q\[4\]$}                   {Q5} }                      \
+  {^ISERDES$}       { {^Q\[5\]$}                   {Q6} }                      \
+  {^ISERDES$}       { {^Q\[6\]$}                   {Q7} }                      \
+  {^ISERDES$}       { {^Q\[7\]$}                   {Q8} }                      \
+  \
+  {^OSERDES$}       { {^D\[0\]$}                   {D1} }                      \
+  {^OSERDES$}       { {^D\[1\]$}                   {D2} }                      \
+  {^OSERDES$}       { {^D\[2\]$}                   {D3} }                      \
+  {^OSERDES$}       { {^D\[3\]$}                   {D4} }                      \
+  {^OSERDES$}       { {^D\[4\]$}                   {D5} }                      \
+  {^OSERDES$}       { {^D\[5\]$}                   {D6} }                      \
+  {^OSERDES$}       { {^D\[6\]$}                   {D7} }                      \
+  {^OSERDES$}       { {^D\[7\]$}                   {D8} }                      \
+  \
+  {^GTH_COMMON$}    { {^GTGREFCLK0$}               {GTGREFCLK} }               \
+  {^GTH_COMMON$}    { {^GTNORTHREFCLK00$}          {GTNORTHREFCLK0} }          \
+  {^GTH_COMMON$}    { {^GTNORTHREFCLK10$}          {GTNORTHREFCLK1} }          \
+  {^GTH_COMMON$}    { {^GTREFCLK00$}               {GTREFCLK0} }               \
+  {^GTH_COMMON$}    { {^GTREFCLK10$}               {GTREFCLK1} }               \
+  {^GTH_COMMON$}    { {^GTSOUTHREFCLK00$}          {GTSOUTHREFCLK0} }          \
+  {^GTH_COMMON$}    { {^GTSOUTHREFCLK10$}          {GTSOUTHREFCLK1} }          \
+  {^GTH_COMMON$}    { {^PMARSVD0\[(.+)\]$}         {PMARSVD[\1]} }             \
+  {^GTH_COMMON$}    { {^PMARSVDOUT0\[(.+)\]$}      {PMARSVDOUT[\1]} }          \
+  {^GTH_COMMON$}    { {^QPLL0FBCLKLOST$}           {QPLLFBCLKLOST} }           \
+  {^GTH_COMMON$}    { {^QPLL0LOCK$}                {QPLLLOCK} }                \
+  {^GTH_COMMON$}    { {^QPLL0LOCKDETCLK$}          {QPLLLOCKDETCLK} }          \
+  {^GTH_COMMON$}    { {^QPLL0OUTCLK$}              {QPLLOUTCLK} }              \
+  {^GTH_COMMON$}    { {^QPLL0OUTREFCLK$}           {QPLLOUTREFCLK} }           \
+  {^GTH_COMMON$}    { {^QPLL0PD$}                  {QPLLPD} }                  \
+  {^GTH_COMMON$}    { {^QPLL0REFCLKLOST$}          {QPLLREFCLKLOST} }          \
+  {^GTH_COMMON$}    { {^QPLL0REFCLKSEL\[(.+)\]$}   {QPLLREFCLKSEL[\1]} }       \
+  {^GTH_COMMON$}    { {^QPLL0RESET$}               {QPLLRESET} }               \
+  {^GTH_COMMON$}    { {^QPLLDMONITOR0\[(.+)\]$}    {QPLLDMONITOR[\1]} }        \
+  {^GTH_COMMON$}    { {^REFCLKOUTMONITOR0$}        {REFCLKOUTMONITOR} }        \
+  \
+  {^GTH_CHANNEL$}   { {^QPLL0CLK$}                 {QPLLCLK} }                 \
+  {^GTH_CHANNEL$}   { {^QPLL0REFCLK$}              {QPLLREFCLK} }              \
+  {^GTH_CHANNEL$}   { {^TXHEADER\[(.+)\]$}         {TXHEADER[\1]} }            \
+  {^GTH_CHANNEL$}   { {^RXDATA\[(.+)\]$}           {RXDATA[\1]} }              \
+  {^GTH_CHANNEL$}   { {^RXPRBSSEL\[(.+)\]$}        {RXPRBSSEL[\1]} }           \
+  {^GTH_CHANNEL$}   { {^TXDATA\[(.+)\]$}           {TXDATA[\1]} }              \
+  \
+]
+
+# set pinNameRemap [list \
+#   {^RAMB18$}         { {^DINADIN\[(.+)\]$}           {DIADI[\1]} }    \
+#   {^RAMB36$}         { {^DINADIN\[(.+)\]$}           {DIADI[\1]} }    \
+# }
+
+array set headerRemap {
+  {Mapped Cell Name}                   {Mapped Cell Name}
+  {Mapped Pin Name}                    {Mapped Pin Name}
+  {Cell Name}                          {Cell Name}
+  {Pin Name}                           {Pin Name}
+  {DIR}                                {DIR}
+  {IN}                                 {IN}
+  {OUT}                                {OUT}
+  {CLOCK}                              {CLOCK}
+  {ARC}                                {ARC}
+  {RELATED PIN}                        {RELATED PIN}
+  {HAS FCT}                            {HAS FCT}
+  {FCT}                                {FCT}
+  {TIMING TYPE}                        {TIMING TYPE}
+  {TIMING SENSE}                       {TIMING SENSE}
+  {FPGA ARC CONDITION}                 {FPGA ARC CONDITION}
+  setup_falling|                       setup_fal
+  setup_rising|                        setup_ris
+  hold_falling|                        hold_fal
+  hold_rising|                         hold_ris
+  recovery_falling|                    rec_fal
+  recovery_rising|                     rec_ris
+  removal_falling|                     rem_fal
+  removal_rising|                      rem_ris
+  combinational|                       comb
+  combinational|negative_unate         comb_neg_una
+  combinational|positive_unate         comb_pos_una
+  clear|negative_unate                 cle_neg_una
+  preset|positive_unate                pre_pos_una
+  falling_edge|                        fal_edg
+  falling_edge|negative_unate          fal_edg_neg_una
+  falling_edge|positive_unate          fal_edg_pos_una
+  rising_edge|                         ris_edg
+  rising_edge|negative_unate           ris_edg_neg_una
+  rising_edge|positive_unate           ris_edg_pos_una
+  three_state_disable|positive_unate   3state_dis_pos_una
+  three_state_enable|negative_unate    3state_ena_neg_una
+  min_pulse_width|                     min_pulse_width
+  minimum_period|                      min_period
+  skew_falling|                        skew_fal
+  skew_rising|                         skew_ris
+}
+
+set COEGroups [list \
+  {AMS}       { SYSMONE1 SYSMONE4 }                                                                                                                                                                               \
+  {CLB}       { AND2B1L CARRY4 CARRY8 CFGLUT5 FDCE FDPE FDRE FDSE HARD_SYNC INV LDCE LDPE LUT1 LUT2 LUT3 LUT4 LUT5 LUT6 MUXF7 MUXF8 MUXF9 OR2L RAMD32 RAMD64E RAMS32 RAMS64E RAMS64E1 SRL16E SRLC16E SRLC32E }  \
+  {CLOCK}     { BUFG_GT BUFCE_LEAF BUFCE_ROW BUFGCE BUFGCE_DIV BUFGCTRL MMCME2_ADV MMCME2_BASE PLLE2_ADV PLLE2_BASE MMCME3_ADV MMCME3_BASE PLLE3_ADV PLLE3_BASE MMCME4_ADV PLLE4_ADV }                                                                                    \
+  {CMAC}      { CMAC CMACE4 }                                                                                                                                                                                   \
+  {CONFIG}    { BSCANE2 DNA_PORTE2 EFUSE_USR FRAME_ECCE2 FRAME_ECCE3 FRAME_ECCE4 ICAPE3 INBUF MASTER_JTAG STARTUPE2 STARTUPE3 USR_ACCESSE2 }                                                                                               \
+  {DSP}       { DSP48E1 DSP_ALU DSP_A_B_DATA DSP_C_DATA DSP_MULTIPLIER DSP_M_DATA DSP_OUTPUT DSP_PREADD DSP_PREADD_DATA }                                                                                        \
+  {GT}        { GTHE2_CHANNEL GTHE2_COMMON GTPE2_CHANNEL GTPE2_COMMON GTXE2_CHANNEL GTXE2_COMMON GTHE3_CHANNEL GTHE3_COMMON GTYE3_CHANNEL GTYE3_COMMON GTYE4_CHANNEL GTYE4_COMMON GTHE4_CHANNEL GTHE4_COMMON IBUFDS_GTE3 IBUFDS_GTE4 OBUFDS_GTE3 OBUFDS_GTE4 OBUFDS_GTE3_ADV OBUFDS_GTE4_ADV }                                                                                                                     \
+  {ILKN}      { ILKN ILKNE4 }                                                                                                                                                                                   \
+  {IO}        { DCIRESET DIFFINBUF HPIO_VREF IBUFCTRL KEEPER OBUF OBUFDS OBUFT OBUFTDS OBUFTDSE3 OBUFTDS_DCIEN OBUFTE3 OBUFT_DCIEN PULLDOWN PULLUP }                                                     \
+  {PCI}       { PCIE_3_1 PCIE40E4 }                                                                                                                                                                               \
+  {RAMB}      { FIFO18E1 FIFO36E1 RAMB18E1 RAMB36E1 FIFO18E2 FIFO36E2 RAMB18E2 RAMB36E2 }                                                                                                                                                    \
+  {XIPHY}     { BITSLICE_CONTROL IDELAYCTRL IDELAYE2_FINEDELAY IDELAYE2 IDELAYE3 ISERDESE3 ODELAYE3 OSERDESE3 OSERDESE3_ODDR RIU_OR RXTX_BITSLICE RX_BITSLICE TX_BITSLICE TX_BITSLICE_TRI }                                          \
+  {MISC}      { VCC GND }                                                                                                                                                                                \
+]
+

@@ -1,0 +1,308 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+set SCRIPT_VERSION {01-31-2014}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  error " ERROR - this script is meant to be executed and not sourced.\n"
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## join-csv
+##-----------------------------------------------------------------------
+## Convert a Tcl list to a CSV-friedly string
+##-----------------------------------------------------------------------
+proc join-csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+#-----------------------------------------------------------------------
+## split-csv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc split-csv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## read-csv
+##-----------------------------------------------------------------------
+## Read CSV file and return a Table object
+##-----------------------------------------------------------------------
+proc read-csv {filename {csvDelimiter ,}} {
+  if {![file exists $filename]} {
+    error " -E- file '$filename' does not exist"
+  }
+  set result [list]
+  set FH [open $filename]
+  set first 1
+  set count 0
+  while {![eof $FH]} {
+    gets $FH line
+    # Skip comments and empty lines
+    if {[regexp {^\s*#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    lappend result [split-csv $line $csvDelimiter]
+    incr count
+  }
+  close $FH
+  if {$::VERBOSE} {
+    puts " -I- Header: [lindex $result 0]"
+    puts " -I- Number of imported row(s): $count"
+  }
+  return $result
+}
+
+##-----------------------------------------------------------------------
+## MAIN
+##-----------------------------------------------------------------------
+
+set VERBOSE 0
+set DEBUG 0
+
+# Original CSV from checkDSP48E1Arcs.tcl (checkDSP48E1Arcs -cell DSP48E2_inst -file ultrascale.csv -csv -v) that includes
+# the list of 7-serie timing arcs that have been checked as UltraScale timing paths
+set ifilename {ultrascale.arcs.csv}
+# Output CSV file name. The output CSV file include all the timing arcs that could not be found as timing paths
+# and that have not been waived
+set ofilename {ultrascale.filtered_arcs.csv}
+# Waiver file: defines which 7-serie timing arcs are not expected to be found as timing paths in UltraScale
+set wfilename {WAIVER_checkDSP48E1Arcs.csv}
+# Functional mode:
+#   normal: arcs inside the input CSV are filtered from arcs inside the waiver CSV
+#   invert: to be exported in the output CSV, an arc must be defined in both the input CSV and the waiver CSV.
+#           This mode can be used is the waiver file is actually a list of known issues. The user can then
+#           check whether those issues have been fixed or not
+set mode {normal}
+
+set error 0
+set show_help 0
+set csvDelimiter {,}
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [lshift argv]
+  switch -exact -- $name {
+    -i -
+    -in -
+    -input {
+      set ifilename [lshift argv]
+    }
+    -o -
+    -out -
+    -output {
+      set ofilename [lshift argv]
+    }
+    -w -
+    -waiver {
+      set wfilename [lshift argv]
+    }
+    -delimiter -
+    --delimiter {
+      set csvDelimiter [lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -invert {
+        set mode {invert}
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: filterWaivedArcs
+                [-i <filename>|-in <filename>|-input <filename>]
+                [-o <filename>|-out <filename>|-output <filename>]
+                [-w <filename>|-waiver <filename>]
+                [-delimiter <csv-delimiter>]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to filter out the timing arcs that have been waived
+
+    Version: %s
+
+    Example:
+       filterWaivedArcs -i ultrascale.arcs.csv -o ultrascale.filtered_arcs.csv -w WAIVER_checkDSP48E1Arcs_12182013.csv -delimiter ';'
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if  {$ifilename == {}} {
+  puts " -E- no input file provided"
+  incr error
+}
+
+if  {![file exists $ifilename]} {
+  puts " -E- file '$ifilename' does not exist"
+  incr error
+}
+
+if  {$ofilename == {}} {
+  puts " -E- no output file provided"
+  incr error
+}
+
+if  {$wfilename == {}} {
+  puts " -E- no waiver file provided"
+  incr error
+}
+
+if  {![file exists $wfilename]} {
+  puts " -E- file '$wfilename' does not exist"
+  incr error
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+if {$VERBOSE} {
+  puts " -I- Processing file [file normalize $wfilename]"
+}
+set content [read-csv $wfilename $csvDelimiter]
+catch {unset waivers}
+foreach entry [lrange $content 1 end] {
+  foreach {from to timing_type timing_sense waiver waiver_note fpga_condition} $entry { break }
+  if {$waiver != {}} {
+    set waivers(${from}:${to}:${timing_type}:${timing_sense}:${fpga_condition}) $waiver
+  }
+}
+
+if {$VERBOSE} {
+  puts " -I- Processing file [file normalize $ifilename]"
+}
+set arcs [read-csv $ifilename $csvDelimiter]
+
+set FH [open $ofilename {w}]
+puts $FH [format {# Created on %s} [clock format [clock seconds]] ]
+puts $FH [format {# Source CSV: %s} [file normalize $ifilename] ]
+puts $FH [format {# Waiver CSV: %s} [file normalize $wfilename] ]
+# Writing the header of the original file
+puts $FH [join-csv [lindex $arcs 0] $csvDelimiter]
+
+set arc_waived 0
+set arc_not_waived 0
+foreach entry [lrange $arcs 1 end] {
+  foreach {- - from to timing_type timing_sense fpga_condition note } $entry { break }
+  if {[string toupper $note] == {OK}} {
+    continue
+  }
+  switch $mode {
+    normal {
+      # Has the arc been waived?
+      if {[info exists waivers(${from}:${to}:${timing_type}:${timing_sense}:${fpga_condition})]} {
+        # Yes
+        incr arc_waived
+        continue
+      }
+    }
+    invert {
+      # Has the arc been waived?
+      if {[info exists waivers(${from}:${to}:${timing_type}:${timing_sense}:${fpga_condition})]} {
+        # Yes
+        incr arc_waived
+      } else {
+        # No
+        continue
+      }
+    }
+    default {
+    }
+  }
+  puts $FH [join-csv $entry]
+  incr arc_not_waived
+}
+
+puts " -I- Number of waived arcs: $arc_waived"
+puts " -I- Number of timing arcs that should be reviewed: $arc_not_waived"
+
+close $FH
+puts " -I- Output file [file normalize $ofilename]"
+
+exit 0

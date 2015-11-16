@@ -1,0 +1,20 @@
+
+Recommended flow:
+1) Update install.cfg
+2) Run install.do to generate the lsf.do and all the ./<DIRECTIVE>/run.tcl run scripts
+   The templates used for the process are lsf.st and run.st
+   The script clean.do is also generated from clean.st
+3) Run lsf.do to start all LSF jobs
+4) Run lsf.check to check status of LSF jobs
+5) Run summary.do to generate summary metrics
+6) Run export.do to export snapshot in HTML
+7) Run lsf.stop to stop LSF jobs
+8) Run clean -force to clean working directory
+   Be careful as it removes all directives sub-directories
+
+Note:
+ - To create run.st from run.tmpl:
+   cvt2smtpl -i run.tmpl -o run.st -VERSION=VERSION -PROJECT=PROJECT -EXPERIMENT=EXPERIMENT -RUNDIR=RUNDIR -ROOTDIR=ROOTDIR -CHECKPOINT=CHECKPOINT -PLACE_DIRECTIVE=PLACE_DIRECTIVE
+ - To create lsf.st from lsf.do:
+   cvt2smtpl -i lsf.do -o lsf.st -ROOTDIR=ROOTDIR -12000=MEMORY
+

@@ -1,0 +1,117 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+lappend auto_path /wrk/hdstaff/dpefour/support/Olympus/assets/sqlite3.8.0.2
+package require sqlite3
+
+# Execute the SQL command. When failed, retry until the database is unlocked
+proc wait_db_ready { &SQL {cmd {pragma integrity_check} } } {
+  upvar &SQL SQL
+  # Wait for the database to be unlocked
+  while {[catch { SQL eval $cmd } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      puts "SQL database locked ..."
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      puts "SQL database read-only ..."
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+  return 0
+}
+
+foreach atom [list \
+    DSP_M_DATA        \
+    DSP_C_DATA        \
+    DSP_PREADD_DATA   \
+    DSP_MULTIPLIER    \
+    DSP_A_B_DATA      \
+    DSP_OUTPUT        \
+    DSP_ALU           \
+  ] {
+
+  if {![file exists kintex8_${atom}.db]} { 
+    puts " Processing $atom ... missing kintex8_${atom}.db"
+    continue 
+  }
+
+  puts " Processing $atom"
+
+  set FH_MISMATCH_TYPE [open ${atom}.timing_type_mismatch.csv {w}]
+  puts $FH_MISMATCH_TYPE "# List of Dotlib timing arcs for $atom that had a mismatch of timing_type between the timer and the Dotlib"
+  puts $FH_MISMATCH_TYPE "arcID,cellName,fromPin,toPin,timingType,timingSense"
+  set FH_MISMATCH_SENSE [open ${atom}.timing_sense_mismatch.csv {w}]
+  puts $FH_MISMATCH_SENSE "# List of Dotlib timing arcs for $atom that had a mismatch of timing_sense between the timer and the Dotlib"
+  puts $FH_MISMATCH_SENSE "arcID,cellName,fromPin,toPin,timingType,timingSense"
+  set FH_NEVER_ENABLED [open ${atom}.never_enabled.csv {w}]
+  puts $FH_NEVER_ENABLED "# List of Dotlib timing arcs for $atom that were never enabled by the timer"
+  puts $FH_NEVER_ENABLED "arcID,cellName,fromPin,toPin,timingType,timingSense"
+
+  sqlite3 SQL {:memory:} -create true
+  # Copy the tables
+#   SQL eval " ATTACH DATABASE 'kintex8_${atom}.db' AS original "
+  wait_db_ready SQL "ATTACH DATABASE 'kintex8_${atom}.db' AS original"
+  SQL eval { CREATE TABLE param AS SELECT * FROM original.param }
+  SQL eval { CREATE TABLE cell AS SELECT * FROM original.cell }
+  SQL eval { CREATE TABLE pin AS SELECT * FROM original.pin }
+  SQL eval { CREATE TABLE timing AS SELECT * FROM original.timing }
+  SQL eval { CREATE TABLE arc AS SELECT * FROM original.arc }
+  SQL eval { CREATE TABLE fpga_condition AS SELECT * FROM original.fpga_condition }
+  SQL eval { DETACH DATABASE original }
+  
+  set cellid [SQL eval { SELECT id FROM cell WHERE name=$atom; }]
+  
+  set arcids [SQL eval { SELECT id FROM arc WHERE cellid=$cellid AND mismatch_timing_type IS NOT NULL; } ]
+  foreach arcid $arcids {
+    SQL eval { SELECT (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                      (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                      (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                      (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                      (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense
+               FROM arc JOIN timing ON arc.timingid=timing.id
+               WHERE arc.id=$arcid; } values {
+      puts $FH_MISMATCH_TYPE "$arcid,$values(cellname),$values(fromPin),$values(toPin),$values(timing_type),$values(timing_sense)"
+    }
+  }
+  
+  set arcids [SQL eval { SELECT id FROM arc WHERE cellid=$cellid AND mismatch_timing_sense IS NOT NULL; } ]
+  foreach arcid $arcids {
+    SQL eval { SELECT (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                      (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                      (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                      (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                      (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense
+               FROM arc JOIN timing ON arc.timingid=timing.id
+               WHERE arc.id=$arcid; } values {
+      puts $FH_MISMATCH_SENSE "$arcid,$values(cellname),$values(fromPin),$values(toPin),$values(timing_type),$values(timing_sense)"
+    }
+  }
+  
+  set arcids [SQL eval { SELECT id FROM arc WHERE cellid=$cellid AND match IS NULL AND mismatch_timing_sense IS NULL AND mismatch_timing_type IS NULL; } ]
+  foreach arcid $arcids {
+    SQL eval { SELECT (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                      (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                      (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                      (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                      (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense
+               FROM arc JOIN timing ON arc.timingid=timing.id
+               WHERE arc.id=$arcid; } values {
+      puts $FH_NEVER_ENABLED "$arcid,$values(cellname),$values(fromPin),$values(toPin),$values(timing_type),$values(timing_sense)"
+    }
+  }
+
+  # Closing the SQLite3 database
+  SQL close
+
+  close $FH_MISMATCH_TYPE
+  close $FH_MISMATCH_SENSE
+  close $FH_NEVER_ENABLED
+}
+
+exit 0

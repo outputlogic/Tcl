@@ -1,0 +1,21 @@
+#!/bin/csh 
+
+# Sandbox
+setenv MYVIVADO /proj/xsjvorpal/myvivado_int
+
+# Setup VIVADO HEAD
+setenv PATH "/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/bin:${PATH}"
+
+setenv SCR /wrk/hdstaff/dpefour/support/Olympus/scripts
+
+vivado -mode tcl -journal vivado_k8.jou -log vivado_k8.log <<EOF
+set SCR $env(SCR)
+open_checkpoint dsp48e2_ooc_impl.dcp
+report_timing
+source ${SCR}/checkDSP48E1Arcs.tcl
+checkDSP48E1Arcs.tcl
+checkDSP48E1Arcs -cell DSP48E2_inst -file ultrascale.all.csv -csv -v
+exit
+EOF
+
+exit 0

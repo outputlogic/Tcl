@@ -1,0 +1,20 @@
+#!/bin/csh -f
+
+setenv SCR {/wrk/hdstaff/dpefour/support/Olympus/dotlib/scripts}
+
+##-----------------------------------------------------------------------
+## Kintex 8
+##-----------------------------------------------------------------------
+
+# ${SCR}/splitDotLib -output ./kintex8 -dotlib /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex8/kintex8.lib
+${SCR}/splitDotLib -output ./kintex8 -dotlib /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex8/kintex8.lib
+${SCR}/dotlib2tcl -dotlib './kintex8/*.lib' -output ./kintex8
+${SCR}/checkTimingArcsDotLib -ftcl './kintex8/*.ftcl' > kintex8_checkTimingArcsDotLib.rpt
+${SCR}/reportDotLib -ftcl './kintex8/*.ftcl' -file kintex8_reportDotLib.rpt
+${SCR}/reportDotLib -ftcl './kintex8/*.ftcl' -no-collapse -file kintex8_reportDotLib.no_collapse.rpt
+
+# Generate SQLite3 database
+${SCR}/createSQLiteDB -ftcl './kintex8/*.ftcl' -db kintex8.db
+${SCR}/dbStats -db kintex8.db -verbose > kintex8.stats
+${SCR}/checkTimingArcsDotLib2 -db './kintex8.db' > kintex8_checkTimingArcsDotLib2.rpt
+

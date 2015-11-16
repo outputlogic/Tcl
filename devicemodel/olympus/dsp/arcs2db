@@ -1,0 +1,1133 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+# Check for missing timing arcs inside Dotlib files.
+# The flow is to generate fragment files from Dotlib first with dotlib2tcl
+# Once this is done, this script can be run.
+
+set SCRIPT_VERSION {12-03-2013}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+lappend auto_path /wrk/hdstaff/dpefour/support/Olympus/assets/sqlite3.8.0.2
+package require sqlite3
+
+# Execute the SQL command. When failed, retry until the database is unlocked
+proc wait_db_ready { &SQL {cmd {pragma integrity_check} } } {
+  upvar &SQL SQL
+  # Wait for the database to be unlocked
+  while {[catch { SQL eval $cmd } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      puts "SQL database locked ..."
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      puts "SQL database read-only ..."
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+  return 0
+}
+
+array set cellNameRemap {}
+set pinNameRemap [list]
+array set headerRemap {}
+
+# Load external cell/pin/csv header name mapping if file exists
+if {[file exists [file join [file dirname [info script]] mapping.ftcl]]} {
+  puts " Mapping file found: [file normalize [file join [file dirname [info script]] mapping.ftcl]]"
+  source [file join [file dirname [info script]] mapping.ftcl]
+}
+
+proc progressBar {cur tot} {
+  # http://wiki.tcl.tk/16939
+  # if you don't want to redraw all the time, uncomment and change ferquency
+  #if {$cur % ($tot/300)} { return }
+  # set to total width of progress bar
+  set total 76
+  set half [expr {$total/2}]
+  set percent [expr {100.*$cur/$tot}]
+  set val (\ [format "%6.2f%%" $percent]\ )
+  set str "\r|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
+  set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
+  puts -nonewline stderr $str
+}
+
+# SQLite3 database
+set inputDB {}
+set outputDB {}
+
+set arcTypes {}
+
+set files [list]
+
+set error 0
+set show_help 0
+set VERBOSE 0
+set DEBUG 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -db -
+    --db -
+    -indb -
+    --indb {
+      set inputDB [::tb::lshift argv]
+    }
+    -outdb -
+    --outdb {
+      set outputDB [::tb::lshift argv]
+    }
+    -arcs -
+    --arcs {
+      set files [concat $files [glob -nocomplain [::tb::lshift argv]]]
+    }
+    -timer {
+      set arcTypes {timer}
+    }
+    -veam {
+      set arcTypes {veam}
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          set inputDB $name
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: arcs2db
+                [<input sqlite3 database>|-db <input sqlite3 database>|-indb <input sqlite3 database>]
+                [-outdb <output sqlite3 database>]
+                [-arcs <pattern arcs files>]
+                [-timer|-veam]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to import the timing arcs from the Timer/Veam to
+      an existing sqlite database.
+      
+      Use -timer to only import timing arcs from the Timer engine from the .arcs files.
+      Use -veam to only import timing arcs from the Veam engine from the .arcs files.
+
+      The original database provided to arcs2db is not modified. A new
+      SQLite3 database is generated once all the .arcs files have been
+      imported.
+
+    Version: %s
+
+    Example:
+       arcs2db './kintex7.db' -arcs ./DSP_10302013/myfile.arcs
+       arcs2db -db './kintex7.db' -arcs './DSP_10302013/*.arcs' -outdb ./kintex7out.db
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$arcTypes == {}} {
+  set arcTypes {(timer|veam)}
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+# SQLite3 database
+if {![file exists $inputDB]} {
+  puts " File '$inputDB' does not exist"
+  exit -1
+}
+
+if {$outputDB == {}} {
+  set outputDB [file rootname $inputDB].[uplevel #0 pid][file extension $inputDB]
+  catch {file delete $outputDB}
+} else {
+  if {$outputDB != $inputDB} {
+    # Only remove database if it is not being used as input db as well
+    catch {file delete $outputDB}
+  }
+}
+
+if {$files == {}} {
+  puts " No arcs file(s) has been defined"
+  exit -1
+}
+
+foreach file $files {
+  if {![file exists $file]} {
+    puts " File '$file' does not exist"
+    exit -1
+  }
+}
+
+# Open SQLite3 database
+# sqlite3 SQL $inputDB -readonly true
+
+# Another way to copy the SQLite3 database
+# uplevel #0 [list exec echo .dump | sqlite3 $inputDB | sqlite3 $outputDB]
+
+sqlite3 SQL {:memory:} -create true
+# sqlite3 SQL $outputDB -create true
+# Copy the tables
+# SQL eval " ATTACH DATABASE '$inputDB' AS original "
+wait_db_ready SQL " ATTACH DATABASE '$inputDB' AS original "
+
+foreach table [ SQL eval { SELECT name FROM original.sqlite_master WHERE type='table' } ] {
+  if {[regexp {(sqlite_sequence)} $table]} { continue }
+  set tableDefn [lindex [ SQL eval " SELECT sql FROM original.sqlite_master WHERE type='table' AND name='$table' " ] 0]
+# puts "<tableDefn:$tableDefn>"
+  SQL eval $tableDefn
+  set columns [list]
+  SQL eval "PRAGMA table_info($table)" values {
+    if {$values(name) != {id}} {
+      lappend columns $values(name)
+    }
+  }
+#   puts "<table:$table><$columns>"
+  set columns [join $columns ,]
+#   SQL eval " INSERT INTO $table ( $columns ) SELECT $columns FROM original.$table ORDER BY id; "
+  SQL eval " INSERT INTO $table SELECT * FROM original.$table ORDER BY id; "
+}
+
+foreach view [ SQL eval { SELECT name FROM original.sqlite_master WHERE type='view' } ] {
+  set viewDefn [lindex [ SQL eval " SELECT sql FROM original.sqlite_master WHERE type='view' AND name='$view' " ] 0]
+  SQL eval $viewDefn
+}
+
+# SQL eval { CREATE TABLE param AS SELECT * FROM original.param }
+# SQL eval { CREATE TABLE cell AS SELECT * FROM original.cell }
+# SQL eval { CREATE TABLE pin AS SELECT * FROM original.pin }
+# SQL eval { CREATE TABLE timing AS SELECT * FROM original.timing }
+# SQL eval { CREATE TABLE arc AS SELECT * FROM original.arc }
+# SQL eval { CREATE TABLE timer_arc AS SELECT * FROM original.timer_arc }
+# SQL eval { CREATE TABLE veam_arc AS SELECT * FROM original.veam_arc }
+# SQL eval { CREATE TABLE fpga_condition AS SELECT * FROM original.fpga_condition }
+# SQL eval { CREATE TABLE veam_config AS SELECT * FROM original.veam_config }
+SQL eval { DETACH DATABASE original }
+
+catch { SQL eval { ALTER TABLE arc ADD COLUMN count_timer INTEGER DEFAULT NULL } }
+catch { SQL eval { ALTER TABLE arc ADD COLUMN match INTEGER DEFAULT NULL } }
+catch { SQL eval { ALTER TABLE arc ADD COLUMN mismatch_timing_sense INTEGER DEFAULT NULL } }
+catch { SQL eval { ALTER TABLE arc ADD COLUMN mismatch_timing_type INTEGER DEFAULT NULL } }
+catch { SQL eval { ALTER TABLE arc ADD COLUMN count_veam INTEGER DEFAULT NULL } }
+
+SQL eval { CREATE TABLE IF NOT EXISTS veam_config (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           cellid INTEGER,
+           name TEXT,
+           attribute TEXT,
+           FOREIGN KEY(cellid) REFERENCES cell(id) ON UPDATE SET NULL
+           );
+         }
+
+SQL eval { CREATE TABLE IF NOT EXISTS timer_arc (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           cellid INTEGER,
+           pinid INTEGER,
+           relatedpinid INTEGER,
+           timing_type TEXT,
+           timing_sense TEXT,
+           delay_max_rise REAL DEFAULT NULL,
+           delay_max_fall REAL DEFAULT NULL,
+           delay_min_rise REAL DEFAULT NULL,
+           delay_min_fall REAL DEFAULT NULL,
+           count INTEGER DEFAULT 0,
+           veam_config_id INTEGER,
+           arcid INTEGER,
+           FOREIGN KEY(cellid) REFERENCES cell(id) ON UPDATE SET NULL,
+           FOREIGN KEY(pinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(relatedpinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(arcid) REFERENCES arc(id) ON UPDATE SET NULL,
+           FOREIGN KEY(veam_config_id) REFERENCES veam_config(id) ON UPDATE SET NULL
+           );
+         }
+
+SQL eval { CREATE TABLE IF NOT EXISTS veam_arc (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           cellid INTEGER,
+           pinid INTEGER,
+           relatedpinid INTEGER,
+           timing_type TEXT,
+           timing_sense TEXT,
+           count INTEGER DEFAULT 0,
+           veamcondition TEXT,
+           veam_config_id INTEGER,
+           arcid INTEGER,
+           FOREIGN KEY(cellid) REFERENCES cell(id) ON UPDATE SET NULL,
+           FOREIGN KEY(pinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(relatedpinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(arcid) REFERENCES arc(id) ON UPDATE SET NULL,
+           FOREIGN KEY(veam_config_id) REFERENCES veam_config(id) ON UPDATE SET NULL
+           );
+         }
+
+# Get the version of the current database
+set dbVersion [SQL eval { SELECT value FROM param WHERE property='version'; } ]
+
+catch {unset cache}
+set num 0
+set cellids [list]
+set libCells [list]
+foreach file $files {
+  SQL eval { INSERT INTO param(property,value) VALUES("file",$file); }
+  incr num
+  set veam_attributes {}
+  set veam_config {undef}
+  set veam_config_id {}
+  puts " Processing $file ($num/[llength $files])"
+  if {[regexp {^[^\.]+\.(.+)\.arcs$} [file tail [file normalize $file]] -- veam_config]} {
+#     puts "<veam_config:$veam_config>"
+    set veam_config_id [SQL eval " SELECT id FROM veam_config WHERE name = '$veam_config' LIMIT 1; "]
+# puts "<veam_config_id:$veam_config_id>"
+    if {$veam_config_id == {}} {
+# puts "INSERTING $veam_config"
+      SQL eval { INSERT INTO veam_config(name) VALUES($veam_config); }
+      set veam_config_id [SQL last_insert_rowid]
+    }
+  } else {
+#     puts " -E- could not extract the veam configuration from the filename. File '$file' skipped"
+#     continue
+    puts " -W- could not extract the veam configuration from the filename. Empty configuration is used"
+    set veam_config {}
+    set veam_config_id [SQL eval " SELECT id FROM veam_config WHERE name = '' LIMIT 1; "]
+    if {$veam_config_id == {}} {
+      SQL eval { INSERT INTO veam_config(name) VALUES(''); }
+      set veam_config_id [SQL last_insert_rowid]
+    }
+  }
+  set FH [open $file {r}]
+  set libCell {}
+  set veamAttr [list]
+  while {![eof $FH]} {
+    gets $FH line
+    set engine {}; set from {}; set to {}; set type {}; set sense {}; set isenabled {}; set veamcondition {}
+#     if {[regexp {^\s*\[(.+)\]\s*TimingArc\s+([^\s]+)\s+->\s+([^\s]+)\s*\(([^\s]+)(\s*,\s*([^\s]+))?\)\s*$} $line - engine from to type - sense]} {}
+#     if {[regexp {^\s*\[(.+)\]\s*TimingArc\s+([^\s]+)\s+->\s+([^\s]+)\s*\(([^,]+)(\s*,\s*([^\s]+))?\)\s*$} $line - engine from to type - sense]} {}
+    set delays {}
+    if {[regexp -nocase -- {^\s*\[(.+)\]\s*TimingArc\s+([^\s]+)\s+->\s+([^\s]+)\s*\((.+)\)\s*\(\s*veamcondition\s*=\s*([^\s]+)\s*\)\s*\(\s*isEnabled\s*=\s*([^\s]+)\s*\)\s*$} $line - engine from to type veamcondition isenabled]} {
+#       puts "<$line><engine:$engine><from:$from><to:$to><type:$type><veamcondition:$veamcondition><isenabled:$isenabled>"
+    } elseif {[regexp -nocase -- {^\s*\[(.+)\]\s*TimingArc\s+([^\s]+)\s+->\s+([^\s]+)\s*\((.+)\)\s*\(\s*isEnabled\s*=\s*([^\s]+)\s*\)\s*$} $line - engine from to type isenabled]} {
+#       puts "<$line><engine:$engine><from:$from><to:$to><type:$type><isenabled:$isenabled>"
+    } elseif {[regexp -nocase -- {^\s*\[(.+)\]\s*TimingArc\s+([^\s]+)\s+->\s+([^\s]+)\s*\(([^,]+)(\s*,\s*([^\s]+))?\)\s*(\((.+)\))?\s*$} $line - engine from to type - sense - delays]} {
+#       puts "<$line><engine:$engine><from:$from><to:$to><type:$type><sense:$sense><delays:$delays>"
+    } elseif {[regexp {^\s*-I-\s*ref_name\s*:\s*([^\s]+)\s*$} $line - libCell]} {
+      # E.g: -I- ref_name: DSP_M_DATA
+#       puts "<$line><libCell:$libCell>"
+      if {[lsearch $libCells $libCell] == -1} { lappend libCells $libCell }
+      continue
+    } elseif {[regexp {^\s*-I-\s*veam\s+attributes\s*:\s*(.+)\s*$} $line - veamAttr]} {
+      # E.g.: -I- veam attributes: MREG 0
+#       puts "<$line><veamAttr:$veamAttr>"
+      set veam_attributes $veamAttr
+#       puts "<veam_attributes:$veam_attributes>"
+      continue
+    } else {
+      puts " -I- skipping line <$line>"
+      continue
+    }
+    switch $engine {
+      DOTLIB {
+        continue
+      }
+      TIMER {
+        # check whether the arcs from that engine should be imported inside the database
+        if {![regexp -nocase -- $arcTypes $engine]} {
+          puts "skipping<$line>"
+          continue
+        }
+        switch $type {
+          "Reg Clk to Q" {
+            set type {rising_edge}
+          }
+          setup {
+            set type {setup_rising}
+          }
+          hold {
+            set type {hold_rising}
+          }
+          default {
+          }
+        }
+        switch $sense {
+          non_unate {
+            set sense {}
+          }
+          default {
+          }
+        }
+      }
+      VEAM {
+        # check whether the arcs from that engine should be imported inside the database
+        if {![regexp -nocase -- $arcTypes $engine]} {
+          puts "skipping<$line>"
+          continue
+        }
+        set veamtype {}
+        set veamsense {}
+        switch -regexp $type {
+          {^delay} {
+            set veamtype {combinational}
+          }
+          {^fedge} {
+            set veamtype {falling_edge}
+          }
+          {^redge} {
+            set veamtype {rising_edge}
+          }
+          {^remov} {
+            set veamtype {removal}
+          }
+          {^recov} {
+            set veamtype {recovery}
+          }
+          {^setup} {
+            set veamtype {setup}
+          }
+          {^hold} {
+            set veamtype {hold}
+          }
+          default {
+            set veamtype {unknown}
+          }
+        }
+        switch -regexp $type {
+          {_inp} {
+            set veamsense {positive_unate}
+          }
+          {_inv} {
+            set veamsense {negative_unate}
+          }
+          {_tri} {
+            set veamsense {tristate}
+          }
+          default {
+            # i.e non-unate
+            set veamsense {}
+          }
+        }
+        set type $veamtype
+        set sense $veamsense
+      }
+      default {
+      }
+    }
+
+#     if {$engine == {DOTLIB}} {
+#       continue
+#     }
+    if {![info exists cache(cellid:${libCell})]} {
+      set cache(cellid:${libCell}) [SQL eval { SELECT id FROM cell WHERE name=$libCell; }]
+      lappend cellids $cache(cellid:${libCell})
+#       puts "<libCell:$libCell><cellid:$cache(cellid:${libCell})>"
+    }
+    set cellid $cache(cellid:${libCell})
+
+    # Update veam_config table
+    SQL eval { UPDATE veam_config SET cellid=$cellid, attribute=$veam_attributes WHERE id=$veam_config_id }
+#     SQL eval { UPDATE veam_config SET cellid=$cellid WHERE id=$veam_config_id }
+#     SQL eval { UPDATE veam_config SET attribute=$veam_attributes WHERE id=$veam_config_id }
+
+    switch $engine {
+      VEAM {
+
+        if {$dbVersion >= 1.2} {
+          # VEAM pins refers to BEL pins and not logical pins. BEL pins do not have any [] character
+          set logicalName [regsub -all {(\{|\})} [SQL eval { SELECT name FROM pin WHERE belname=$from AND cellid=$cellid; }] {}]
+          if {$from != $logicalName} {
+            puts " -I- VEAM BEL pin matched: $from -> $logicalName"
+            set from $logicalName
+          }
+          set logicalName [regsub -all {(\{|\})} [SQL eval { SELECT name FROM pin WHERE belname=$to AND cellid=$cellid; }] {}]
+          if {$to != $logicalName} {
+            puts " -I- VEAM BEL pin matched: $to -> $logicalName"
+            set to $logicalName
+          }
+        } else {
+          # Check if from/to pins need to be renamed since VEAM engine removes the [] characters
+          # around the buses
+          # First, try to match something like: V_DATA22 -> prefix=V_DATA / suffix=22
+          if {[regexp {^(.*[^0-9]+)([0-9]+)$} $from - prefix suffix]} {
+            set id [SQL eval { SELECT id FROM pin WHERE name=$from AND cellid=$cellid; }]
+            if {$id == {}} {
+              set id [SQL eval " SELECT id FROM pin WHERE name='[format {%s[%s]} $prefix $suffix]' AND cellid=$cellid; "]
+              if {$id != {}} {
+                puts " -I- VEAM pin renamed: $from -> [format {%s[%s]} $prefix $suffix]"
+                set from [format {%s[%s]} $prefix $suffix]
+              }
+  #             puts "<prefix:$prefix><suffix:$suffix><from:$from><id:$id>"
+            } else {
+  #             puts "<prefix:$prefix><suffix:$suffix><id:$id>"
+            }
+          } else {
+  #           set id [SQL eval { SELECT id FROM pin WHERE name=$from AND cellid=$cellid; }]
+  #           puts "<from:$from><id:$id>"
+          }
+          if {[regexp {^(.*[^0-9]+)([0-9]+)$} $to - prefix suffix]} {
+            set id [SQL eval { SELECT id FROM pin WHERE name=$to AND cellid=$cellid; }]
+            if {$id == {}} {
+              set id [SQL eval " SELECT id FROM pin WHERE name='[format {%s[%s]} $prefix $suffix]' AND cellid=$cellid; "]
+              if {$id != {}} {
+                puts " -I- VEAM pin renamed: $to -> [format {%s[%s]} $prefix $suffix]"
+                set to [format {%s[%s]} $prefix $suffix]
+              }
+  #             puts "<prefix:$prefix><suffix:$suffix><to:$to><id:$id>"
+            } else {
+  #             puts "<prefix:$prefix><suffix:$suffix><id:$id>"
+            }
+          } else {
+  #           set id [SQL eval { SELECT id FROM pin WHERE name=$to AND cellid=$cellid; }]
+  #           puts "<to:$to><id:$id>"
+          }
+        }
+
+      }
+    }
+
+   if {![info exists cache(cellid:${libCell}:pinid:${from})]} {
+      set cache(cellid:${libCell}:pinid:${from}) [SQL eval { SELECT id FROM pin WHERE name=$from AND cellid=$cellid; }]
+#       puts "<from:$from><frompinid:$cache(cellid:${libCell}:pinid:${from})>"
+    }
+    if {![info exists cache(cellid:${libCell}:pinid:${to})]} {
+      set cache(cellid:${libCell}:pinid:${to}) [SQL eval { SELECT id FROM pin WHERE name=$to AND cellid=$cellid; }]
+#       puts "<to:$to><topinid:$cache(cellid:${libCell}:pinid:${to})>"
+    }
+    set topinid $cache(cellid:${libCell}:pinid:${to})
+    set frompinid $cache(cellid:${libCell}:pinid:${from})
+    if {![info exists cache(arcid:${frompinid}:${topinid})]} {
+      set cache(arcid:${frompinid}:${topinid}) [SQL eval { SELECT id FROM arc WHERE relatedpinid=$frompinid AND pinid=$topinid; }]
+#       puts "<arcid:$cache(arcid:${frompinid}:${topinid})>"
+    }
+    set timing_type {}; set timing_sense {}
+    set arcid {}
+    set arcids $cache(arcid:${frompinid}:${topinid})
+    foreach arcid $arcids {
+      if {![info exists cache(timing_type:$arcid)]} {
+        set timing_type {}; set timing_sense {}
+        foreach {timing_type timing_sense} [SQL eval { SELECT timing.timing_type, timing.timing_sense FROM arc JOIN timing ON arc.timingid=timing.id WHERE arc.id=$arcid; }] {break}
+        set cache(timing_type:$arcid) $timing_type
+        set cache(timing_sense:$arcid) $timing_sense
+#         puts "<timing_type:$timing_type><timing_sense:$timing_sense>"
+      }
+    }
+    set match 0
+    foreach arcid $arcids {
+      set timing_type $cache(timing_type:$arcid)
+      set timing_sense $cache(timing_sense:$arcid)
+      if {($type == $timing_type) && ($sense == $timing_sense)} {
+        set match 1
+        break
+      }
+    }
+    if {$match} {
+      puts " MATCH <$line><arcid:$arcid>"
+      switch $engine {
+        TIMER {
+          SQL eval { UPDATE arc SET count_timer=(COALESCE(count_timer,0)+1), match=(COALESCE(match,0)+1) WHERE id=$arcid }
+#           SQL eval { UPDATE arc SET count_timer=(COALESCE(count_timer,0)+1) WHERE id=$arcid }
+#           SQL eval { UPDATE arc SET match=(COALESCE(match,0)+1) WHERE id=$arcid }
+          # Let's assume this is a new arcs and that it does not exist in the database
+          set id {}
+#           set id [SQL eval " SELECT id FROM timer_arc WHERE veam_config_id=$veam_config_id AND relatedpinid=$frompinid AND pinid=$topinid AND timing_type='$type' AND timing_sense='$sense' " ]
+          if {$id == {}} {
+            if {$dbVersion >= 1.4} {
+              foreach {delay_max_rise delay_max_fall delay_min_rise delay_min_fall} [split $delays { }] { break }
+# puts "<delay_max_rise:$delay_max_rise><delay_max_fall:$delay_max_fall><delay_min_rise:$delay_min_rise><delay_min_fall:$delay_min_fall>"
+              SQL eval { INSERT INTO timer_arc(cellid,pinid,relatedpinid,timing_type,timing_sense,delay_max_rise,delay_max_fall,delay_min_rise,delay_min_fall,count,veam_config_id,arcid)
+                                      VALUES($cellid,$topinid,$frompinid,$type,$sense,$delay_max_rise,$delay_max_fall,$delay_min_rise,$delay_min_fall,1,$veam_config_id,$arcid); }
+            } else {
+              SQL eval { INSERT INTO timer_arc(cellid,pinid,relatedpinid,timing_type,timing_sense,count,veam_config_id,arcid)
+                                      VALUES($cellid,$topinid,$frompinid,$type,$sense,1,$veam_config_id,$arcid); }
+            }
+          } else {
+            SQL eval { UPDATE timer_arc SET arcid=$arcid, count=(count+1) WHERE id=$id }
+#             SQL eval { UPDATE timer_arc SET arcid=$arcid WHERE id=$id }
+#             SQL eval { UPDATE timer_arc SET count=(count+1) WHERE id=$id }
+          }
+        }
+        VEAM {
+          SQL eval { UPDATE arc SET count_timer=(COALESCE(count_timer,0)+1), match=(COALESCE(match,0)+1) WHERE id=$arcid }
+#           SQL eval { UPDATE arc SET count_timer=(COALESCE(count_timer,0)+1) WHERE id=$arcid }
+#           SQL eval { UPDATE arc SET match=(COALESCE(match,0)+1) WHERE id=$arcid }
+          # Let's assume this is a new arcs and that it does not exist in the database
+          set id {}
+#           set id [SQL eval " SELECT id FROM veam_arc WHERE veam_config_id=$veam_config_id AND relatedpinid=$frompinid AND pinid=$topinid AND timing_type='$type' AND timing_sense='$sense' " ]
+          if {$id == {}} {
+            if {$dbVersion >= 1.5} {
+              SQL eval { INSERT INTO veam_arc(cellid,pinid,relatedpinid,timing_type,timing_sense,count,veamcondition,veam_config_id,arcid)
+                                      VALUES($cellid,$topinid,$frompinid,$type,$sense,1,$veamcondition,$veam_config_id,$arcid); }
+            } else {
+              SQL eval { INSERT INTO veam_arc(cellid,pinid,relatedpinid,timing_type,timing_sense,count,veam_config_id,arcid)
+                                      VALUES($cellid,$topinid,$frompinid,$type,$sense,1,$veam_config_id,$arcid); }
+            }
+#             SQL eval { INSERT INTO veam_arc(cellid,pinid,relatedpinid,timing_type,timing_sense,count,veam_config_id,arcid)
+#                                       VALUES($cellid,$topinid,$frompinid,$type,$sense,1,$veam_config_id,$arcid); }
+          } else {
+            SQL eval { UPDATE veam_arc SET arcid=$arcid, count=(count+1) WHERE id=$id }
+#             SQL eval { UPDATE veam_arc SET arcid=$arcid WHERE id=$id }
+#             SQL eval { UPDATE veam_arc SET count=(count+1) WHERE id=$id }
+          }
+        }
+        default {
+        }
+      }
+#       SQL eval { UPDATE arc SET count=(COALESCE(count,0)+1) WHERE id=$arcid }
+    } else {
+
+      switch $engine {
+        TIMER {
+          # Let's assume this is a new arcs and that it does not exist in the database
+          set id {}
+#           set id [SQL eval " SELECT id FROM timer_arc WHERE veam_config_id=$veam_config_id AND relatedpinid=$frompinid AND pinid=$topinid AND timing_type='$type' AND timing_sense='$sense' " ]
+          if {$id == {}} {
+            if {$dbVersion >= 1.4} {
+              foreach {delay_max_rise delay_max_fall delay_min_rise delay_min_fall} [split $delays { }] { break }
+# puts "<delay_max_rise:$delay_max_rise><delay_max_fall:$delay_max_fall><delay_min_rise:$delay_min_rise><delay_min_fall:$delay_min_fall>"
+              SQL eval { INSERT INTO timer_arc(cellid,pinid,relatedpinid,timing_type,timing_sense,delay_max_rise,delay_max_fall,delay_min_rise,delay_min_fall,count,veam_config_id,arcid)
+                                      VALUES($cellid,$topinid,$frompinid,$type,$sense,$delay_max_rise,$delay_max_fall,$delay_min_rise,$delay_min_fall,1,$veam_config_id,NULL); }
+            } else {
+              SQL eval { INSERT INTO timer_arc(cellid,pinid,relatedpinid,timing_type,timing_sense,count,veam_config_id,arcid)
+                                      VALUES($cellid,$topinid,$frompinid,$type,$sense,1,$veam_config_id,NULL); }
+            }
+          } else {
+            SQL eval { UPDATE timer_arc SET count=(count+1) WHERE id=$id }
+          }
+        }
+        VEAM {
+          # Let's assume this is a new arcs and that it does not exist in the database
+          set id {}
+#           set id [SQL eval " SELECT id FROM veam_arc WHERE veam_config_id=$veam_config_id AND relatedpinid=$frompinid AND pinid=$topinid AND timing_type='$type' AND timing_sense='$sense' " ]
+          if {$id == {}} {
+            if {$dbVersion >= 1.5} {
+              SQL eval { INSERT INTO veam_arc(cellid,pinid,relatedpinid,timing_type,timing_sense,count,veamcondition,veam_config_id,arcid)
+                                      VALUES($cellid,$topinid,$frompinid,$type,$sense,1,$veamcondition,$veam_config_id,NULL); }
+            } else {
+              SQL eval { INSERT INTO veam_arc(cellid,pinid,relatedpinid,timing_type,timing_sense,count,veam_config_id,arcid)
+                                      VALUES($cellid,$topinid,$frompinid,$type,$sense,1,$veam_config_id,NULL); }
+            }
+#             SQL eval { INSERT INTO veam_arc(cellid,pinid,relatedpinid,timing_type,timing_sense,count,veam_config_id,arcid)
+#                                       VALUES($cellid,$topinid,$frompinid,$type,$sense,1,$veam_config_id,NULL); }
+          } else {
+            SQL eval { UPDATE veam_arc SET count=(count+1) WHERE id=$id }
+          }
+        }
+      }
+
+      if {($type == $timing_type) && ($sense != $timing_sense)} {
+        puts " MISMATCH ON TIMING SENSE (timer:$sense / dotlib:$timing_sense) <$line><arcid:$arcid>"
+        SQL eval { UPDATE arc SET mismatch_timing_sense=(COALESCE(mismatch_timing_sense,0)+1) WHERE id=$arcid }
+      } elseif {($type != $timing_type) && ($sense == $timing_sense)} {
+        puts " MISMATCH ON TIMING TYPE (timer:$type / dotlib:$timing_type) <$line><arcid:$arcid>"
+        SQL eval { UPDATE arc SET mismatch_timing_type=(COALESCE(mismatch_timing_type,0)+1) WHERE id=$arcid }
+      } else {
+        puts " NOT FOUND <$line>"
+      }
+      puts "    <engine:$engine><from:$from><to:$to><type:$type><sense:$sense>"
+      puts "    <libCell:$libCell><cellid:$cache(cellid:${libCell})>"
+      puts "    <from:$from><frompinid:$cache(cellid:${libCell}:pinid:${from})>"
+      puts "    <to:$to><topinid:$cache(cellid:${libCell}:pinid:${to})>"
+      puts "    <arcid:$cache(arcid:${frompinid}:${topinid})>"
+      foreach arcid $arcids {
+        set timing_type $cache(timing_type:$arcid)
+        set timing_sense $cache(timing_sense:$arcid)
+        puts "        <timing_type:$timing_type><timing_sense:$timing_sense>"
+      }
+    }
+  }
+  close $FH
+}
+
+catch { file delete $outputDB }
+sqlite3 SQLBAK $outputDB -create true
+# Copy the tables
+SQL eval " ATTACH DATABASE '$outputDB' AS aux "
+
+foreach table [ SQL eval { SELECT name FROM sqlite_master WHERE type='table' } ] {
+  if {[regexp {(sqlite_sequence)} $table]} { continue }
+  set tableDefn [lindex [ SQL eval " SELECT sql FROM sqlite_master WHERE type='table' AND name='$table' " ] 0]
+  regsub {CREATE TABLE } $tableDefn {CREATE TABLE IF NOT EXISTS aux.} tableDefn
+# puts "<tableDefn:$tableDefn>"
+  SQL eval $tableDefn
+  set columns [list]
+  SQL eval "PRAGMA table_info($table)" values {
+    if {$values(name) != {id}} {
+      lappend columns $values(name)
+    }
+  }
+  set columns [join $columns ,]
+#   SQL eval " INSERT INTO aux.$table ( $columns ) SELECT $columns FROM $table ORDER BY id ; "
+  SQL eval " INSERT INTO aux.$table SELECT * FROM $table ORDER BY id; "
+}
+
+# foreach view [ SQL eval { SELECT name FROM original.sqlite_master WHERE type='view' } ] {
+#   set viewDefn [lindex [ SQL eval " SELECT sql FROM original.sqlite_master WHERE type='view' AND name='$view' " ] 0]
+#   regsub {CREATE VIEW } $viewDefn {CREATE VIEW IF NOT EXISTS aux.} viewDefn
+#   SQL eval $viewDefn
+# }
+
+switch $dbVersion {
+  1.3 {
+
+    SQL eval {
+      CREATE VIEW IF NOT EXISTS aux.v_pin AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=pin.cellid) AS cellname,
+             name,
+             belname,
+             alias,
+             direction,
+             bus,
+             bus_type,
+             function
+      FROM pin
+      ORDER BY cellName, name;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_timing AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=timing.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=timing.pinid) AS pinname,
+             timing_type,
+             timing_sense,
+             related_pin,
+             related_bus_pins,
+             all_related_pins,
+             fpga_arc_condition,
+             fpga_arc_condition_id
+      FROM timing
+      ORDER BY cellName, pinname, timing_type, timing_sense;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_arc AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS relatedpinname,
+             (SELECT name FROM pin WHERE pin.id=arc.pinid) AS pinname,
+             (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+             (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense,
+             (SELECT name FROM fpga_condition WHERE fpga_condition.id=arc.fpga_arc_condition_id) AS fpga_condition,
+             timingid,
+             fpga_arc_condition_id
+      FROM arc
+      ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, fpga_condition;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_fpga_condition AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=fpga_condition.cellid) AS cellname,
+             name,
+             value
+      FROM fpga_condition
+      ORDER BY name;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_timer_arc AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=timer_arc.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=timer_arc.relatedpinid) AS relatedpinname,
+             (SELECT name FROM pin WHERE pin.id=timer_arc.pinid) AS pinname,
+             timing_type,
+             timing_sense,
+             (SELECT name FROM veam_config WHERE veam_config.id=timer_arc.veam_config_id) AS veam_config,
+             count,
+             arcid,
+             veam_config_id
+      FROM timer_arc
+      ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, veam_config;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_veam_arc AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=veam_arc.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=veam_arc.relatedpinid) AS relatedpinname,
+             (SELECT name FROM pin WHERE pin.id=veam_arc.pinid) AS pinname,
+             timing_type,
+             timing_sense,
+             (SELECT name FROM veam_config WHERE veam_config.id=veam_arc.veam_config_id) AS veam_config,
+             count,
+             arcid,
+            veam_config_id
+      FROM veam_arc
+      ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, veam_config;
+    }
+
+  }
+  1.4 {
+
+    SQL eval {
+      CREATE VIEW IF NOT EXISTS aux.v_pin AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=pin.cellid) AS cellname,
+             name,
+             belname,
+             alias,
+             direction,
+             bus,
+             bus_type,
+             function,
+             three_state
+      FROM pin
+      ORDER BY cellName, name;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_timing AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=timing.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=timing.pinid) AS pinname,
+             timing_type,
+             timing_sense,
+             related_pin,
+             related_bus_pins,
+             all_related_pins,
+             fpga_arc_condition,
+             fpga_arc_condition_id
+      FROM timing
+      ORDER BY cellName, pinname, timing_type, timing_sense;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_arc AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS relatedpinname,
+             (SELECT name FROM pin WHERE pin.id=arc.pinid) AS pinname,
+             (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+             (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense,
+             (SELECT name FROM fpga_condition WHERE fpga_condition.id=arc.fpga_arc_condition_id) AS fpga_condition,
+             timingid,
+             fpga_arc_condition_id
+      FROM arc
+      ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, fpga_condition;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_fpga_condition AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=fpga_condition.cellid) AS cellname,
+             name,
+             value
+      FROM fpga_condition
+      ORDER BY name;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_timer_arc AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=timer_arc.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=timer_arc.relatedpinid) AS relatedpinname,
+             (SELECT name FROM pin WHERE pin.id=timer_arc.pinid) AS pinname,
+             timing_type,
+             timing_sense,
+             delay_max_rise,
+             delay_max_fall,
+             delay_min_rise,
+             delay_min_fall,
+             (SELECT name FROM veam_config WHERE veam_config.id=timer_arc.veam_config_id) AS veam_config,
+             count,
+             arcid,
+             veam_config_id
+      FROM timer_arc
+      ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, veam_config;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_veam_arc AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=veam_arc.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=veam_arc.relatedpinid) AS relatedpinname,
+             (SELECT name FROM pin WHERE pin.id=veam_arc.pinid) AS pinname,
+             timing_type,
+             timing_sense,
+             (SELECT name FROM veam_config WHERE veam_config.id=veam_arc.veam_config_id) AS veam_config,
+             count,
+             arcid,
+            veam_config_id
+      FROM veam_arc
+      ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, veam_config;
+    }
+
+  }
+  1.5 {
+
+    SQL eval {
+      CREATE VIEW IF NOT EXISTS aux.v_pin AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=pin.cellid) AS cellname,
+             name,
+             belname,
+             alias,
+             direction,
+             bus,
+             bus_type,
+             function,
+             three_state
+      FROM pin
+      ORDER BY cellName, name;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_timing AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=timing.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=timing.pinid) AS pinname,
+             timing_type,
+             timing_sense,
+             related_pin,
+             related_bus_pins,
+             all_related_pins,
+             fpga_arc_condition,
+             fpga_arc_condition_id
+      FROM timing
+      ORDER BY cellName, pinname, timing_type, timing_sense;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_arc AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS relatedpinname,
+             (SELECT name FROM pin WHERE pin.id=arc.pinid) AS pinname,
+             (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+             (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense,
+             (SELECT name FROM fpga_condition WHERE fpga_condition.id=arc.fpga_arc_condition_id) AS fpga_condition,
+             timingid,
+             fpga_arc_condition_id
+      FROM arc
+      ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, fpga_condition;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_fpga_condition AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=fpga_condition.cellid) AS cellname,
+             name,
+             value
+      FROM fpga_condition
+      ORDER BY name;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_timer_arc AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=timer_arc.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=timer_arc.relatedpinid) AS relatedpinname,
+             (SELECT name FROM pin WHERE pin.id=timer_arc.pinid) AS pinname,
+             timing_type,
+             timing_sense,
+             delay_max_rise,
+             delay_max_fall,
+             delay_min_rise,
+             delay_min_fall,
+             (SELECT name FROM veam_config WHERE veam_config.id=timer_arc.veam_config_id) AS veam_config,
+             count,
+             arcid,
+             veam_config_id
+      FROM timer_arc
+      ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, veam_config;
+    
+      CREATE VIEW IF NOT EXISTS aux.v_veam_arc AS
+      SELECT id,
+             (SELECT name FROM cell WHERE cell.id=veam_arc.cellid) AS cellname,
+             (SELECT name FROM pin WHERE pin.id=veam_arc.relatedpinid) AS relatedpinname,
+             (SELECT name FROM pin WHERE pin.id=veam_arc.pinid) AS pinname,
+             timing_type,
+             timing_sense,
+             veamcondition,
+             (SELECT name FROM veam_config WHERE veam_config.id=veam_arc.veam_config_id) AS veam_config,
+             count,
+             arcid,
+            veam_config_id
+      FROM veam_arc
+      ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, veam_config;
+    }
+
+  }
+  default {
+  }
+}
+
+
+SQL eval { DETACH DATABASE aux }
+SQLBAK close
+
+
+set cellids [lsort -unique $cellids]
+set libCells [lsort -unique $libCells]
+set all_mismatch_arcids [list]
+set timing_type_mismatch_arcids [list]
+set timing_sense_mismatch_arcids [list]
+
+puts " List of Dotlib arcs with a mismatch or that did not match anything: (VEAM & TIMER)"
+set count 0
+SQL eval " SELECT id,
+                  (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                  (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                  (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                  (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                  (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense
+           FROM arc
+           WHERE (id NOT IN (SELECT arcid FROM timer_arc WHERE arcid NOT NULL))
+                 AND (id NOT IN (SELECT arcid FROM veam_arc WHERE arcid NOT NULL))
+                 AND (cellid IN ('[join $cellids ',']'))
+           ;
+         " values {
+    puts "    <id:$values(id)><cellname:$values(cellname)><fromPin:$values(fromPin)><toPin:$values(toPin)><timing_type:$values(timing_type)><timing_sense:$values(timing_sense)>"
+#     lappend all_mismatch_arcids $values(id)
+    incr count
+}
+puts "  => $count arc(s)"
+
+puts " List of Dotlib arcs with a mismatch or that did not match anything: (TIMER)"
+set count 0
+SQL eval " SELECT id,
+                  (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                  (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                  (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                  (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                  (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense
+           FROM arc
+           WHERE (id NOT IN (SELECT arcid FROM timer_arc WHERE arcid NOT NULL)) AND (cellid IN ('[join $cellids ',']'))
+           ;
+         " values {
+    puts "    <id:$values(id)><cellname:$values(cellname)><fromPin:$values(fromPin)><toPin:$values(toPin)><timing_type:$values(timing_type)><timing_sense:$values(timing_sense)>"
+    lappend all_mismatch_arcids $values(id)
+    incr count
+}
+puts "  => $count arc(s)"
+
+puts " List of Timer arcs that have a mismatch on timing_sense with Dotlib: (TIMER)"
+set count 0
+SQL eval " SELECT arc.id AS arcid,
+                  timer_arc.id AS timer_arc_id,
+                  (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                  (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                  (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                  (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                  (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense,
+                  timer_arc.timing_type AS timer_timing_type,
+                  timer_arc.timing_sense AS timer_timing_sense,
+                  (SELECT name FROM veam_config WHERE timer_arc.veam_config_id=veam_config.id) AS veam_config
+           FROM arc JOIN timer_arc ON arc.pinid = timer_arc.pinid AND arc.relatedpinid = timer_arc.relatedpinid
+           WHERE (arc.id NOT IN (SELECT arcid FROM timer_arc WHERE timer_arc.arcid NOT NULL)) AND (arc.cellid IN ('[join $cellids ',']'))
+                 AND ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) = timer_arc.timing_type)
+                 AND ((SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) != timer_arc.timing_sense)
+           ;
+         " values {
+    puts "    <arcid:$values(arcid)><timer_arc_id:$values(timer_arc_id)><cellname:$values(cellname)><fromPin:$values(fromPin)><toPin:$values(toPin)><timing_type:$values(timing_type)><timing_sense:$values(timing_sense)><timer_timing_type:$values(timer_timing_type)><timer_timing_sense:$values(timer_timing_sense)><veam_config:$values(veam_config)>"
+    lappend timing_sense_mismatch_arcids $values(arcid)
+    incr count
+}
+puts "  => $count arc(s)"
+
+puts " List of arcs that have a mismatch on timing_type: (TIMER)"
+set count 0
+SQL eval " SELECT arc.id AS arcid,
+                  timer_arc.id AS timer_arc_id,
+                  (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                  (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                  (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                  (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                  (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense,
+                  timer_arc.timing_type AS timer_timing_type,
+                  timer_arc.timing_sense AS timer_timing_sense,
+                  (SELECT name FROM veam_config WHERE timer_arc.veam_config_id=veam_config.id) AS veam_config
+           FROM arc JOIN timer_arc ON arc.pinid = timer_arc.pinid AND arc.relatedpinid = timer_arc.relatedpinid
+           WHERE (arc.id NOT IN (SELECT arcid FROM timer_arc WHERE timer_arc.arcid NOT NULL)) AND (arc.cellid IN ('[join $cellids ',']'))
+                 AND ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) != timer_arc.timing_type)
+                 AND ((SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) = timer_arc.timing_sense)
+           ;
+         " values {
+    puts "    <arcid:$values(arcid)><timer_arc_id:$values(timer_arc_id)><cellname:$values(cellname)><fromPin:$values(fromPin)><toPin:$values(toPin)><timing_type:$values(timing_type)><timing_sense:$values(timing_sense)><timer_timing_type:$values(timer_timing_type)><timer_timing_sense:$values(timer_timing_sense)><veam_config:$values(veam_config)>"
+    lappend timing_type_mismatch_arcids $values(arcid)
+    incr count
+}
+puts "  => $count arc(s)"
+
+puts " List of arcs that did not match anything: (TIMER)"
+set count 0
+SQL eval " SELECT (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                  (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                  (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                  (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                  (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense
+           FROM arc
+           WHERE (id NOT IN (SELECT arcid FROM timer_arc WHERE arcid NOT NULL)) AND (cellid IN ('[join $cellids ',']'))
+               AND (id NOT IN ('[join $timing_type_mismatch_arcids ',']'))
+               AND (id NOT IN ('[join $timing_sense_mismatch_arcids ',']'))
+           ;
+         " values {
+    puts "    <cellname:$values(cellname)><fromPin:$values(fromPin)><toPin:$values(toPin)><timing_type:$values(timing_type)><timing_sense:$values(timing_sense)>"
+    incr count
+}
+puts "  => $count arc(s)"
+
+# set arcids [SQL eval { SELECT id FROM arc WHERE cellid=$cellid AND count_timer IS NULL; } ]
+set arcids [SQL eval { SELECT id FROM arc WHERE cellid=$cellid AND match IS NULL; } ]
+# puts " List of arcs that did not match: $arcids"
+puts " (OLD) List of arcs with a mismatch or that did not match anything: ([llength $arcids])"
+foreach arcid $arcids {
+  SQL eval { SELECT (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                    (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                    (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                    (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                    (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense
+             FROM arc JOIN timing ON arc.timingid=timing.id
+             WHERE arc.id=$arcid; } values {
+    puts "    <arcid:$arcid><cellname:$values(cellname)><fromPin:$values(fromPin)><toPin:$values(toPin)><timing_type:$values(timing_type)><timing_sense:$values(timing_sense)>"
+  }
+}
+set arcids [SQL eval { SELECT id FROM arc WHERE cellid=$cellid AND mismatch_timing_type IS NOT NULL; } ]
+puts " (OLD) List of arcs that has a mismatch on timing_type: ([llength $arcids])"
+foreach arcid $arcids {
+  SQL eval { SELECT (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                    (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                    (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                    (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                    (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense
+             FROM arc JOIN timing ON arc.timingid=timing.id
+             WHERE arc.id=$arcid; } values {
+    puts "    <arcid:$arcid><cellname:$values(cellname)><fromPin:$values(fromPin)><toPin:$values(toPin)><timing_type:$values(timing_type)><timing_sense:$values(timing_sense)>"
+  }
+}
+set arcids [SQL eval { SELECT id FROM arc WHERE cellid=$cellid AND mismatch_timing_sense IS NOT NULL; } ]
+puts " (OLD) List of arcs that has a mismatch on timing_sense: ([llength $arcids])"
+foreach arcid $arcids {
+  SQL eval { SELECT (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                    (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                    (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                    (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                    (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense
+             FROM arc JOIN timing ON arc.timingid=timing.id
+             WHERE arc.id=$arcid; } values {
+    puts "    <arcid:$arcid><cellname:$values(cellname)><fromPin:$values(fromPin)><toPin:$values(toPin)><timing_type:$values(timing_type)><timing_sense:$values(timing_sense)>"
+  }
+}
+set arcids [SQL eval { SELECT id FROM arc WHERE cellid=$cellid AND match IS NULL AND mismatch_timing_sense IS NULL AND mismatch_timing_type IS NULL; } ]
+# puts " List of arcs that did not match: $arcids"
+puts " (OLD) List of arcs that did not match: ([llength $arcids])"
+foreach arcid $arcids {
+  SQL eval { SELECT (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+                    (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS fromPin,
+                    (SELECT name FROM pin WHERE pin.id=arc.pinid) AS toPin,
+                    (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                    (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense
+             FROM arc JOIN timing ON arc.timingid=timing.id
+             WHERE arc.id=$arcid; } values {
+    puts "    <arcid:$arcid><cellname:$values(cellname)><fromPin:$values(fromPin)><toPin:$values(toPin)><timing_type:$values(timing_type)><timing_sense:$values(timing_sense)>"
+  }
+}
+
+
+# Closing the SQLite3 database
+SQL close
+
+exit 0

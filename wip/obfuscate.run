@@ -1,0 +1,6 @@
+source /home/dpefour/git/scripts/wip/obfuscate.tcl
+o1::obfuscate_file foo2.tcl
+o2::obfuscate_file foo2.tcl
+source foo2.tcl.o1
+source foo2.tcl.o2
+

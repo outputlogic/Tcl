@@ -1,0 +1,2772 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    Utility to interact with the Xilinx Tcl Store repository
+##
+########################################################################################
+
+########################################################################################
+## 2015.04.16 - Added support for new HTTP redirection when requesting a patch (Git)
+## 2015.03.05 - Enforced -app for 'package_app'
+## 2015.01.30 - Do not append to log file when requesting help with -h/-help
+## 2015.01.08 - Replaced curly brackets by double-quotes in examples
+## 2014.12.10 - Removed some checks when only the release XML is generated
+## 2014.12.04 - Added support for log file
+## 2014.12.02 - Added -vivado as alias to -vivadobin to specify the path to Vivado
+##              Updated Help accordingly
+## 2014.11.27 - Added support for Windows
+## 2014.11.24 - Added support for -shallow/-clone_all_branches/-no_release_xml/-only_release_xml 
+##              for 'package_app'
+##            - Added 'update_repo' for gatekeeper
+##            - Added support for proxy/no proxy
+##            - Many improvements
+## 2014.11.11 - Initial release
+########################################################################################
+
+# vivado -exec xilcurl
+# /proj/xbuilds/HEAD_INT_daily_latest/installs/nt64/Vivado/HEAD/tps/win64/git-1.8.3/bin/git.exe
+
+# if {[file tail [info script]]!=[file tail $argv0]} {
+#   # This file is sourced
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+# }
+
+namespace eval ::tclapp {}
+
+namespace eval ::tclapp::tclstore {
+  namespace export clone_repo
+  namespace export package_app
+
+  variable SCRIPT_VERSION {04-16-2015}
+  variable verbose 0
+  variable debug 0
+
+  catch {unset params}
+  array set params [list repository {} app {} catalog {} proxy.http {http://proxy:80} proxy.https {https://proxy:80}]
+  array set params [list gitbin {/tools/batonroot/rodin/devkits/lnx64/git-1.8.3/bin/git} gituser {} gitbranch {} gitversion {}]
+  array set params [list curlbin {curl} vivadobin {vivado} vivadoversion {}]
+  array set params [list initialized 0 flow {contributor}]
+  array set params [list log.fh {} log.filename {tclstore.log} log.mode {a} ]
+}
+
+# Create alias: 'tclstore' -> '::tclapp::tclstore::tclstore'
+interp alias {} tclstore {} ::tclapp::tclstore::tclstore
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tclapp::tclstore::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tclapp::tclstore::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+#------------------------------------------------------------------------
+# print
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Print message to stdout and/or log file.
+# Example:
+#      print stdout "..."
+#      print error "..."
+#      print log "..."
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::print { type message {nonewline ""} } {
+  variable params
+  variable verbose
+  variable debug
+  set callerName [lindex [info level [expr [info level] -1]] 0]
+  set type [string tolower $type]
+  set msg ""
+  switch -exact $type {
+    "stdout" {
+      set msg $message
+    }
+    "fatal" {
+      set msg "  FATAL ERROR: $message"
+    }
+    "error" {
+#       set msg "  ERROR: $message"
+      set msg " -E- $message"
+    }
+    "warning" {
+#       set msg "  WARNING: $message"
+      set msg " -W- $message"
+    }
+    "info" {
+#       set msg "  INFO: $message"
+      set msg " -I- $message"
+    }
+    "log" {
+      print_log "$message" $nonewline
+      return 0
+    }
+    "debug" {
+      if {$debug} {
+#         set msg "  DEBUG::${callerName}: $message"
+        set msg " -D- \[${callerName}\] $message"
+      } else {
+        return 0
+      }
+    }
+    default {}
+  }
+  #-------------------------------------------------------
+  # Print message.
+  #-------------------------------------------------------
+  if {$nonewline != ""} {
+    puts -nonewline stdout $msg
+  } else {
+    puts stdout $msg
+  }
+  flush stdout
+  #-------------------------------------------------------
+  # Save (commented-out) message to log file.
+  #-------------------------------------------------------
+#   set msg "# ${msg}"
+#   print_log $msg $nonewline
+  foreach line [split $msg \n] {
+    print_log "# ${line}" $nonewline
+  }
+  return 0
+}
+
+#------------------------------------------------------------------------
+# print_log
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Proc used internally to save message to log file.
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::print_log { msg {nonewline ""} } {
+  variable params
+  variable verbose
+  variable debug
+  #-------------------------------------------------------
+  # Save message to log file.
+  #-------------------------------------------------------
+  if {$params(log.fh) != {}} {
+    set FH $params(log.fh)
+    if {$nonewline != ""} {
+      puts -nonewline $FH "$msg"
+    } else {
+      puts $FH "$msg"
+    }
+    flush $FH
+  }
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::getAppBaseName
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Get base name of an app. The base name has the format <COMPANY>::<APP>
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::getAppBaseName {app} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Remove ::tclapp from app name
+  regsub {^(::)?tclapp::} $app {} app
+  regsub {^(::)?tclapp} $app {} app
+  regsub {^::} $app {} app
+  return $app
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::indentString
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Indent message with optional indent string
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::indentString {msg {indent {}}} {
+  set res [list]
+  foreach line [split $msg \n] {
+    lappend res [format {%s%s} $indent $line]
+  }
+  return [join $res \n]
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::runVivadoCmd
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Execute a Vivado command
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::runVivadoCmd {commands} {
+  global tcl_platform
+  variable params
+  print info "repository: $params(repository)"
+  switch $tcl_platform(platform) {
+    unix {
+      return [runVivadoCmdUnix $commands]
+    }
+    windows {
+      return [runVivadoCmdWindows $commands]
+    }
+    default {
+    }
+  }
+}
+
+proc ::tclapp::tclstore::runVivadoCmdUnix {commands} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable params
+  variable verbose
+  variable debug
+  set dir [uplevel #0 pwd]
+  if {$debug} {
+    print debug "Vivado script:"
+    print debug [indentString $commands [string repeat { } 5]]
+  }
+  set shellscript [file normalize [file join $dir vivado[uplevel #0 pid].sh]]
+  set runscript [file normalize [file join $dir vivado[uplevel #0 pid].tcl]]
+  set vivadolog [file normalize [file join $dir vivado[uplevel #0 pid].log]]
+  set vivadojou [file normalize [file join $dir vivado[uplevel #0 pid].jou]]
+  set FH [open $shellscript {w}]
+  puts $FH [format {#!/bin/bash
+export XILINX_TCLAPP_REPO="%s"
+export XILINX_LOCAL_USER_DATA="NO"
+%s -mode tcl -notrace -source "%s" -log "%s" -journal "%s"
+} $params(repository) $params(vivadobin) $runscript $vivadolog $vivadojou]
+  close $FH
+  uplevel #0 exec chmod +x $shellscript
+  set FH [open $runscript {w}]
+  puts $FH "puts -nonewline {<<SCRIPT>>}"
+  puts $FH "if \{\[catch \{"
+  foreach cmd $commands {
+    puts $FH "  $cmd"
+  }
+  puts $FH "\} errorstring\]\} \{"
+  puts $FH "  puts -nonewline \{<<VIVADOERROR>>\}"
+  puts $FH "  puts -nonewline \$errorstring"
+  puts $FH "  puts -nonewline \{<</VIVADOERROR>>\}"
+  puts $FH "\} else \{"
+  puts $FH "\}"
+  puts $FH "puts -nonewline {<</SCRIPT>>}"
+  puts $FH "exit"
+  close $FH
+  print info "running Vivado ... please wait"
+#   foreach [list exitCode message] [eval [concat system $params(vivadobin) -mode tcl -source $runscript]] { break }
+  foreach [list exitCode message] [eval [concat system $shellscript]] { break }
+  if {$debug} {
+    print debug "exitCode: $exitCode"
+    print debug "message: [join $message { }]"
+  }
+  if {$exitCode != 0} {
+    print error "Vivado command failed"
+    error "$message"
+  }
+#   if {[lsearch -inline -all -not -exact $message {<<ERROR>>}]} {}
+  if {[regexp {<<VIVADOERROR>>} $message]} {
+    print warning "An error was detected inside Vivado log file [file normalize $vivadolog]"
+    set exitCode 1
+  }
+  regsub {^.*<<SCRIPT>>} $message {} message
+  regsub {<</SCRIPT>>.*$} $message {} message
+  if {!$debug} {
+    # Keep the files in debug mode
+    file delete $shellscript
+    file delete $runscript
+    file delete $vivadolog
+    file delete $vivadojou
+  }
+  return [list $exitCode $message]
+}
+
+proc ::tclapp::tclstore::runVivadoCmdWindows {commands} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable params
+  variable verbose
+  variable debug
+  set dir [uplevel #0 pwd]
+  if {$debug} {
+    print debug "Vivado script:"
+    print debug [indentString $commands [string repeat { } 5]]
+  }
+  set shellscript [file normalize [file join $dir vivado[uplevel #0 pid].bat]]
+  set runscript [file normalize [file join $dir vivado[uplevel #0 pid].tcl]]
+  set vivadolog [file normalize [file join $dir vivado[uplevel #0 pid].log]]
+  set vivadojou [file normalize [file join $dir vivado[uplevel #0 pid].jou]]
+  set FH [open $shellscript {w}]
+  puts $FH [format {@echo off
+set XILINX_TCLAPP_REPO=%s
+set XILINX_LOCAL_USER_DATA=NO
+call %s -mode tcl -notrace -source "%s" -log "%s" -journal "%s"
+} $params(repository) $params(vivadobin) $runscript $vivadolog $vivadojou]
+  close $FH
+#   uplevel #0 exec chmod +x $shellscript
+  set FH [open $runscript {w}]
+  puts $FH "puts -nonewline {<<SCRIPT>>}"
+  puts $FH "if \{\[catch \{"
+  foreach cmd $commands {
+    puts $FH "  $cmd"
+  }
+  puts $FH "\} errorstring\]\} \{"
+  puts $FH "  puts -nonewline \{<<VIVADOERROR>>\}"
+  puts $FH "  puts -nonewline \$errorstring"
+  puts $FH "  puts -nonewline \{<</VIVADOERROR>>\}"
+  puts $FH "\} else \{"
+  puts $FH "\}"
+  puts $FH "puts -nonewline {<</SCRIPT>>}"
+  puts $FH "exit"
+  close $FH
+  print info "running Vivado ... please wait"
+#   foreach [list exitCode message] [eval [concat system $params(vivadobin) -mode tcl -source $runscript]] { break }
+  foreach [list exitCode message] [eval [concat system $shellscript]] { break }
+  if {$debug} {
+    print debug "exitCode: $exitCode"
+    print debug "message: [join $message { }]"
+  }
+  if {$exitCode != 0} {
+    print error "Vivado command failed"
+    error "$message"
+  }
+#   if {[lsearch -inline -all -not -exact $message {<<ERROR>>}]} {}
+  if {[regexp {<<VIVADOERROR>>} $message]} {
+    print warning "An error was detected inside Vivado log file [file normalize $vivadolog]"
+    set exitCode 1
+  }
+  regsub {^.*<<SCRIPT>>} $message {} message
+  regsub {<</SCRIPT>>.*$} $message {} message
+  if {!$debug} {
+    # Keep the files in debug mode
+    file delete $shellscript
+    file delete $runscript
+    file delete $vivadolog
+    file delete $vivadojou
+  }
+  return [list $exitCode $message]
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::runGitCmd
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Execute a Git command
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::runGitCmd {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable params
+  variable verbose
+  variable debug
+  set dir [uplevel #0 pwd]
+  if {$debug} {
+    print debug "Git command: $args"
+  }
+#   foreach [list exitCode message] [ system ssh git-dev [format {cd %s ; %s %s} $dir $params(git) $args] ] { break }
+#   foreach [list exitCode message] [ system [format {%s %s} $gitBin $args] ] { break }
+  foreach [list exitCode message] [eval [concat system $params(gitbin) $args ]] { break }
+  if {$debug} {
+    print debug "exitCode: $exitCode"
+    print debug "message: [join $message { }]"
+  }
+  if {$exitCode != 0} {
+    print error "Git command failed"
+    error "$message"
+  }
+  return [list $exitCode $message]
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::runCurlCmd
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Execute a Curl command
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::runCurlCmd {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable params
+  variable verbose
+  variable debug
+  if {$debug} {
+    print debug "Curl command: $args"
+  }
+  if {$params(proxy.https) != {}} {
+    foreach [list exitCode message] [eval [concat system $params(curlbin) -L --insecure -x $params(proxy.https) $args ]] { break }
+#     foreach [list exitCode message] [eval [concat system $params(curlbin) -x $params(proxy.https) $args ]] { break }
+#     foreach [list exitCode message] [eval [concat system $params(vivadobin) -exec xilcurl -x $params(proxy.https) $args ]] { break }
+  } elseif {$params(proxy.http) != {}} {
+    foreach [list exitCode message] [eval [concat system $params(curlbin) -L --insecure -x $params(proxy.http) $args ]] { break }
+#     foreach [list exitCode message] [eval [concat system $params(curlbin) -x $params(proxy.http) $args ]] { break }
+#     foreach [list exitCode message] [eval [concat system $params(vivadobin) -exec xilcurl -x $params(proxy.http) $args ]] { break }
+  } else {
+    foreach [list exitCode message] [eval [concat system $params(curlbin) -L --insecure $args ]] { break }
+#     foreach [list exitCode message] [eval [concat system $params(curlbin) $args ]] { break }
+#     foreach [list exitCode message] [eval [concat system $params(vivadobin) -exec xilcurl $args ]] { break }
+  }
+  if {$debug} {
+    print debug "exitCode: $exitCode"
+    print debug "message: [join $message { }]"
+  }
+  if {$exitCode != 0} {
+    print error "Curl command failed"
+    error "$message"
+  }
+  return [list $exitCode $message]
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::system
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Execute a process under UNIX.
+# Return a TCL list. The first element of the list is the exit code
+# for the process. The second element of the list is the message
+# returned by the process.
+# The exit code is 0 if the process executed successfully.
+# The exit code is 1, 2, 3, or 4 otherwise.
+# Example:
+#      foreach [list exitCode message] [::tclapp::tclstore::system ls -lrt] { break }
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::system { args } {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable verbose
+  variable debug
+
+  #-------------------------------------------------------
+  # Save the command being executed inside the log file.
+  #-------------------------------------------------------
+  if {$debug} { print debug "Unix call: $args" }
+
+  #-------------------------------------------------------
+  # Execute the command inside the global namespace (level #0).
+  #-------------------------------------------------------
+  catch {set result [eval [list uplevel #0 exec $args]] } returnstring
+
+  #-------------------------------------------------------
+  # Check the status of the process.
+  #-------------------------------------------------------
+  if { [string equal $::errorCode NONE] } {
+
+    # The command exited with a normal status, but wrote something
+    # to stderr, which is included in $returnstring.
+    set exitCode 0
+
+    if {$debug} { print debug "::errorCode = NONE" }
+
+  } else {
+
+    switch -exact -- [lindex $::errorCode 0] {
+
+      CHILDKILLED {
+
+        foreach { - pid sigName msg } $::errorCode { break }
+
+        # A child process, whose process ID was $pid,
+        # died on a signal named $sigName.  A human-
+        # readable message appears in $msg.
+        set exitCode 2
+
+        if {$debug} {
+          print debug "::errorCode = CHILDKILLED"
+          print debug "Child process $pid died from signal named $sigName"
+          print debug "Message: $msg"
+        }
+
+      }
+
+      CHILDSTATUS {
+
+        foreach { - pid code } $::errorCode { break }
+
+        # A child process, whose process ID was $pid,
+        # exited with a non-zero exit status, $code.
+        set exitCode 1
+
+        if {$debug} {
+          print debug "::errorCode = CHILDSTATUS"
+          print debug "Child process $pid exited with status $code"
+        }
+
+      }
+
+      CHILDSUSP {
+
+        foreach { - pid sigName msg } $::errorCode { break }
+
+        # A child process, whose process ID was $pid,
+        # has been suspended because of a signal named
+        # $sigName.  A human-readable description of the
+        # signal appears in $msg.
+        set exitCode 3
+
+        if {$debug} {
+          print debug "::errorCode = CHILDSUSP"
+          print debug "Child process $pid suspended because signal named $sigName"
+          print debug "Message: $msg"
+        }
+
+      }
+
+      POSIX {
+
+        foreach { - errName msg } $::errorCode { break }
+
+        # One of the kernel calls to launch the command
+        # failed.  The error code is in $errName, and a
+        # human-readable message is in $msg.
+        set exitCode 4
+
+        if {$debug} {
+          print debug "::errorCode = POSIX"
+          print debug "One of the kernel calls to launch the command failed. The error code is $errName"
+          print debug "Message: $msg"
+        }
+
+      }
+
+    }
+
+  }
+
+  if {$debug} {
+    print debug "returnstring=[join [split $returnstring \n] {\\}]"
+    print debug "exitCode=$exitCode"
+  }
+
+  return [list $exitCode $returnstring]
+}
+
+##-----------------------------------------------------------------------
+## backup_file
+##-----------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+## Backup a file by renaming the file to <filename>.<index>.extension .
+## the function search for the first available <index> number.
+## Example:
+##      backup_file run.log
+##              => existing run.log backed up as run.1.log
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::backup_file { filename } {
+
+  if {![file exists $filename]} {
+    print warning "file $filename does not exist"
+    return 0
+  }
+
+  set rootname [file rootname $filename]
+  set extension [file extension $filename]
+
+  set index 1
+
+  while {1} {
+    if {![file exists ${rootname}.${index}${extension}]} {
+      break
+    }
+    incr index
+  }
+
+#   set exitCode [file copy -force -- $filename ${rootname}.${index}${extension}]
+  set exitCode [file rename -force -- $filename ${rootname}.${index}${extension}]
+
+  return $exitCode
+}
+
+##-----------------------------------------------------------------------
+## read_file_regexp
+##-----------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+## Returns all lines that match occurrence of a regular expression in the
+## file
+##-----------------------------------------------------------------------
+proc ::tclapp::tclstore::read_file_regexp {filename rexp} {
+  set lines [list]
+  set FH {}
+  if {[catch {set FH [open $filename r]} errorstring]} {
+      error " error - $errorstring"
+  }
+  while {![eof $FH]} {
+    gets $FH line
+    if {[regexp $rexp $line]} { lappend lines $line }
+  }
+  close $FH
+  return $lines
+}
+
+##-----------------------------------------------------------------------
+## initialize
+##-----------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+## Initialize some of the internal parameters based on the user's
+## environment
+##-----------------------------------------------------------------------
+proc ::tclapp::tclstore::initialize { {type {vivado|git|curl}} } {
+  global tcl_platform
+  variable params
+  switch $tcl_platform(platform) {
+    unix {
+      initializeUnix $type
+    }
+    windows {
+      initializeWindows $type
+    }
+    default {
+    }
+  }
+  return -code ok
+}
+
+proc ::tclapp::tclstore::initializeWindows { {type {vivado|git|curl}} } {
+  variable params
+  variable debug
+  variable verbose
+  set error 0
+  if {[regexp $type vivado]} {
+    if {$params(vivadobin) == {}} {
+      print error "path to Vivado must be specified with --vivadobin=<PATH_TO_VIVADO.BAT>"
+      incr error
+    } else {
+      # Example path: C:/Xilinx/Vivado/2014.2/bin/vivado.bat
+      # Extract the directory and file name to build the where.exe command
+      set dir [file dirname $params(vivadobin)]
+      set file [file tail $params(vivadobin)]
+      if {[catch {set result [exec where.exe ${dir}:${file}]} errorstring]} {
+        print error "cannot access '$params(vivadobin)'"
+        incr error
+      } else {
+        # To avoid issues, replace all '\' by '/'
+        set params(vivadobin) [regsub -all {\\} $result {/}]
+        print info "vivado: $params(vivadobin)"
+        if {[catch {set result [exec $params(vivadobin) -version]} errorstring]} {
+          print error "cannot execute '$params(vivadobin)': $errorstring"
+          incr error
+        } else {
+          foreach line [split $result \n] {
+            if {[regexp {^Vivado\s+v?([0-9\.]+)\s} $line - params(vivadoversion)]} { break }
+          }
+          # Set the default catalog version to the current Vivado version: <MAJOR>.<MINOR>
+          set params(vivadoversion) [join [lrange [split $params(vivadoversion) {.}] 0 1] {.}]
+          print info "Vivado version: $params(vivadoversion)"
+          # Due to API changes, let's restrict to 2014.3 and upward
+          if {[package vcompare $params(vivadoversion) 2014.3] < 0} {
+            print error "need Vivado 2014.3 and upward"
+            incr error
+          }
+        }
+      }
+    }
+  }
+
+  if {[regexp $type git]} {
+    if {$params(vivadobin) == {}} {
+      print error "Vivado path must be configured first"
+      incr error
+    } else {
+      set params(gitbin) [glob [file join {*}[lrange [file split [file dirname $params(vivadobin)]] 0 end-1] tps win64 git-* bin git.exe]]
+      print info "git: $params(gitbin)"
+      if {[catch {set result [exec $params(gitbin) --version]} errorstring]} {
+        print error "cannot access '$params(gitbin)' in your search path"
+        incr error
+      } else {
+        if {[regexp {^git version\s+([0-9\.]+)(\s|(\.msysgit)|$)} $result - params(gitversion)]} {}
+        print info "git version: $params(gitversion)"
+      }
+    }
+  }
+
+  if {[regexp $type curl]} {
+    if {$params(vivadobin) == {}} {
+      print error "Vivado path must be configured first"
+      incr error
+    } else {
+      # --insecure : to prevent errors from https
+      set params(curlbin) "$params(vivadobin) -exec xilcurl --insecure"
+      print info "curl: $params(curlbin)"
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  set params(initialized) 1
+  return -code ok
+}
+
+proc ::tclapp::tclstore::initializeUnix { {type {vivado|git|curl}} } {
+  variable params
+  variable debug
+  variable verbose
+  set error 0
+  if {[regexp $type vivado]} {
+    if {[catch {set result [exec which $params(vivadobin)]} errorstring]} {
+      print error "cannot access '$params(vivadobin)' in your search path"
+      incr error
+    } else {
+      set params(vivadobin) $result
+      print info "vivado: $params(vivadobin)"
+      if {[catch {set result [exec $params(vivadobin) -version]} errorstring]} {
+        print error "cannot execute '$params(vivadobin)': $errorstring"
+        incr error
+      } else {
+        foreach line [split $result \n] {
+          if {[regexp {^Vivado\s+v?([0-9\.]+)\s} $line - params(vivadoversion)]} { break }
+        }
+        # Set the default catalog version to the current Vivado version: <MAJOR>.<MINOR>
+        set params(vivadoversion) [join [lrange [split $params(vivadoversion) {.}] 0 1] {.}]
+        print info "Vivado version: $params(vivadoversion)"
+        # Due to API changes, let's restrict to 2014.3 and upward
+        if {[package vcompare $params(vivadoversion) 2014.3] < 0} {
+          print error "need Vivado 2014.3 and upward"
+          incr error
+        }
+      }
+    }
+  }
+
+  if {[regexp $type git]} {
+#     if {[catch {set result [exec which git]} errorstring]} {}
+    if {[catch {set result [exec which $params(gitbin)]} errorstring]} {
+      print error "cannot access '$params(gitbin)' in your search path"
+      incr error
+    } else {
+      set params(gitbin) $result
+      print info "git: $params(gitbin)"
+      if {[catch {set result [exec $params(gitbin) --version]} errorstring]} {
+        print error "cannot access '$params(gitbin)' in your search path"
+        incr error
+      } else {
+        if {[regexp {^git version\s+([0-9\.]+)(\s|$)} $result - params(gitversion)]} {}
+        print info "git version: $params(gitversion)"
+      }
+    }
+  }
+
+  if {[regexp $type curl]} {
+    if {[catch {set result [exec which $params(curlbin)]} errorstring]} {
+      print error "cannot access '$params(curlbin)' in your search path"
+      incr error
+    } else {
+      set params(curlbin) $result
+      print info "curl: $params(curlbin)"
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  set params(initialized) 1
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::docstring
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Return the embedded help of a proc
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::docstring {procname} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  if {[info proc $procname] ne $procname} { return }
+  # reports a proc's args and leading comments.
+  # Multiple documentation lines are allowed.
+  set res ""
+  # This comment should not appear in the docstring
+  foreach line [split [uplevel 1 [list info body $procname]] \n] {
+      if {[string trim $line] eq ""} continue
+      # Skip comments that have been added to support rdi::register_proc command
+      if {[regexp -nocase -- {^\s*#\s*(Summary|Argument Usage|Return Value|Categories)\s*\:} $line]} continue
+      if {![regexp {^\s*#(.+)} $line -> line]} break
+      lappend res [string trim $line]
+  }
+  join $res \n
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::do
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Dispatcher with methods
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::do {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  if {[llength $args] == 0} {
+#     error " -E- wrong number of parameters: tclstore <sub-command> \[<arguments>\]"
+    set method {?}
+  } else {
+    # The first argument is the method
+    set method [lshift args]
+  }
+  if {[info proc ::tclapp::tclstore::method:${method}] == "::tclapp::tclstore::method:${method}"} {
+    eval ::tclapp::tclstore::method:${method} $args
+  } else {
+    # Search for a unique matching method among all the available methods
+    set match [list]
+    foreach procname [info proc ::tclapp::tclstore::method:*] {
+      if {[string first $method [regsub {::tclapp::tclstore::method:} $procname {}]] == 0} {
+        lappend match [regsub {::tclapp::tclstore::method:} $procname {}]
+      }
+    }
+    switch [llength $match] {
+      0 {
+        error " -E- unknown sub-command $method"
+      }
+      1 {
+        set method $match
+        return [eval ::tclapp::tclstore::method:${method} $args]
+      }
+      default {
+        error " -E- multiple sub-commands match '$method': $match"
+      }
+    }
+  }
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::method:?
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Usage: tclstore ?
+#------------------------------------------------------------------------
+# Return all the available methods. The methods with no embedded help
+# are not displayed (i.e hidden)
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::method:? {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Long help message
+  variable params
+  print stdout "   Usage: tclstore <sub-command> \[<arguments>\]"
+  print stdout "   Where <sub-command> is:"
+  foreach procname [lsort [info proc ::tclapp::tclstore::method:*]] {
+    regsub {::tclapp::tclstore::method:} $procname {} method
+    if {$method == {?}} { set method {-h|?} }
+    set help [::tclapp::tclstore::docstring $procname]
+    if {$help ne ""} {
+      if {[lsearch -exact [list update_repo ] $method] != -1} {
+        if {$params(flow) == {gatekeeper}} {
+#           print stdout "         [format {%-15s%s- %s} $method \t $help]"
+#           print stdout "     (*) [format {%-15s%s- %s} $method \t $help]"
+          print stdout "         [format {%-15s%s- %s} $method \t $help] (*)"
+        } else {
+#           print stdout "         [format {%-15s%s- %s} $method \t $help]"
+        }
+      } else {
+        if {$params(flow) == {gatekeeper}} {
+          print stdout "         [format {%-15s%s- %s} $method \t $help]"
+        } else {
+          print stdout "         [format {%-15s%s- %s} $method \t $help]"
+        }
+      }
+
+    }
+  }
+  print stdout ""
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::tclstore
+#------------------------------------------------------------------------
+# Main function when calling the script from the command line
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::tclstore { args } {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable params
+  variable SCRIPT_VERSION
+  #-------------------------------------------------------
+  # Pre-process command line arguments
+  #-------------------------------------------------------
+  set originalCmdLine $args
+  set cmdLine [list]
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-G$} -
+      {^--G$} -
+      {^-gatekeeper$} -
+      {^--gatekeeper$} {
+        set params(flow) {gatekeeper}
+      }
+      {^-vivado$} -
+      {^--vivado$} {
+        set params(vivadobin) [lshift args]
+      }
+      {^-vivadobin$} -
+      {^--vivadobin$} {
+        set params(vivadobin) [lshift args]
+      }
+      {^-gitbin$} -
+      {^--gitbin$} {
+        set params(gitbin) [lshift args]
+      }
+      {^-curlbin$} -
+      {^--curlbin$} {
+        set params(curlbin) [lshift args]
+      }
+      {^-proxy-http$} -
+      {^--proxy-http$} {
+        set params(proxy.http) [lshift args]
+      }
+      {^-proxy-https$} -
+      {^--proxy-https$} {
+        set params(proxy.https) [lshift args]
+      }
+      {^-vivado=(.*)$} -
+      {^--vivado=(.*)$} {
+        regexp {^-?-vivado=(.*)$} $name - params(vivadobin)
+      }
+      {^-vivadobin=(.*)$} -
+      {^--vivadobin=(.*)$} {
+        regexp {^-?-vivadobin=(.*)$} $name - params(vivadobin)
+      }
+      {^-gitbin=(.*)$} -
+      {^--gitbin=(.*)$} {
+        regexp {^-?-gitbin=(.*)$} $name - params(gitbin)
+      }
+      {^-curlbin=(.*)$} -
+      {^--curlbin=(.*)$} {
+        regexp {^-?-curlbin=(.*)$} $name - params(curlbin)
+      }
+      {^-proxy-http=(.*)$} -
+      {^--proxy-http=(.*)$} {
+        regexp {^-?-proxy-http=(.*)$} $name - params(proxy.http)
+      }
+      {^-proxy-https=(.*)$} -
+      {^--proxy-https=(.*)$} {
+        regexp {^-?-proxy-https=(.*)$} $name - params(proxy.https)
+      }
+      default {
+        lappend cmdLine $name
+      }
+    }
+  }
+  set args $cmdLine
+  #-------------------------------------------------------
+  # Open log file only when no help is requested
+  #-------------------------------------------------------
+  if {([lsearch -exact $cmdLine {-h}] == -1) &&
+      ([lsearch -exact $cmdLine {-help}] == -1) &&
+      ([lsearch -exact $cmdLine {--h}] == -1) &&
+      ([lsearch -exact $cmdLine {--help}] == -1) } {
+      if {$params(log.filename) != {}} {
+        if {[file exists $params(log.filename)]} {
+          if {$params(log.mode) == {w}} {
+            backup_file $params(log.filename)
+          }
+        }
+        if {[catch {set FH [open $params(log.filename) $params(log.mode)]} errorstring]} {
+          puts " -W- cannot open log file '[file normalize $params(log.filename)]': $errorstring"
+        } else {
+          set params(log.fh) $FH
+          puts $FH "\n" 
+          puts $FH "###############################################################" 
+          puts $FH "###############################################################" 
+          puts $FH "##" 
+          puts $FH "##  Log file created on [exec date]" 
+          puts $FH "##" 
+          puts $FH "###############################################################" 
+          puts $FH "###############################################################\n" 
+          print info "Start logging messages to '[file normalize $params(log.filename)]' on [exec date].\n"
+          # Log the command being executed
+          print log "\ntclstore $originalCmdLine\n"
+        }
+      }
+    }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  set error 0
+  set show_help 0
+  set method [lshift args]
+  switch -exact -- $method {
+    ? -
+    -h -
+    -help {
+      incr show_help
+    }
+    --h -
+    --help {
+      set params(flow) {gatekeeper}
+      incr show_help
+    }
+    -I -
+    -shell -
+    -shell {
+        ::tclapp::tclstore::shell
+    }
+    default {
+      return [eval [concat ::tclapp::tclstore::do ${method} $args] ]
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    print stdout ""
+    ::tclapp::tclstore::method:?
+    print stdout [format {
+   Description: Utility to package apps for the Xilinx Tcl Store (%s)
+
+   Windows Support:
+   ----------------
+     For Windows, the path to vivado.bat must be specified with --vivado=C:\Xilinx\Vivado\2014.3\bin\vivado.bat
+                                                                ^^      ^
+
+   Example: Contributor Flow
+      # Make sure that 'vivado' is available from the command line, along with 'git' and 'curl'
+      tclstore clone_repo -dir ./temp -user frank
+      # Modify the files under the app area
+      tclstore package_app -repo ./temp/XilinxTclStore -app xilinx::designutils -revision "Fixed issue with ..."
+      # Verify all the files. Only commit files to git that are under the app directory
+
+   Example: Contributor Flow (Windows)
+      # Specify path to vivado.bat with --vivado
+      tclstore clone_repo --vivado=C:\Xilinx\Vivado\2014.3\bin\vivado.bat -dir ./temp -user frank
+      # Modify the files under the app area
+      tclstore package_app --vivado=C:\Xilinx\Vivado\2014.3\bin\vivado.bat -repo ./temp/XilinxTclStore -app xilinx::designutils -revision "Fixed issue with ..."
+      # Verify all the files. Only commit files to git that are under the app directory
+
+
+    } $SCRIPT_VERSION ]
+
+    if {$params(flow) == {gatekeeper}} {
+#       print stdout [format {
+#    Example:
+#       }]
+    }
+
+    # HELP -->
+    return -code ok
+  }
+
+}
+
+##-----------------------------------------------------------------------
+## shell
+##-----------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+## Interactive TCL shell.
+##-----------------------------------------------------------------------
+proc ::tclapp::tclstore::shell {} {
+
+  # Interactive shell
+  set prompt {tclstore% }
+  set command {}
+  #-------------------------------------------------------
+  # The following message is not saved in the log file.
+  #-------------------------------------------------------
+  puts "\n  Interactive tclstore shell. Type '?' for help.\n"
+  while 1 {
+    puts -nonewline ${prompt}
+    flush stdout
+    gets stdin cmd
+    append command $cmd
+    #-------------------------------------------------------
+    # Check that the command is complete before executing it.
+    #-------------------------------------------------------
+    if {[info complete $command]} {
+      if {[regexp {^\s*(exit|quit)\s*$} $command]} {
+        break
+      }
+      if {[regexp {^\s*\?\s*$} $command]} {
+
+        puts [format {
+                     +-- tclstore --+
+      tclstore clone_repo             clone the Xilinx Tcl Store repository (-h)
+      tclstore package_app            package an app (-h)
+}]
+        ::tclapp::tclstore::tclstore -help
+        set command {}
+        continue
+      }
+      #-------------------------------------------------------
+      # Command executed at level #0.
+      #-------------------------------------------------------
+      catch {uplevel #0 $command} res
+      if {$res != {}} {
+        puts $res
+      }
+      set command {}
+    }
+  }
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## ask
+##-----------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+## Interactive question to the user.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::ask {summary question prompt {answers {}}} {
+
+  set command {}
+  puts ""
+  foreach line [split $summary \n] {
+    puts "## $line"
+  }
+  puts ""
+  set ans {}
+  while 1 {
+    puts $question
+    puts -nonewline ${prompt}
+    flush stdout
+    gets stdin ans
+    if {$answers == {}} {
+      break
+    } elseif {[regexp $answers $ans]} {
+      break
+    } else {
+      puts " invalid answer!"
+    }
+  }
+  return $ans
+}
+
+##-----------------------------------------------------------------------
+## FAILED
+##-----------------------------------------------------------------------
+## Message.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::FAILED {} {
+  return [format {
+  ########    ###    #### ##       ######## ########
+  ##         ## ##    ##  ##       ##       ##     ##
+  ##        ##   ##   ##  ##       ##       ##     ##
+  ######   ##     ##  ##  ##       ######   ##     ##
+  ##       #########  ##  ##       ##       ##     ##
+  ##       ##     ##  ##  ##       ##       ##     ##
+  ##       ##     ## #### ######## ######## ########
+}]
+}
+
+##-----------------------------------------------------------------------
+## OK
+##-----------------------------------------------------------------------
+## Message.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::OK {} {
+  return [format {
+   #######  ##    ##
+  ##     ## ##   ##
+  ##     ## ##  ##
+  ##     ## #####
+  ##     ## ##  ##
+  ##     ## ##   ##
+   #######  ##    ##
+}]
+}
+
+##-----------------------------------------------------------------------
+## ERROR
+##-----------------------------------------------------------------------
+## Message.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::ERROR {} {
+  return [format {
+  ######## ########  ########   #######  ########
+  ##       ##     ## ##     ## ##     ## ##     ##
+  ##       ##     ## ##     ## ##     ## ##     ##
+  ######   ########  ########  ##     ## ########
+  ##       ##   ##   ##   ##   ##     ## ##   ##
+  ##       ##    ##  ##    ##  ##     ## ##    ##
+  ######## ##     ## ##     ##  #######  ##     ##
+}]
+}
+
+##-----------------------------------------------------------------------
+## WARNING
+##-----------------------------------------------------------------------
+## Message.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::WARNING {} {
+  return [format {
+  ##      ##    ###    ########  ##    ## #### ##    ##  ######
+  ##  ##  ##   ## ##   ##     ## ###   ##  ##  ###   ## ##    ##
+  ##  ##  ##  ##   ##  ##     ## ####  ##  ##  ####  ## ##
+  ##  ##  ## ##     ## ########  ## ## ##  ##  ## ## ## ##   ####
+  ##  ##  ## ######### ##   ##   ##  ####  ##  ##  #### ##    ##
+  ##  ##  ## ##     ## ##    ##  ##   ###  ##  ##   ### ##    ##
+   ###  ###  ##     ## ##     ## ##    ## #### ##    ##  ######
+}]
+}
+
+##-----------------------------------------------------------------------
+## INFO
+##-----------------------------------------------------------------------
+## Message.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::INFO {} {
+  return [format {
+  #### ##    ## ########  #######
+   ##  ###   ## ##       ##     ##
+   ##  ####  ## ##       ##     ##
+   ##  ## ## ## ######   ##     ##
+   ##  ##  #### ##       ##     ##
+   ##  ##   ### ##       ##     ##
+  #### ##    ## ##        #######
+}]
+}
+
+
+##-----------------------------------------------------------------------
+## VERIFY
+##-----------------------------------------------------------------------
+## Message.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::VERIFY {} {
+  return [format {
+  ##     ## ######## ########  #### ######## ##    ##
+  ##     ## ##       ##     ##  ##  ##        ##  ##
+  ##     ## ##       ##     ##  ##  ##         ####
+  ##     ## ######   ########   ##  ######      ##
+   ##   ##  ##       ##   ##    ##  ##          ##
+    ## ##   ##       ##    ##   ##  ##          ##
+     ###    ######## ##     ## #### ##          ##
+}]
+}
+
+##-----------------------------------------------------------------------
+## CHECK
+##-----------------------------------------------------------------------
+## Message.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::CHECK {} {
+  return [format {
+   ######  ##     ## ########  ######  ##    ##
+  ##    ## ##     ## ##       ##    ## ##   ##
+  ##       ##     ## ##       ##       ##  ##
+  ##       ######### ######   ##       #####
+  ##       ##     ## ##       ##       ##  ##
+  ##    ## ##     ## ##       ##    ## ##   ##
+   ######  ##     ## ########  ######  ##    ##
+}]
+}
+
+##-----------------------------------------------------------------------
+## OKBUT
+##-----------------------------------------------------------------------
+## Message.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::OKBUT {} {
+  return [format {
+   #######  ##    ##                   ########  ##     ## ########
+  ##     ## ##   ##                    ##     ## ##     ##    ##
+  ##     ## ##  ##                     ##     ## ##     ##    ##
+  ##     ## #####                      ########  ##     ##    ##
+  ##     ## ##  ##                     ##     ## ##     ##    ##
+  ##     ## ##   ##     ### ### ###    ##     ## ##     ##    ##
+   #######  ##    ##    ### ### ###    ########   #######     ##
+}]
+}
+
+##-----------------------------------------------------------------------
+## INCOMPLETE
+##-----------------------------------------------------------------------
+## Message.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::INCOMPLETE {} {
+  return [format {
+  #### ##    ##  ######   #######  ##     ## ########  ##       ######## ######## ########
+   ##  ###   ## ##    ## ##     ## ###   ### ##     ## ##       ##          ##    ##
+   ##  ####  ## ##       ##     ## #### #### ##     ## ##       ##          ##    ##
+   ##  ## ## ## ##       ##     ## ## ### ## ########  ##       ######      ##    ######
+   ##  ##  #### ##       ##     ## ##     ## ##        ##       ##          ##    ##
+   ##  ##   ### ##    ## ##     ## ##     ## ##        ##       ##          ##    ##
+  #### ##    ##  ######   #######  ##     ## ##        ######## ########    ##    ########
+}]
+}
+
+##-----------------------------------------------------------------------
+## MISSING
+##-----------------------------------------------------------------------
+## Message.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::MISSING {} {
+  return [format {
+  ##     ## ####  ######   ######  #### ##    ##  ######
+  ###   ###  ##  ##    ## ##    ##  ##  ###   ## ##    ##
+  #### ####  ##  ##       ##        ##  ####  ## ##
+  ## ### ##  ##   ######   ######   ##  ## ## ## ##   ####
+  ##     ##  ##        ##       ##  ##  ##  #### ##    ##
+  ##     ##  ##  ##    ## ##    ##  ##  ##   ### ##    ##
+  ##     ## ####  ######   ######  #### ##    ##  ######
+}]
+}
+
+##-----------------------------------------------------------------------
+## clone_repo
+##-----------------------------------------------------------------------
+## Clone Xilinx Tcl Store repository from Github
+##-----------------------------------------------------------------------
+proc ::tclapp::tclstore::method:clone_repo {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # clone the Xilinx Tcl Store repository (-h)
+  variable SCRIPT_VERSION
+  variable verbose
+  variable debug
+  variable params
+
+  set verbose 0
+  set debug 0
+
+  set workingDir [uplevel #0 pwd]
+  set force 0
+  set gitcloning {single-branch}
+  set error 0
+  set show_help 0
+  set localDirectory {}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-d$} -
+      {^-dir$} -
+      {^-d(ir?)?$} {
+        set localDirectory [lshift args]
+      }
+      {^-u$} -
+      {^-user$} -
+      {^-u(s(er?)?)?$} {
+        set params(gituser) [lshift args]
+      }
+      {^-f$} -
+      {^-force$} -
+      {^-f(o(r(ce?)?)?)?$} {
+          set force 1
+      }
+      {^-clone_all$} -
+      {^-clone_all_branch$} -
+      {^-clone_all_branches$} -
+      {^-c(l(o(n(e(_(a(l(l(_(b(r(a(n(c(h(es?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+          set gitcloning {all-branches}
+      }
+      {^-v$} -
+      {^-verbose$} -
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+          set verbose 1
+      }
+      {^-d$} -
+      {^-debug$} -
+      {^-d(e(b(ug?)?)?)?$} {
+          set debug 1
+          set verbose 1
+      }
+      {^-h$} -
+      {^-help$} -
+      {^-h(e(lp?)?)?$} {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            print error "option '$name' is not a valid option"
+            incr error
+          } else {
+            print error "option '$name' is not a valid option"
+            incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    print stdout [format {
+      Usage: tclstore clone_repo
+                  -dir <path>|-d <path>
+                  -user <github_username>|-u <github_username>
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Utility to clone the Xilinx Tcl Store repository to local directory
+
+      Version: %s
+
+        This command clones the Xilinx Tcl Store repository to a local directory. The 'vivado' command,
+        'git' and 'curl' binaries must be available in PATH. The command clones a single branch
+        from the Git repository based on the Vivado release in PATH and the Git branch used by this
+        specific release. The Git branch is extracted from the release catalog XML from Github.
+
+        Note: The vivado release available from the shell must match the release you want to contribute to.
+        In most case, you are only allowed to contribute to the latest Vivado release.
+
+        The command automatically sets the proxy information and the origin/upstream remotes. The origin
+        remotes points to the user's Github repository and the upstream remotes points to the Xilinx's Github
+        repository.
+
+        Windows Support:
+        ----------------
+          For Windows, the path to vivado.bat must be specified with --vivado=C:\Xilinx\Vivado\2014.3\bin\vivado.bat
+                                                                     ^^      ^
+
+      Example:
+         tclstore clone_repo -dir . -user frank
+         tclstore clone_repo -dir . -user frank --vivado=C:\Xilinx\Vivado\2014.3\bin\vivado.bat
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if  {$params(gituser) == {}} {
+    print error "no Github user name provided (-user)"
+    incr error
+  }
+
+  if  {$localDirectory == {}} {
+    print error "no directory provided (-dir)"
+    incr error
+  } elseif {![file isdirectory $localDirectory]} {
+    if {!$force} {
+      print error "directory '$localDirectory' does not exist"
+      incr error
+    } else {
+      print info "creating directory '$localDirectory'"
+      file mkdir $localDirectory
+    }
+  } else {
+    if {[file isdirectory [file join $localDirectory XilinxTclStore]]} {
+      print error "directory '[file normalize $localDirectory/XilinxTclStore]' already exists"
+      incr error
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  if {$params(initialized) == 0} {
+    if {[catch {initialize} errorstring]} {
+      incr error
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  if {[catch {
+    set localDirectory [file normalize $localDirectory]
+    set params(repository) [file join $localDirectory XilinxTclStore]
+  #   set vivadoBin [exec which vivado]
+    set vivadoBin $params(vivadobin)
+    set vivadoInstallDir [join [lrange [file split $vivadoBin] 0 end-2] [file separator] ]
+    set vivadoTclStoreDir [file join $vivadoInstallDir data XilinxTclStore]
+    print info "Vivado install dir: $vivadoInstallDir"
+    print info "Vivado Tcl Store dir: $vivadoTclStoreDir"
+    if {![file isdirectory $vivadoTclStoreDir]} {
+      error " -E- directory $vivadoTclStoreDir does not exist"
+    }
+    set vivadoCatalogXML [file join $vivadoTclStoreDir catalog "catalog_$params(vivadoversion).xml"]
+    print info "Vivado catalog XML: $vivadoCatalogXML"
+    if {![file exists $vivadoCatalogXML]} {
+      error " -E- file $vivadoCatalogXML does not exist"
+    }
+
+    # E.g:   <remote>master</remote>
+    set result [read_file_regexp $vivadoCatalogXML {<remote>}]
+    set vivadoRepoBranch {}
+    regexp {<remote>\s*(.+)\s*</remote>} $result - vivadoRepoBranch
+    print info "Git branch from Vivado XML: $vivadoRepoBranch"
+    if {$vivadoRepoBranch == {}} {
+      error " -E- cannot extract branch from XML"
+    }
+
+    set githubCatalogXML [format {https://raw.githubusercontent.com/Xilinx/XilinxTclStore/master/catalog/catalog_%s.xml} $params(vivadoversion)]
+    print info "Github catalog XML: $githubCatalogXML"
+
+#     foreach [list exitCode result]  [system $params(curlbin) $githubCatalogXML -x $params(proxy.https)] {break}
+    foreach [list exitCode result]  [runCurlCmd $githubCatalogXML] {break}
+    regexp {<remote>\s*(.+)\s*</remote>} $result - params(gitbranch)
+    print info "Git branch from Github XML: $params(gitbranch)"
+    if {$params(gitbranch) == {}} {
+      error " -E- cannot extract branch from XML"
+    }
+
+    cd $localDirectory
+    if {$gitcloning == {all-branches}} {
+      print info "cloning Xilinx GitHub repository (all branches) to [file normalize $localDirectory]"
+      if {$params(gituser) == {}} {
+        foreach [list exitCode message] [runGitCmd clone https://github.com/Xilinx/XilinxTclStore.git] {break}
+      } else {
+        foreach [list exitCode message] [runGitCmd clone https://$params(gituser)@github.com/Xilinx/XilinxTclStore.git] {break}
+      }
+      cd $params(repository)
+      print info "checking out branch $params(gitbranch)"
+      foreach [list exitCode message] [runGitCmd checkout $params(gitbranch)] {break}
+    } else {
+      print info "cloning Xilinx GitHub repository (branch $params(gitbranch)) to [file normalize $localDirectory]"
+      if {$params(gituser) == {}} {
+        foreach [list exitCode message] [runGitCmd clone -b $params(gitbranch) --single-branch https://github.com/Xilinx/XilinxTclStore.git] {break}
+      } else {
+        foreach [list exitCode message] [runGitCmd clone -b $params(gitbranch) --single-branch https://$params(gituser)@github.com/Xilinx/XilinxTclStore.git] {break}
+      }
+    }
+#     if {$params(gituser) == {}} {
+#       foreach [list exitCode message] [runGitCmd clone -b $params(gitbranch) --single-branch https://github.com/Xilinx/XilinxTclStore.git] {break}
+#     } else {
+#       foreach [list exitCode message] [runGitCmd clone -b $params(gitbranch) --single-branch https://$params(gituser)@github.com/Xilinx/XilinxTclStore.git] {break}
+#     }
+    cd $workingDir
+
+    if {$exitCode} {
+      cd $workingDir
+      error " -E- $message"
+    }
+
+    print info "configuring Git"
+    cd $params(repository)
+    if {$params(proxy.https) != {}} {
+      foreach [list exitCode message] [runGitCmd config https.proxy $params(proxy.https)] {break}
+    }
+    if {$params(proxy.http) != {}} {
+      foreach [list exitCode message] [runGitCmd config http.proxy $params(proxy.http)] {break}
+    }
+#     foreach [list exitCode message] [runGitCmd config http.proxy $params(proxy.http)] {break}
+#     foreach [list exitCode message] [runGitCmd config https.proxy $params(proxy.https)] {break}
+    foreach [list exitCode message] [runGitCmd config http.postBuffer 524288000] {break}
+    foreach [list exitCode message] [runGitCmd config https.postBuffer 524288000] {break}
+    cd $workingDir
+
+    print info "renaming remote origin -> upstream"
+    cd $params(repository)
+    foreach [list exitCode message] [runGitCmd remote rename origin upstream] {break}
+    cd $workingDir
+
+    if {$params(gituser) != {}} {
+      print info "adding remote origin to https://$params(gituser)@github.com/$params(gituser)/XilinxTclStore.git"
+      cd $params(repository)
+      foreach [list exitCode message] [runGitCmd remote add origin https://$params(gituser)@github.com/$params(gituser)/XilinxTclStore.git] {break}
+      cd $workingDir
+    }
+
+    print stdout [OK]
+
+    print info "set the following environment variables to point to the local repository:"
+    print info "########################################################################"
+    print info "setenv XILINX_TCLAPP_REPO $params(repository)"
+    print info "setenv XILINX_LOCAL_USER_DATA NO"
+    print info "########################################################################"
+
+    print stdout [show_message1]
+
+  } errorstring]} {
+    print stdout [ERROR]
+    error $errorstring
+  }
+
+#   set answer [ask {The flow between a app owner and a contributor is different} {Are you the apps owner or just a contributor? (Y/N)} {%} {^(y|Y|n|N)$}]
+#   print stdout "<answer:$answer>"
+
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## show_message1
+##-----------------------------------------------------------------------
+## Instructions.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::show_message1 {} {
+  variable params
+  return [format {
+  Instructions:
+  =============
+     1) The Xilinx's Tcl Store repository has been cloned to the local directory.
+        Only branch '%s' has been cloned has it matches the branch used by Vivado %s
+     2) Modify app file(s) under the local repository %s
+     3) Checklist:
+         a) Update the app version only if you are the app owner
+         b) Add a regression test for each new user proc that has been added
+         c) Digitally sign the doc/legal.txt document
+     4) Generate/update all the files used by the Tcl Store with 'tclstore package_app' command.
+} $params(gitbranch) $params(vivadoversion) $params(repository) ]
+}
+
+##-----------------------------------------------------------------------
+## package_app
+##-----------------------------------------------------------------------
+## Package an app by updating/generating all system files. Vivado is
+## run in the background.
+##-----------------------------------------------------------------------
+proc ::tclapp::tclstore::method:package_app {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # package an app (-h)
+  variable SCRIPT_VERSION
+  variable verbose
+  variable debug
+  variable params
+
+  set verbose 0
+  set debug 0
+
+  set workingDir [uplevel #0 pwd]
+  set repository {}
+  set revision_history {}
+  set shallow 0
+  set rebuild_app 1
+  set rebuild_app_xml 1
+  set rebuild_release_xml 1
+  set force 0
+  set error 0
+  set show_help 0
+  set app {}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-r$} -
+      {^-repository$} -
+      {^-r(e(p(o(s(i(t(o(ry?)?)?)?)?)?)?)?)?$} {
+        set repository [lshift args]
+      }
+      {^-a$} -
+      {^-app$} -
+      {^-a(pp?)?$} {
+        set app [getAppBaseName [lshift args] ]
+      }
+      {^-rev$} -
+      {^-revision$} -
+      {^-rev(i(s(i(o(n(_(h(i(s(t(o(ry?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set revision_history [lshift args]
+      }
+      {^-shallow$} -
+      {^-shallow$} {
+          set shallow 1
+      }
+      {^-no_release_xml$} -
+      {^-n(o(_(r(e(l(e(a(s(e(_(x(ml?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+          set rebuild_app 1
+          set rebuild_app_xml 1
+          set rebuild_release_xml 0
+      }
+      {^-only_release_xml$} -
+      {^-o(n(l(y(_(r(e(l(e(a(s(e(_(x(ml?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+          set rebuild_app 0
+          set rebuild_app_xml 0
+          set rebuild_release_xml 1
+      }
+      {^-v$} -
+      {^-verbose$} -
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+          set verbose 1
+      }
+      {^-d$} -
+      {^-debug$} -
+      {^-d(e(b(ug?)?)?)?$} {
+          set debug 1
+          set verbose 1
+      }
+      {^-h$} -
+      {^-help$} -
+      {^-h(e(lp?)?)?$} {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            print error "option '$name' is not a valid option"
+            incr error
+          } else {
+            print error "option '$name' is not a valid option"
+            incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    print stdout [format {
+      Usage: tclstore package_app
+                  -app <app>|-a <app>
+                  -revision <revision_history>
+                  [-repository <dir>|-r <dir>]
+                  [-shallow]
+                  [-no_release_xml][-only_release_xml]
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Utility to package an app
+
+      Version: %s
+
+        This commands updates all the system files under the app area such as
+        tclIndex, pkgIndex, and the app XML. To be able to test the app in the GUI, the
+        release catalog XML is also updated.
+
+        In addition, the command verifies that the doc/legal.txt and test/test.tcl files
+        exist. However, the regression suite is not being executed.
+
+        Use -no_release_xml to skip the update of the release catalog XML. This will
+        prevent GUI testing.
+
+        Use -only_release_xml to only update the release catalog XML. The catalog version
+        is based on the Vivado release available on the system.
+
+        Note: the release catalog XML should not be commited to Github and added to
+        the pull request
+
+        Use -shallow to exclude proc information from the app XML (uncommon).
+
+        Windows Support:
+        ----------------
+          For Windows, the path to vivado.bat must be specified with --vivado=C:\Xilinx\Vivado\2014.3\bin\vivado.bat
+                                                                     ^^      ^
+
+      Example:
+         tclstore package_app -app "xilinx::designutils" -repository /home/dev/XilinxTclStore -revision "Fixes issue ..."
+         tclstore package_app -app "xilinx::modelsim" -shallow -repository /home/dev/XilinxTclStore -revision "Fixes issue ..."
+         tclstore package_app -app "xilinx::modelsim" -shallow -repository /home/dev/XilinxTclStore -revision "Fixes issue ..." --vivado=C:\Xilinx\Vivado\2014.3\bin\vivado.bat
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if {$app == {}} {
+    print error "no app specified (-app)"
+    incr error
+  } else {
+    if {![regexp {^[^:]+::[^:]+$} $app]} {
+      print error "app '$app' does not match format <COMPANY>::<APP>"
+      incr error
+    }
+  }
+
+  # -app/-revision is only mandatory when -only_release_xml is _not_specified
+  if {$revision_history == {} && ($rebuild_app) && ($rebuild_app_xml)} {
+    print error "no revision history specified (-revision)"
+    incr error
+  }
+
+  if {$repository == {}} {
+    # No repository provided. Check the case when XilinxTclStore is in current directory
+    if {[file isdirectory [file join $workingDir XilinxTclStore]]} {
+      set repository [file normalize [file join $workingDir XilinxTclStore]]
+      # OK?
+      if {![file isdirectory [file join $repository .git]]} {
+        print error "directory $repository is not a valid Git directory"
+        incr error
+      } else {
+        # OK
+        print warning "set repository from working directory ($repository)"
+      }
+    } else {
+      print error "no repository provided (-repository)"
+      incr error
+    }
+  } elseif {![file isdirectory $repository]} {
+    print error "[file normalize $repository] is not a directory"
+    incr error
+  } else {
+    set repository [file normalize $repository]
+    if {[lindex [file split $repository] end] == {XilinxTclStore}} {
+      # OK?
+      if {![file isdirectory [file join $repository .git]]} {
+        print error "directory [file normalize $repository] is not a valid Git directory"
+        incr error
+      } else {
+        # OK
+      }
+    } elseif {[file isdirectory [file join $repository XilinxTclStore]]} {
+      set repository [file join $repository XilinxTclStore]
+      # OK?
+      if {![file isdirectory [file join $repository .git]]} {
+        print error "[file normalize $repository] is not a valid Git directory"
+        incr error
+      } else {
+        # OK
+      }
+    } else {
+      print error "[file normalize $repository] is not a valid XilinxTclStore repository"
+      incr error
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  if {$params(initialized) == 0} {
+    if {[catch {initialize} errorstring]} {
+      incr error
+    }
+  }
+
+  set githubCatalogXML [format {https://raw.githubusercontent.com/Xilinx/XilinxTclStore/master/catalog/catalog_%s.xml} $params(vivadoversion)]
+  print info "Github catalog XML: $githubCatalogXML"
+  foreach [list exitCode result]  [runCurlCmd $githubCatalogXML] {break}
+  regexp {<remote>\s*(.+)\s*</remote>} $result - params(gitbranch)
+  print info "Git branch from Github XML: $params(gitbranch)"
+  if {$params(gitbranch) == {}} {
+    print error "cannot extract branch from XML"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  set params(app) $app
+  set params(repository) $repository
+
+  if {[catch {
+
+    set script {}
+    ########## Vivado run script <<<<<<<<<<<<<<<<
+    append script [format {
+  source -notrace {%s}
+  set repository {%s}
+  set app {::tclapp::%s}
+  set appdir [file join $repository {*}[regsub -all "::" $app " "]]
+  puts "<<APPDIR>>$appdir<</APPDIR>>"
+} [info script] $params(repository) $params(app) ]
+    ########## Vivado run script >>>>>>>>>>>>>>>>
+
+    if {$rebuild_app} {
+      ########## Vivado run script <<<<<<<<<<<<<<<<
+      append script [format {
+
+    # Forget packages
+    puts "<<PACKAGEFORGET>>"
+    foreach pkg [package names] {
+      if {![regexp {^::tclapp::} $pkg]} { continue }
+      if {[regexp {^::tclapp::support::} $pkg]} { continue }
+      puts " -I- Package forget $pkg version [package version $pkg]"
+      package forget $pkg
+    }
+    puts "<</PACKAGEFORGET>>"
+
+    # Linter
+    puts "<<LINTER>>"
+    foreach file [lsort [glob -nocomplain [file join $appdir *.tcl]]] {
+      if {[regexp {^(pkgIndex.tcl|tclIndex)$} [file tail $file]]} {
+        continue
+      }
+      if {[catch {lint_files $file} errorstring]} {
+        puts " -I- Linter failed on $file: $errorstring"
+      } else {
+        puts " -I- Linter passed on $file"
+      }
+    }
+    puts "<</LINTER>>"
+
+    # pkgIndex.tcl
+    puts "<<PKGINDEX>>"
+    puts " -I- Rebuilding pkgIndex.tcl for $app ($appdir)"
+    pkg_mkIndex $appdir
+    puts "<</PKGINDEX>>"
+
+    # tclIndex
+    puts "<<TCLINDEX>>"
+    puts " -I- Rebuilding tclIndex for $app ($appdir)"
+    auto_mkindex $appdir
+    puts "<</TCLINDEX>>"
+    set listProcs [::tclapp::support::appinit::get_app_procs $repository $app]
+    puts -nonewline "<<PROCS>>"
+    puts -nonewline $listProcs
+    puts "<</PROCS>>"
+    set FH [open [file join $appdir tclIndex] {r}]
+    set tclIndexContent [list]
+    set tclIndexProcs [list]
+    foreach line [split [read $FH] \n] {
+      if {[regexp [format {^(.+%%s)\:\:([^\s\)]+)\)(.+)$} $app] $line -- prefix procname suffix]} {
+        if {[lsearch -exact $listProcs $procname] != -1} {
+#           lappend tclIndexContent $line
+          lappend tclIndexProcs $line
+        } else {
+          switch -glob -- [version -short] {
+            2014.3* {
+#               lappend tclIndexContent "# $line"
+#               lappend tclIndexProcs "# $line"
+            }
+            default {
+#               lappend tclIndexContent "# $line"
+#               lappend tclIndexProcs "# $line"
+            }
+          }
+        }
+      } else {
+        lappend tclIndexContent $line
+      }
+    }
+    close $FH
+    set FH [open [file join $appdir tclIndex] {w}]
+    puts $FH [join [concat $tclIndexContent [lsort $tclIndexProcs]] \n]
+    # Replace "source" -> "source -trace"
+#     puts $FH [regsub -all {list source} [join [concat $tclIndexContent [lsort $tclIndexProcs]] \n] {list source -notrace}]
+    close $FH
+
+}]
+      ########## Vivado run script >>>>>>>>>>>>>>>>
+    }
+
+    if {$rebuild_app_xml} {
+      if {$shallow} {
+        ########## Vivado run script <<<<<<<<<<<<<<<<
+        append script [format {
+    # App XML
+    puts "<<APPXML>>"
+    tclapp::update_app_catalog -shallow [regsub {::tclapp::} $app {}] {%s}
+    puts "<</APPXML>>"
+}   $revision_history ]
+        ########## Vivado run script >>>>>>>>>>>>>>>>
+      } else {
+        ########## Vivado run script <<<<<<<<<<<<<<<<
+        append script [format {
+    # App XML
+    puts "<<APPXML>>"
+    tclapp::update_app_catalog [regsub {::tclapp::} $app {}] {%s}
+    puts "<</APPXML>>"
+}   $revision_history ]
+        ########## Vivado run script >>>>>>>>>>>>>>>>
+      }
+    }
+
+    if {$rebuild_release_xml} {
+      ########## Vivado run script <<<<<<<<<<<<<<<<
+      if {$params(app) != {}} {
+        append script [format {
+    # Release catalog XML
+    puts "<<RELEASEXML>>"
+    tclapp::update_catalog {%s}
+    puts "<</RELEASEXML>>"
+}   $params(app) ]
+      } else {
+        # If no app has been specified, do not add anything to tclapp::update_catalog
+        append script [format {
+    # Release catalog XML
+    puts "<<RELEASEXML>>"
+    tclapp::update_catalog
+    puts "<</RELEASEXML>>"
+}]
+      }
+    ########## Vivado run script >>>>>>>>>>>>>>>>
+    }
+
+    foreach [list exitCode vivadolog] [runVivadoCmd [split $script \n]] { break }
+
+    set error $exitCode
+    set warning 0
+    set packageforgetlog {} ; set linterlog {} ; set pkgindexlog {} ; set tclindexlog {}
+    set appxmlog {} ; set releasexmllog {} ; set errorlog {} ; set appdir {} ; set procs {}
+    regexp {<<PACKAGEFORGET>>(.+)<</PACKAGEFORGET>>} $vivadolog - packageforgetlog
+    regexp {<<LINTER>>(.+)<</LINTER>>} $vivadolog - linterlog
+    regexp {<<PKGINDEX>>(.+)<</PKGINDEX>>} $vivadolog - pkgindexlog
+    regexp {<<TCLINDEX>>(.+)<</TCLINDEX>>} $vivadolog - tclindexlog
+    regexp {<<APPXML>>(.+)<</APPXML>>} $vivadolog - appxmlog
+    regexp {<<RELEASEXML>>(.+)<</RELEASEXML>>} $vivadolog - releasexmllog
+    regexp {<<VIVADOERROR>>(.+)<</VIVADOERROR>>} $vivadolog - errorlog
+    regexp {<<APPDIR>>(.+)<</APPDIR>>} $vivadolog - appdir
+    regexp {<<PROCS>>(.+)<</PROCS>>} $vivadolog - procs
+
+    if {$rebuild_app} {
+      if {$verbose} {
+        print stdout "  ############################################"
+        print stdout "  ## Package Forget"
+        print stdout "  ############################################"
+        print stdout [indentString $packageforgetlog [string repeat { } 2]]
+      }
+
+      print stdout "  ############################################"
+      print stdout "  ## Linter Check"
+      print stdout "  ############################################"
+      print stdout [indentString $linterlog [string repeat { } 2]]
+      if {[regexp -nocase {Errors were found} $linterlog]} {
+        incr error
+        print stdout [ERROR]
+      }
+
+      print stdout "  ############################################"
+      print stdout "  ## pkgIndex Generation"
+      print stdout "  ############################################"
+      print stdout [indentString $pkgindexlog [string repeat { } 2]]
+
+      print stdout "  ############################################"
+      print stdout "  ## tclIndex Generation"
+      print stdout "  ############################################"
+      print stdout [indentString $tclindexlog [string repeat { } 2]]
+    }
+
+    if {$rebuild_app_xml} {
+      print stdout "  ############################################"
+      print stdout "  ## App XML Catalog"
+      print stdout "  ############################################"
+      print stdout [indentString $appxmlog [string repeat { } 2]]
+    }
+
+    if {$rebuild_release_xml} {
+      print stdout "  ############################################"
+      print stdout "  ## Release XML Catalog"
+      print stdout "  ############################################"
+      print stdout [indentString $releasexmllog [string repeat { } 2]]
+    }
+
+    if {$rebuild_app} {
+      print stdout "  ############################################"
+      print stdout "  ## Regression Suite"
+      print stdout "  ############################################"
+      if {$appdir != {}} {
+        set testscript [file join $appdir test test.tcl]
+        if {[file exists $testscript]} {
+          print info "found test script [file normalize $testscript]"
+        } else {
+          print error "missing test script [file normalize $testscript]"
+          print stdout [ERROR]
+          incr error
+        }
+      } else {
+      }
+    }
+
+    if {$rebuild_app} {
+      print stdout "\n  ############################################"
+      print stdout "  ## Legal Document"
+      print stdout "  ############################################"
+      if {$appdir != {}} {
+        set legaldoc [file join $appdir doc legal.txt]
+        if {[file exists $legaldoc]} {
+          print info "found legal document [file normalize $legaldoc]"
+        } else {
+          print error "missing legal document [file normalize $legaldoc]"
+          print stdout [ERROR]
+          incr error
+        }
+      } else {
+      }
+    }
+
+    if {$rebuild_app} {
+      print stdout "\n  ############################################"
+      print stdout "  ## Procs Long Help"
+      print stdout "  ############################################"
+      if {$appdir != {}} {
+        set count 0
+        set missing 0
+        foreach proc [lsort $procs] {
+          set procdoc [file join $appdir doc $proc]
+          if {[file exists $procdoc]} {
+            if {$verbose} {
+              print info "found long help for '$proc' ([file normalize $procdoc])"
+            }
+            incr count
+          } else {
+            print warning "missing long help for '$proc' ([file normalize $procdoc])"
+            incr missing
+          }
+        }
+        print info "found $count procs with long help"
+        if {$missing} {
+          print warning "$missing procs have missing long help"
+          incr warning
+#           print stdout [WARNING]
+          print stdout [MISSING]
+        }
+      } else {
+      }
+    }
+
+    print stdout "\n  ############################################"
+    print stdout "  ## GIT Summary"
+    print stdout "  ############################################"
+    if {$params(repository) != {}} {
+      cd $params(repository)
+      foreach [list exitCode message] [runGitCmd branch] {break}
+      # Extract the branch from the line that has '*'
+      # E.g:
+      #  * 2014.4
+      #    master
+      regexp {\*\s+([^\s]+)(\s|$)} $message - params(gitbranch)
+      print info "Git branch: $params(gitbranch)"
+      foreach [list exitCode message] [runGitCmd status] {break}
+      print info "Git status:"
+      print stdout [indentString $message [string repeat { } 5]]
+      cd $workingDir
+    } else {
+      print warning "empty Xilinx Tcl Store repository"
+    }
+
+    print stdout "\n  ########################################################################################\n"
+
+    if {$error == 0} {
+      if {$warning} {
+#         print stdout [OKBUT]
+        print stdout [CHECK]
+        print stdout "  ... check whether above warning(s) need to be addressed"
+      } else {
+        print stdout [OK]
+      }
+      print stdout [show_message2 $revision_history]
+    } else {
+      print stdout [FAILED]
+      if {$errorlog != {}} {
+        print stdout "  ############################################"
+        print stdout "  ## ERROR from Vivado Log"
+        print stdout "  ############################################"
+        print stdout [indentString $errorlog [string repeat { } 2]]
+      }
+    }
+
+#     set answer [ask {It's time to enter the revision history} {Revision history?} {%} {^.+$}]
+#     print stdout "<answer:$answer>"
+
+  } errorstring]} {
+    print stdout [ERROR]
+    error $errorstring
+  }
+
+  # Some cleanup
+  if {[file exists [file join $params(repository) tclstore.wpc]]} {
+    catch { file delete [file join $params(repository) tclstore.wpc] }
+  }
+
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## show_message2
+##-----------------------------------------------------------------------
+## Instructions.
+##-----------------------------------------------------------------------
+
+proc ::tclapp::tclstore::show_message2 { revision_history } {
+  variable params
+  set appdir [file join {tclapp} [regsub -all "::" $params(app) [file separator] ] ]
+  return [format {
+  Instructions:
+  =============
+     1) All the files have been updated under the app area. If you are the app owner, make sure that
+        the app version has been updated. If you need to modify the app version at this point, you
+        will need to re-run 'tclstore package_app' command.
+     2) Test the app in the GUI. Before running Vivado, set the following environment variables:
+           setenv XILINX_TCLAPP_REPO %s
+           setenv XILINX_LOCAL_USER_DATA NO
+     3) Run the regression test (test/test.tcl)
+     4) Check that doc/legal.txt has been digitally signed
+     5) Once all the files have been verified, the changes should be commited to your Github repository.
+        You won't be able to commit directly to the Xilinx's Github repository so you will have to
+        commit through your Guthub repository
+          cd %s
+          git checkout %s
+          git pull upstream %s
+          git add %s
+          git commit -m '%s'
+          git push origin %s
+     7) To revert changes made to the release catalog area
+          git checkout -- catalog/catalog_%s.xml catalog/%s
+     8) From Github.com, select the Git branch '%s' and send a pull request
+} $params(repository) \
+  $params(repository) \
+  $params(gitbranch) \
+  $params(gitbranch) \
+  $appdir \
+  $revision_history \
+  $params(gitbranch) \
+  $params(vivadoversion) \
+  $params(vivadoversion) \
+  $params(gitbranch) \
+  ]
+}
+
+##-----------------------------------------------------------------------
+## update_repo
+##-----------------------------------------------------------------------
+## Apply a patch or merge a pull request.
+##-----------------------------------------------------------------------
+# amend, modify, adjust, rebuild, repair, reconcile
+proc ::tclapp::tclstore::method:update_repo {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # patch a repository from a pull request (-h)
+  variable SCRIPT_VERSION
+  variable verbose
+  variable debug
+  variable params
+
+  set verbose 0
+  set debug 0
+
+  set workingDir [uplevel #0 pwd]
+  set repository {}
+  set commit [list]
+  set action [list]
+  # Target Git branch where merge should happen
+  set target_branch {}
+  # Current Git branch
+  set current_branch {}
+  set create_patch 0
+  set apply_patch 0
+  set check_patch 0
+  set force 0
+  set error 0
+  set show_help 0
+  set app {}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-r$} -
+      {^-repository$} -
+      {^-r(e(p(o(s(i(t(o(ry?)?)?)?)?)?)?)?)?$} {
+        set repository [lshift args]
+      }
+      {^-b$} -
+      {^-branch$} -
+      {^-b(r(a(n(ch?)?)?)?)?$} {
+        set target_branch [lshift args]
+      }
+      {^-p$} -
+      {^-patch$} -
+      {^-p(a(t(ch?)?)?)?$} {
+        lappend commit [lshift args]
+        lappend action {patch}
+      }
+      {^-m$} -
+      {^-merge$} -
+      {^-m(e(r(ge?)?)?)?$} {
+        lappend commit [lshift args]
+        lappend action {merge}
+      }
+      {^-c$} -
+      {^-cherry_pick$} -
+      {^-c(h(e(r(r(y(_(p(i(ck?)?)?)?)?)?)?)?)?)?$} {
+        lappend commit [lshift args]
+        lappend action {cherry_pick}
+      }
+      {^-create_patch$} -
+      {^-create_patch$} -
+      {^-create(_(p(a(t(c(h?)?)?)?)?)?)?$} {
+          set create_patch 1
+      }
+      {^-apply_patch$} -
+      {^-apply_patch$} -
+      {^-apply(_(p(a(t(c(h?)?)?)?)?)?)?$} {
+          set apply_patch 1
+      }
+      {^-check_patch$} -
+      {^-check_patch$} -
+      {^-check(_(p(a(t(c(h?)?)?)?)?)?)?$} {
+          set check_patch 1
+      }
+      {^-v$} -
+      {^-verbose$} -
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+          set verbose 1
+      }
+      {^-d$} -
+      {^-debug$} -
+      {^-d(e(b(ug?)?)?)?$} {
+          set debug 1
+          set verbose 1
+      }
+      {^-h$} -
+      {^-help$} -
+      {^-h(e(lp?)?)?$} {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            print error "option '$name' is not a valid option"
+            incr error
+          } else {
+            print error "option '$name' is not a valid option"
+            incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    print stdout [format {
+      Usage: tclstore update_repo
+                  [-repository <dir>|-r <dir>]
+                  [-branch <branch>|-b <branch>]
+                  [-cherry_pick <pull_request>|-c <pull_request>]
+                  [-merge <commitid|pull_request>|-m <commitid|pull_request>]
+                  [-patch <commitid|pull_request>|-p <commitid|pull_request>]
+                  [-create_patch][-check_patch][-apply_patch]
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Utility to apply a patch to a local XilinxTclStore repository
+
+      Version: %s
+
+        Multiple -patch/-merge/-check_pick can be used in the same call, but the
+        command line options cannot be mixed together.
+
+        Windows Support:
+        ----------------
+          For Windows, the path to vivado.bat must be specified with --vivado=C:\Xilinx\Vivado\2014.3\bin\vivado.bat
+                                                                     ^^      ^
+
+      Example:
+         tclstore update_repo -repository /home/dev/XilinxTclStore -patch 354
+         tclstore update_repo -repository /home/dev/XilinxTclStore -patch 354 -create_patch
+         tclstore update_repo -repository /home/dev/XilinxTclStore -patch 354 -check_patch
+         tclstore update_repo -repository /home/dev/XilinxTclStore -patch 354 -apply_patch
+         tclstore update_repo -repository /home/dev/XilinxTclStore -merge 354
+         tclstore update_repo -repository /home/dev/XilinxTclStore -merge b50788b
+         tclstore update_repo -repository /home/dev/XilinxTclStore -cherry_pick b50788b
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if {$repository == {}} {
+    # No repository provided. Check the case when XilinxTclStore is in current directory
+    if {[file isdirectory [file join $workingDir XilinxTclStore]]} {
+      set repository [file normalize [file join $workingDir XilinxTclStore]]
+      # OK?
+      if {![file isdirectory [file join $repository .git]]} {
+        print error "directory $repository is not a valid Git directory"
+        incr error
+      } else {
+        # OK
+        print warning "set repository from working directory ($repository)"
+      }
+    } else {
+      print error "no repository provided (-repository)"
+      incr error
+    }
+  } elseif {![file isdirectory $repository]} {
+    print error "[file normalize $repository] is not a directory"
+    incr error
+  } else {
+    set repository [file normalize $repository]
+    if {[lindex [file split $repository] end] == {XilinxTclStore}} {
+      # OK?
+      if {![file isdirectory [file join $repository .git]]} {
+        print error "directory [file normalize $repository] is not a valid Git directory"
+        incr error
+      } else {
+        # OK
+      }
+    } elseif {[file isdirectory [file join $repository XilinxTclStore]]} {
+      set repository [file join $repository XilinxTclStore]
+      # OK?
+      if {![file isdirectory [file join $repository .git]]} {
+        print error "[file normalize $repository] is not a valid Git directory"
+        incr error
+      } else {
+        # OK
+      }
+    } else {
+      print error "[file normalize $repository] is not a valid XilinxTclStore repository"
+      incr error
+    }
+  }
+
+  if {[llength [lsort -unique $action]] > 1} {
+    print error "cannot mix -patch/-merge/-cherry_pick in the same call"
+    incr error
+  }
+
+  if {[llength $commit] == 0} {
+    print error "no commit id or pull request number provided (-patch/-merge/-cherry_pick)"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  # if reach this line, the $action should be filled with same value(s)
+  set action [lsort -unique $action]
+  if {($action == {cherry_pick}) && ![isSha1 $commit]} {
+    print error "only a commit id can be specified with -cherry_pick. Pull request(s) number are not valid"
+    incr error
+  }
+
+  if {$action != {patch} && ($create_patch || $apply_patch || $check_patch)} {
+    print error "-create_patch/-apply_patch/-check_patch are only valid with -patch"
+    incr error
+  } elseif {[expr $create_patch + $apply_patch + $check_patch] > 1} {
+    print error "cannot use -create_patch/-apply_patch/-check_patch together"
+    incr error
+  }
+
+  if {$params(initialized) == 0} {
+    # Initialize git & curl
+    if {[catch {initialize {git|curl}} errorstring]} {
+      incr error
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  set params(repository) $repository
+
+  if {[catch {
+
+    # Go to repository so that Git commands can be issued
+    cd $params(repository)
+
+    # Get current Git branch
+    foreach [list exitCode message] [runGitCmd rev-parse --abbrev-ref HEAD] {break}
+    set current_branch $message
+    print info "current Git branch '$current_branch'"
+
+    if {$target_branch != {}} {
+      # Get the list of branches
+      foreach [list exitCode message] [runGitCmd branch -a] {break}
+      # Dirty way to extract the list of existing branches from 'git branch -a'
+      regsub -all {remotes/upstream/} $message {} all_branches
+# print stdout [indentString [join [split $existing_branches \n ]] [string repeat {->} 5]]
+      if {[lsearch $all_branches  $target_branch] != -1} {
+        # The target branch already exists, switch to it
+        print info "switching to Git branch '$target_branch'"
+        foreach [list exitCode message] [runGitCmd checkout $target_branch] {break}
+      } else {
+        # The target branch does not exist, create it and switch to it
+        print info "unknown Git branch '$target_branch'"
+        print info "creating Git branch '$target_branch'"
+        print info "switching to Git branch '$target_branch'"
+        foreach [list exitCode message] [runGitCmd checkout -b $target_branch] {break}
+      }
+#       print info "switching to Git branch '$target_branch'"
+#       foreach [list exitCode message] [runGitCmd checkout $target_branch] {break}
+    } else {
+      set target_branch $current_branch
+    }
+
+    foreach id $commit {
+      switch $action {
+        merge {
+          if {[isSha1 $id]} {
+            print info "merging commit id $id on branch '$target_branch'"
+#             foreach [list exitCode message] [runGitCmd merge $id] {break}
+            if {[catch { foreach [list exitCode message] [runGitCmd merge $id] {break} } errorstring ]} {
+              print stdout "     -------------------------------------------------------"
+              print stdout [indentString $errorstring [string repeat { } 5]]
+            } else {
+              print stdout "     -------------------------------------------------------"
+              print stdout [indentString $message [string repeat { } 5]]
+            }
+            print stdout "     -------------------------------------------------------"
+          } else {
+#             print error "merging a pull request ($id) is not yet supported"
+            print info "merging a pull request ($id) on branch '$target_branch' (upstream::refs/pull/${id}/head)"
+            if {[catch { foreach [list exitCode message] [runGitCmd pull upstream refs/pull/${id}/head] {break} } errorstring ]} {
+              print stdout "     -------------------------------------------------------"
+              print stdout [indentString $errorstring [string repeat { } 5]]
+            } else {
+              print stdout "     -------------------------------------------------------"
+              print stdout [indentString $message [string repeat { } 5]]
+            }
+            print stdout "     -------------------------------------------------------"
+          }
+        }
+        patch {
+          if {[isSha1 $id]} {
+            print error "patching a commit id ($id) is not yet supported"
+            if {0} {
+              print info "patching commit id $id on branch '$target_branch'"
+              foreach [list exitCode message] [runGitCmd format-patch $id] {break}
+              foreach line [split $message \n] {
+                print stdout "     -> patch [file normalize $line]"
+                print info "stats for patch [file normalize $line]"
+                foreach [list exitCode message1] [runGitCmd apply --stat $line] {break}
+                print stdout [indentString $message1 [string repeat { } 5]]
+#                 foreach [list exitCode message] [runGitCmd apply --stat $line] {break}
+#                 foreach [list exitCode message] [runGitCmd apply --check $line] {break}
+#                 foreach [list exitCode message] [runGitCmd apply $line] {break}
+              }
+            }
+          } else {
+#             print error "patching a pull request ($id) is not yet supported"
+
+            # Patch filename
+            set filename [file normalize [file join $params(repository) ${id}.patch]]
+
+            if {$check_patch == 1} {
+              checkGitPatch $filename
+              continue
+            }
+            # If $apply_patch=0 it means that either -create_patch was specified or neither -create_patch/-apply_patch was specified
+            if {$apply_patch == 0} {
+              print info "creating patch for pull request $id (https://github.com/Xilinx/XilinxTclStore/pull/${id}.patch)"
+              foreach [list exitCode message] [runCurlCmd https://github.com/Xilinx/XilinxTclStore/pull/${id}.patch > $filename ] {break}
+              print info "patch created [file normalize $filename]"
+              if {$create_patch} {
+                print info "#######################################################"
+                print info "patch not applied. Apply patch with 'git am < $filename'"
+                print info "or re-run command with -apply_patch"
+                print info "#######################################################"
+                # Check patch
+                checkGitPatch $filename
+              }
+            }
+            # If $create_patch=0 it means that either -apply_patch was specified or neither -create_patch/-apply_patch was specified
+            if {$create_patch == 0} {
+              if {![file exists $filename]} {
+                print error "expected patch '$filename' does not exists"
+              } else {
+                print info "applying patch for pull request $id ($filename)"
+#                 foreach [list exitCode message] [system ssh git-dev [format {cd %s ; cat %s | %s %s} $params(repository) $pullRequest.patch $params(git) {am} ] ] { break }
+#                 foreach [list exitCode message] [system ssh git-dev [format {cd %s ; %s %s < %s} $params(repository) $params(git) {am --signoff} $pullRequest.patch ] ] { break }
+#                 foreach [list exitCode message] [runGitCmd am < $params(repository)/${id}.patch ] ] { break }
+#                 foreach [list exitCode message] [system $params(gitbin) am < $params(repository)/${id}.patch ] ] { break }
+
+#                 foreach [list exitCode message] [runGitCmd am < $params(repository)/${id}.patch ] ] { break }
+                if {[catch { foreach [list exitCode message] [runGitCmd am < $filename] {break} } errorstring ]} {
+                  print stdout "     -------------------------------------------------------"
+                  print stdout [indentString $errorstring [string repeat { } 5]]
+                } else {
+                  print stdout "     -------------------------------------------------------"
+                  print stdout [indentString $message [string repeat { } 5]]
+                }
+                print stdout "     -------------------------------------------------------"
+
+                print info "Git status"
+                foreach [list exitCode message] [runGitCmd diff --name-status HEAD HEAD~1] {break}
+                print stdout [indentString $message [string repeat { } 5]]
+              }
+            }
+
+
+          }
+        }
+        cherry_pick {
+          print info "cherry picking commit id $id on branch '$target_branch'"
+          if {[catch { foreach [list exitCode message] [runGitCmd cherry-pick $id] {break} } errorstring ]} {
+            print stdout "     -------------------------------------------------------"
+            print stdout [indentString $errorstring [string repeat { } 5]]
+          } else {
+            print stdout "     -------------------------------------------------------"
+            print stdout [indentString $message [string repeat { } 5]]
+          }
+          print stdout "     -------------------------------------------------------"
+        }
+        default {
+         print error "unknown action '$action'"
+       }
+      }
+    }
+
+    print info "Git log for branch '$target_branch' (last [expr [llength $commit] +1] commits)"
+#     foreach [list exitCode message] [runGitCmd log --pretty=oneline --abbrev-commit HEAD~[expr [llength $commit] +1]..HEAD] {break}
+    foreach [list exitCode message] [runGitCmd log --pretty=oneline HEAD~[expr [llength $commit] +1]..HEAD] {break}
+    print stdout [indentString $message [string repeat { } 5]]
+
+    # Revert the Git branch
+    print info "reverting to Git branch '$current_branch'"
+    foreach [list exitCode message] [runGitCmd checkout $current_branch] {break}
+
+    # Return to working directory
+    cd $workingDir
+
+#     set answer [ask {It's time to enter the revision history} {Revision history?} {%} {^.+$}]
+#     print stdout "<answer:$answer>"
+
+  } errorstring]} {
+    # Revert the Git branch
+    if {$current_branch != {}} {
+      print info "reverting to Git branch '$current_branch'"
+      foreach [list exitCode message] [runGitCmd checkout $current_branch] {break}
+    }
+
+    # Return to working directory
+    cd $workingDir
+
+    print stdout [ERROR]
+    error $errorstring
+  }
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::method:checkGitPatch
+#------------------------------------------------------------------------
+# Usage: checkGitPatch <filename>
+#------------------------------------------------------------------------
+# Check that a patch can be pulled inside inside repository.
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::checkGitPatch {filename} {
+  variable params
+  variable verbose
+  variable debug
+
+  if {![file exists [file normalize $filename]]} {
+    print error "patch $filename does not exist"
+    return -code ok
+  }
+
+  print info "checking changes from patch [file normalize $filename]"
+  foreach [list exitCode message] [runGitCmd apply --stat $filename] {break}
+  print stdout [indentString $message [string repeat { } 5]]
+
+  print info "testing patch [file normalize $filename]"
+  if {[catch { foreach [list exitCode message] [runGitCmd apply --check $filename] {break} } errorstring ]} {
+    print stdout "     -------------------------------------------------------"
+    print stdout [indentString $errorstring [string repeat { } 5]]
+  } else {
+    print stdout "     -------------------------------------------------------"
+    print stdout [indentString $message [string repeat { } 5]]
+  }
+  print stdout "     -------------------------------------------------------"
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::isSha1
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Return 1 if any of the commit(s) matches a SHA1 commit id
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::isSha1 {ids} {
+  foreach id $ids {
+    # SHA1 format (7 or 40 alphanumeric characters)?
+    if {[regexp {^([0-9a-zA-Z]{40}|[0-9a-zA-Z]{10}|[0-9a-zA-Z]{7})$} $id]} {
+      return 1
+    }
+  }
+  return 0
+}
+
+
+##-----------------------------------------------------------------------
+## Create aliases for methods
+##-----------------------------------------------------------------------
+
+foreach procname [info proc ::tclapp::tclstore::method:*] {
+  regsub {::tclapp::tclstore::method:} $procname {} procname
+  if {$procname == {?}} { continue }
+#   puts "<procname:$procname>"
+  eval [list interp alias {} $procname {} ::tclapp::tclstore::method:${procname} ]
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::tclapp::tclstore::verbose 0
+set ::tclapp::tclstore::debug 0
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tclapp::tclstore::tclstore
+} else {
+  set exitCode 0
+  if {[catch {eval [concat ::tclapp::tclstore::tclstore $argv]} errorstring]} {
+    puts $errorstring
+    set exitCode 1
+  }
+  # Close log file
+  if {$::tclapp::tclstore::params(log.fh) != {}} {
+    ::tclapp::tclstore::print log {}
+    ::tclapp::tclstore::print info "Stop logging messages to '$::tclapp::tclstore::params(log.filename)' on [exec date].\n"
+    close $::tclapp::tclstore::params(log.fh)
+    set ::tclapp::tclstore::params(log.fh) {}
+  }
+  # Exit
+  exit $exitCode
+}

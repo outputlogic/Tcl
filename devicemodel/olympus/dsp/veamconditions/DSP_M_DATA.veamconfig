@@ -1,0 +1,9 @@
+# File generated on Thu Nov 07 21:39:14 PST 2013
+# Number of configurations for DSP_M_DATA: 2
+# Backup Veam attributes: MREG 1
+set backupVeamAttributes [::report_timing_arcs::getVeamAttributes {DSP48E2_inst/DSP_M_DATA_INST}]
+puts -nonewline { [1/2]}; report_timing_arcs -timer -dotlib -of [get_cells DSP48E2_inst/DSP_M_DATA_INST] -veamattr {MREG 1} -veamlog DSP_M_DATA.MREG_1.veam -file DSP_M_DATA.MREG_1.arcs
+puts -nonewline { [2/2]}; report_timing_arcs -timer -dotlib -of [get_cells DSP48E2_inst/DSP_M_DATA_INST] -veamattr {MREG 0} -veamlog DSP_M_DATA.MREG_0.veam -file DSP_M_DATA.MREG_0.arcs
+# Restore Veam attributes
+::report_timing_arcs::setVeamAttributes {DSP48E2_inst/DSP_M_DATA_INST} $backupVeamAttributes
+# ::report_timing_arcs::setVeamAttributes {DSP48E2_inst/DSP_M_DATA_INST} [list MREG 1]

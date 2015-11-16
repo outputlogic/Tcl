@@ -1,0 +1,15 @@
+#!/bin/csh -f
+
+foreach dir ($argv)
+  if (! -d $dir) then
+    echo " Skipping $dir"
+    continue
+  endif
+  echo " Processing $dir"
+#   /bin/tar cvfz ${dir}.tgz ${dir}
+  /bin/tar cfz ${dir}.tgz ${dir}
+  /bin/touch -r ${dir} ${dir}.tgz
+  /bin/rm -rf ${dir}
+end
+
+exit 0

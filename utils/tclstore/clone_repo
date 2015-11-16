@@ -1,0 +1,508 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    Utility to clone the Xilinx Tcl Store repository
+##
+########################################################################################
+
+########################################################################################
+## 2014.11.07 - Initial release
+########################################################################################
+
+# if {[file tail [info script]]!=[file tail $argv0]} {
+#   # This file is sourced
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+# }
+
+namespace eval ::tclapp {}
+
+namespace eval ::tclapp::tclstore {
+  namespace export clone_repo
+
+  variable SCRIPT_VERSION {11-07-2014}
+  variable verbose 0
+  variable debug 0
+
+  variable gitBin {}
+  variable curlBin {}
+  variable vivadoBin {}
+  variable gitUser {}
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tclapp::tclstore::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tclapp::tclstore::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::runGitCmd
+#------------------------------------------------------------------------
+# Execute a Git command
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::runGitCmd {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable params
+  variable verbose
+  variable debug
+  variable gitBin
+  set dir [uplevel #0 pwd]
+  if {$verbose} {
+    puts " -I- Git command: $args"
+  }
+#   foreach [list exitCode message] [ system ssh git-dev [format {cd %s ; %s %s} $dir $params(git) $args] ] { break }
+#   foreach [list exitCode message] [ system [format {%s %s} $gitBin $args] ] { break }
+  foreach [list exitCode message] [eval [concat system $gitBin $args ]] { break }
+  if {$debug} {
+    puts " -D- exitCode: $exitCode"
+    puts " -D- message: [join $message { }]"
+  }
+  if {$exitCode != 0} {
+    puts " -E- Git command failed"
+    error "$message"
+  }
+  return [list $exitCode $message]
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::tclstore::system
+#------------------------------------------------------------------------
+# Execute a process under UNIX.
+# Return a TCL list. The first element of the list is the exit code
+# for the process. The second element of the list is the message
+# returned by the process.
+# The exit code is 0 if the process executed successfully.
+# The exit code is 1, 2, 3, or 4 otherwise.
+# Example:
+#      foreach [list exitCode message] [::tclapp::tclstore::system ls -lrt] { break }
+#------------------------------------------------------------------------
+proc ::tclapp::tclstore::system { args } {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable verbose
+  variable debug
+
+  #-------------------------------------------------------
+  # Save the command being executed inside the log file.
+  #-------------------------------------------------------
+  if {$debug} { puts " -D- Unix call: $args" }
+
+  #-------------------------------------------------------
+  # Execute the command inside the global namespace (level #0).
+  #-------------------------------------------------------
+  catch {set result [eval [list uplevel #0 exec $args]] } returnstring
+
+  #-------------------------------------------------------
+  # Check the status of the process.
+  #-------------------------------------------------------
+  if { [string equal $::errorCode NONE] } {
+
+    # The command exited with a normal status, but wrote something
+    # to stderr, which is included in $returnstring.
+    set exitCode 0
+
+    if {$debug} { puts " -D- ::errorCode = NONE" }
+
+  } else {
+
+    switch -exact -- [lindex $::errorCode 0] {
+
+      CHILDKILLED {
+
+        foreach { - pid sigName msg } $::errorCode { break }
+
+        # A child process, whose process ID was $pid,
+        # died on a signal named $sigName.  A human-
+        # readable message appears in $msg.
+        set exitCode 2
+
+        if {$debug} {
+          puts " -D- ::errorCode = CHILDKILLED"
+          puts " -D- Child process $pid died from signal named $sigName"
+          puts " -D- Message: $msg"
+        }
+
+      }
+
+      CHILDSTATUS {
+
+        foreach { - pid code } $::errorCode { break }
+
+        # A child process, whose process ID was $pid,
+        # exited with a non-zero exit status, $code.
+        set exitCode 1
+
+        if {$debug} {
+          puts " -D- ::errorCode = CHILDSTATUS"
+          puts " -D- Child process $pid exited with status $code"
+        }
+
+      }
+
+      CHILDSUSP {
+
+        foreach { - pid sigName msg } $::errorCode { break }
+
+        # A child process, whose process ID was $pid,
+        # has been suspended because of a signal named
+        # $sigName.  A human-readable description of the
+        # signal appears in $msg.
+        set exitCode 3
+
+        if {$debug} {
+          puts " -D- ::errorCode = CHILDSUSP"
+          puts " -D- Child process $pid suspended because signal named $sigName"
+          puts " -D- Message: $msg"
+        }
+
+      }
+
+      POSIX {
+
+        foreach { - errName msg } $::errorCode { break }
+
+        # One of the kernel calls to launch the command
+        # failed.  The error code is in $errName, and a
+        # human-readable message is in $msg.
+        set exitCode 4
+
+        if {$debug} {
+          puts " -D- ::errorCode = POSIX"
+          puts " -D- One of the kernel calls to launch the command failed. The error code is $errName"
+          puts " -D- Message: $msg"
+        }
+
+      }
+
+    }
+
+  }
+
+  if {$debug} {
+    puts " -D- returnstring=[join [split $returnstring \n] {\\}]"
+    puts " -D- exitCode=$exitCode"
+  }
+
+  return [list $exitCode $returnstring]
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Returns all lines that match occurrence of a regular expression in the
+## file
+##-----------------------------------------------------------------------
+proc ::tclapp::tclstore::read_file_regexp {filename rexp} {
+  set lines [list]
+  set FH {}
+  if {[catch {set FH [open $filename r]} errorstring]} {
+      error " error - $errorstring"
+  }
+  while {![eof $FH]} {
+    gets $FH line
+    if {[regexp $rexp $line]} { lappend lines $line }
+  }
+  close $FH
+  return $lines
+}
+
+##-----------------------------------------------------------------------
+## clone_repo
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tclapp::tclstore::clone_repo {args} {
+
+  variable SCRIPT_VERSION
+  variable verbose
+  variable debug
+  variable gitBin
+  variable curlBin
+  variable vivadoBin
+  variable gitUser
+
+  set verbose 0
+  set debug 0
+
+  set workingDir [uplevel #0 pwd]
+  set force 0
+  set error 0
+  set show_help 0
+  set localDirectory {}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -d -
+      --d -
+      -dir -
+      --dir {
+        set localDirectory [lshift args]
+      }
+      -u -
+      --u -
+      -user -
+      --user {
+        set gitUser [lshift args]
+      }
+      -f -
+      -force {
+          set force 1
+      }
+      -v -
+      -verbose {
+          set verbose 1
+      }
+      -d -
+      -debug {
+          set debug 1
+          set verbose 1
+      }
+      -h -
+      -help {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: clone_repo
+                  [-dir <path>|-d <path>]
+                  [-user <github_username>|-u <github_username>]
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Utility to clone the Xilinx Tcl Store repository
+
+      Version: %s
+
+      Example:
+         clone_repo -dir . -user frank
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if  {$localDirectory == {}} {
+    puts " -E- no directory provided (-dir)"
+    incr error
+  } elseif {![file isdirectory $localDirectory]} {
+    if {!$force} {
+      puts " -E- directory '$localDirectory' does not exist"
+      incr error
+    } else {
+      puts " -I- creating directory '$localDirectory'"
+      file mkdir $localDirectory
+    }
+  } else {
+    if {[file isdirectory [file join $localDirectory XilinxTclStore]]} {
+      puts " -E- directory '[file normalize $localDirectory/XilinxTclStore]' already exists"
+      incr error
+    }
+  }
+
+  if {[catch {set result [exec which vivado]} errorstring]} {
+    puts " -E- cannot access 'vivado' in your search path"
+    incr error
+  } else {
+    set vivadoBin $result
+    puts " -I' vivado: $vivadoBin"
+  }
+
+  if {[catch {set result [exec vivado -version]} errorstring]} {
+    puts " -E- cannot access 'vivado' in your search path"
+    incr error
+  } else {
+    set vivadoVersion {}
+    foreach line [split $result \n] {
+      if {[regexp {^Vivado\s+v?([0-9\.]+)\s} $line - vivadoVersion]} { break }
+    }
+    # Set the default catalog version to the current Vivado version: <MAJOR>.<MINOR>
+    set vivadoVersion [join [lrange [split $vivadoVersion {.}] 0 1] {.}]
+    puts " -I' Vivado version: $vivadoVersion"
+  }
+
+#   if {[catch {set result [exec which git]} errorstring]} {}
+  if {[catch {set result [exec which /tools/batonroot/rodin/devkits/lnx64/git-1.8.3/bin/git]} errorstring]} {
+    puts " -E- cannot access 'git' in your search path"
+    incr error
+  } else {
+    set gitBin $result
+    puts " -I' git: $gitBin"
+  }
+
+#   if {[catch {set version [exec git --version]} errorstring]} {}
+  if {[catch {set result [exec /tools/batonroot/rodin/devkits/lnx64/git-1.8.3/bin/git --version]} errorstring]} {
+    puts " -E- cannot access 'git' in your search path"
+    incr error
+  } else {
+    set gitVersion {}
+    if {[regexp {^git version\s+([0-9\.]+)(\s|$)} $result - gitVersion]} {}
+    puts " -I' git version: $gitVersion"
+  }
+
+  if {[catch {set result [exec which curl]} errorstring]} {
+    puts " -E- cannot access 'curl' in your search path"
+    incr error
+  } else {
+    set curlBin $result
+    puts " -I' curl: $curlBin"
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  set localDirectory [file normalize $localDirectory]
+  set localRepository [file join $localDirectory XilinxTclStore]
+  set vivadoBin [exec which vivado]
+  set vivadoInstallDir [join [lrange [file split $vivadoBin] 0 end-2] [file separator] ]
+  set vivadoTclStoreDir [file join $vivadoInstallDir data XilinxTclStore]
+  puts " -I' Vivado install dir: $vivadoInstallDir"
+  puts " -I' Vivado Tcl Store dir: $vivadoTclStoreDir"
+  if {![file isdirectory $vivadoTclStoreDir]} {
+    error " -E- directory $vivadoTclStoreDir does not exist"
+  }
+  set vivadoCatalogXML [file join $vivadoTclStoreDir catalog "catalog_${vivadoVersion}.xml"]
+  puts " -I' Vivado catalog XML: $vivadoCatalogXML"
+  if {![file exists $vivadoCatalogXML]} {
+    error " -E- file $vivadoCatalogXML does not exist"
+  }
+
+  # E.g:   <remote>master</remote>
+  set result [read_file_regexp $vivadoCatalogXML {<remote>}]
+  set vivadoRepoBranch {}
+  regexp {<remote>\s*(.+)\s*</remote>} $result - vivadoRepoBranch
+  puts " -I' Git branch from Vivado XML: $vivadoRepoBranch"
+  if {$vivadoRepoBranch == {}} {
+    error " -E- cannot extract branch from XML"
+  }
+
+  set githubCatalogXML [format {https://raw.githubusercontent.com/Xilinx/XilinxTclStore/master/catalog/catalog_%s.xml} $vivadoVersion]
+  puts " -I' Github catalog XML: $githubCatalogXML"
+
+#   if {[catch {set result [exec curl $githubCatalogXML -x https://proxy:80]} errorstring]} {}
+  foreach [list exitCode result]  [system curl $githubCatalogXML -x https://proxy:80] {break}
+  set githubBranch {}
+  regexp {<remote>\s*(.+)\s*</remote>} $result - githubBranch
+  puts " -I' Git branch from Github XML: $githubBranch"
+  if {$githubBranch == {}} {
+    error " -E- cannot extract branch from XML"
+  }
+
+  puts " -I- cloning Xilinx GitHub repository (branch $githubBranch) to [file normalize $localDirectory]"
+  cd $localDirectory
+  if {$gitUser == {}} {
+    foreach [list exitCode message] [runGitCmd clone -b $githubBranch --single-branch https://github.com/Xilinx/XilinxTclStore.git] {break}
+  } else {
+    foreach [list exitCode message] [runGitCmd clone -b $githubBranch --single-branch https://$gitUser@github.com/Xilinx/XilinxTclStore.git] {break}
+  }
+  cd $workingDir
+
+  if {$exitCode} {
+    cd $workingDir
+    error " -E- $message"
+  }
+
+  puts " -I- configuring Git"
+  cd $localRepository
+  foreach [list exitCode message] [runGitCmd config http.proxy http://proxy:80] {break}
+  foreach [list exitCode message] [runGitCmd config https.proxy https://proxy:80] {break}
+  foreach [list exitCode message] [runGitCmd config http.postBuffer 524288000] {break}
+  foreach [list exitCode message] [runGitCmd config https.postBuffer 524288000] {break}
+  cd $workingDir
+
+  puts " -I- renaming remote origin -> upstream"
+  cd $localRepository
+  foreach [list exitCode message] [runGitCmd remote rename origin upstream] {break}
+  cd $workingDir
+
+  if {$gitUser != {}} {
+    puts " -I- adding remote origin to https://$gitUser@github.com/$gitUser/XilinxTclStore.git"
+    cd $localRepository
+    foreach [list exitCode message] [runGitCmd remote add origin https://$gitUser@github.com/$gitUser/XilinxTclStore.git] {break}
+    cd $workingDir
+  }
+
+  puts " -I- set the following environment variables to point to the local repository:"
+  puts " -I- ########################################################################"
+  puts " -I- setenv XILINX_TCLAPP_REPO $localRepository"
+  puts " -I- setenv XILINX_LOCAL_USER_DATA NO"
+  puts " -I- ########################################################################"
+
+
+  return -code ok
+}
+
+namespace eval ::tclapp {
+  namespace import ::tclapp::tclstore::clone_repo
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::tclapp::tclstore::verbose 0
+set ::tclapp::tclstore::debug 0
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tclapp::tclstore::clone_repo
+} else {
+  if {[catch {eval [concat ::tclapp::tclstore::clone_repo $argv]} errorstring]} {
+    puts $errorstring
+    exit 1
+  }
+  exit 0
+}

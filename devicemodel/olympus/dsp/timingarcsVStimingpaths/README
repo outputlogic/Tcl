@@ -1,0 +1,27 @@
+# vivado -journal vivado_k7.jou -log vivado_k7.log -mode tcl
+open_checkpoint dsp48e1_ooc_impl.dcp
+report_timing
+source ../../scripts/checkDSP48E1Arcs.tcl
+checkDSP48E1Arcs.tcl
+checkDSP48E1Arcs -cell DSP48E1_inst -file 7serie.all.csv -csv -v
+
+
+# Sandbox
+setenv MYVIVADO /proj/xsjvorpal/myvivado_int
+# vivado -journal vivado_k8.jou -log vivado_k8.log -mode tcl
+open_checkpoint dsp48e2_ooc_impl.dcp
+report_timing
+source ../../scripts/checkDSP48E1Arcs.tcl
+checkDSP48E1Arcs.tcl
+checkDSP48E1Arcs -cell DSP48E2_inst -file ultrascale.all.csv -csv -v
+
+
+
+setenv SCR /wrk/hdstaff/dpefour/support/Olympus/scripts
+
+foreach CSV (*csv)
+  set RPT =  `echo -n $CSV | sed -e 's/\.csv/\.rpt/g'`
+  ${SCR}/csv2tbl -csv $CSV -out $RPT
+end
+
+

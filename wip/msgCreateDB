@@ -1,0 +1,805 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    This utility create SQLLite3 database from Vivado Message files
+##
+########################################################################################
+
+########################################################################################
+## 2014.11.06 - Code reorganization under namespace ::tb::msgutil
+##            - Minor improvements
+## 2014.06.06 - Initial release
+########################################################################################
+
+namespace eval ::tb {}
+
+namespace eval ::tb::msgutil {
+  namespace export msgCreateDB
+
+  variable SCRIPT_MSGCREATEDB_VERSION {11-06-2014}
+  variable VERBOSE 0
+  variable DEBUG 0
+  variable QUIET 0
+  
+  variable SQL
+
+  # Variable from msgutil
+  variable DB
+  variable UNIQUIFY_OWNER
+}
+
+if {[catch {set script [exec which msgutil]} errorstring]} {
+  puts " ERROR - cannot access 'msgutil' in your search path"
+  exit 1
+} else {
+  set ::tb::msgutil::UNIQUIFY_OWNER 0
+}
+
+if {[catch {package require sqlite3}]} {
+  lappend auto_path {/home/dpefour/root/usr/lib/sqlite3.8.0.2}
+  package require sqlite3
+}
+
+proc ::tb::msgutil::progressBar {cur tot {indent {}}} {
+  # http://wiki.tcl.tk/16939
+  # if you don't want to redraw all the time, uncomment and change ferquency
+  #if {$cur % ($tot/300)} { return }
+  # set to total width of progress bar
+  set total 76
+
+  # Do not show the progress bar in GUI and Batch modes
+  catch { if {$rdi::mode != {tcl}} { return } }
+
+  set half [expr {$total/2}]
+  set percent [expr {100.*$cur/$tot}]
+  set val (\ [format "%6.2f%%" $percent]\ )
+  set str "|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
+  set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
+  puts -nonewline stderr "\r${indent}${str}"
+}
+
+#------------------------------------------------------------------------
+# execSQL
+#------------------------------------------------------------------------
+# Execute SQL command
+#------------------------------------------------------------------------
+proc ::tb::msgutil::execSQL {&SQL {cmd {pragma integrity_check} } } {
+
+  variable VERBOSE
+  variable DEBUG
+  if {$DEBUG} {
+    puts " DEBUG - SQL command: $cmd"
+  }
+
+  # Wait for the database to be unlocked
+#   while {[catch { uplevel [list ${&SQL} eval $cmd] } errorstring]} {}
+  while {[catch { set res [uplevel [list ${&SQL} eval $cmd]] } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database locked ..." }
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database read-only ..." }
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+#   return 0
+  return $res
+}
+
+#------------------------------------------------------------------------
+# createDB
+#------------------------------------------------------------------------
+# Create message database
+#------------------------------------------------------------------------
+proc ::tb::msgutil::createDB {filename} {
+  variable SQL
+
+  # SQLite3 database
+#   catch {file delete $filename}
+  sqlite3 SQL[pid] $filename -create true
+  set SQL SQL[pid]
+  execSQL $SQL { pragma integrity_check }
+  $SQL eval { PRAGMA foreign_keys = ON; }
+  # PRAGMA for very large databases:
+  $SQL eval {
+    PRAGMA main.temp_store = MEMORY;
+    PRAGMA main.page_size = 4096;
+    PRAGMA main.cache_size=10000;
+    PRAGMA main.locking_mode=EXCLUSIVE;
+    PRAGMA main.synchronous=NORMAL;
+    PRAGMA main.journal_mode=MEMORY;
+    PRAGMA main.cache_size=5000;
+  }
+  $SQL eval {
+    CREATE TABLE IF NOT EXISTS param (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             property TEXT,
+             value TEXT
+             );
+    CREATE TABLE IF NOT EXISTS snapshot (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT
+             );
+    CREATE TABLE IF NOT EXISTS subsystem (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT
+             );
+    CREATE TABLE IF NOT EXISTS file (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT
+             );
+    CREATE TABLE IF NOT EXISTS owner (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT
+             );
+    CREATE TABLE IF NOT EXISTS reviewer (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT
+             );
+    CREATE TABLE IF NOT EXISTS severity (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT
+             );
+    CREATE TABLE IF NOT EXISTS state (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT
+             );
+    CREATE TABLE IF NOT EXISTS tag (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT
+             );
+    CREATE TABLE IF NOT EXISTS message (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             snapshotid INTEGER,
+             fileid INTEGER,
+             subsystemid INTEGER,
+             description TEXT,
+             format TEXT,
+             gid TEXT,
+             id TEXT,
+             key TEXT,
+             modified_format_str TEXT,
+             notes TEXT,
+             reference_cnt INTEGER,
+             owner TEXT,
+             resolution TEXT,
+             review_date TEXT,
+             reviewer TEXT,
+             severity TEXT,
+             state TEXT,
+             tags TEXT,
+             FOREIGN KEY(snapshotid) REFERENCES snapshot(rowid) ON UPDATE SET NULL,
+             FOREIGN KEY(fileid) REFERENCES file(rowid) ON UPDATE SET NULL,
+             FOREIGN KEY(subsystemid) REFERENCES subsystem(rowid) ON UPDATE SET NULL
+             );
+    CREATE TABLE IF NOT EXISTS owner_message (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             ownerid INTEGER,
+             messageid INTEGER,
+             FOREIGN KEY(ownerid) REFERENCES owner(rowid) ON UPDATE SET NULL,
+             FOREIGN KEY(messageid) REFERENCES message(rowid) ON UPDATE SET NULL
+             );
+    CREATE TABLE IF NOT EXISTS reviewer_message (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             reviewerid INTEGER,
+             messageid INTEGER,
+             FOREIGN KEY(reviewerid) REFERENCES reviewer(rowid) ON UPDATE SET NULL,
+             FOREIGN KEY(messageid) REFERENCES message(rowid) ON UPDATE SET NULL
+             );
+    CREATE TABLE IF NOT EXISTS severity_message (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             severityid INTEGER,
+             messageid INTEGER,
+             FOREIGN KEY(severityid) REFERENCES severity(rowid) ON UPDATE SET NULL,
+             FOREIGN KEY(messageid) REFERENCES message(rowid) ON UPDATE SET NULL
+             );
+    CREATE TABLE IF NOT EXISTS state_message (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             stateid INTEGER,
+             messageid INTEGER,
+             FOREIGN KEY(stateid) REFERENCES state(rowid) ON UPDATE SET NULL,
+             FOREIGN KEY(messageid) REFERENCES message(rowid) ON UPDATE SET NULL
+             );
+    CREATE TABLE IF NOT EXISTS tag_message (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             tagid INTEGER,
+             messageid INTEGER,
+             FOREIGN KEY(tagid) REFERENCES tag(rowid) ON UPDATE SET NULL,
+             FOREIGN KEY(messageid) REFERENCES message(rowid) ON UPDATE SET NULL
+             );
+  }
+
+  $SQL eval {
+    CREATE VIEW IF NOT EXISTS v_owner_message AS
+    SELECT message.rowid AS messageid ,
+           owner.rowid AS ownerid,
+           gid,
+           owner.name AS owner
+    FROM owner_message
+         JOIN message 
+              ON owner_message.messageid=message.rowid 
+         JOIN owner 
+              ON owner_message.ownerid=owner.rowid
+    ORDER BY gid;
+    
+    CREATE VIEW IF NOT EXISTS v_reviewer_message AS
+    SELECT message.rowid AS messageid ,
+           reviewer.rowid AS reviewerid,
+           gid,
+           reviewer.name AS reviewer
+    FROM reviewer_message
+         JOIN message 
+              ON reviewer_message.messageid=message.rowid 
+         JOIN reviewer 
+              ON reviewer_message.reviewerid=reviewer.rowid
+    ORDER BY gid;
+    
+    CREATE VIEW IF NOT EXISTS v_severity_message AS
+    SELECT message.rowid AS messageid ,
+           severity.rowid AS severityid,
+           gid,
+           severity.name AS severity
+    FROM severity_message
+         JOIN message 
+              ON severity_message.messageid=message.rowid 
+         JOIN severity 
+              ON severity_message.severityid=severity.rowid
+    ORDER BY gid;
+
+    CREATE VIEW IF NOT EXISTS v_state_message AS
+    SELECT message.rowid AS messageid ,
+           state.rowid AS stateid,
+           gid,
+           state.name AS state
+    FROM state_message
+         JOIN message 
+              ON state_message.messageid=message.rowid 
+         JOIN state 
+              ON state_message.stateid=state.rowid
+    ORDER BY gid;
+    
+    CREATE VIEW IF NOT EXISTS v_tag_message AS
+    SELECT message.rowid AS messageid ,
+           tag.rowid AS tagid,
+           gid,
+           tag.name AS tag
+    FROM tag_message
+         JOIN message 
+              ON tag_message.messageid=message.rowid 
+         JOIN tag 
+              ON tag_message.tagid=tag.rowid
+    ORDER BY gid;
+    
+    CREATE VIEW IF NOT EXISTS v_message AS
+    SELECT message.rowid AS rowid,
+           snapshot.name AS snapshot,
+           file.name AS file,
+           subsystem.name AS subsystem,
+           description,
+           format,
+           gid,
+           id,
+           key,
+           modified_format_str,
+           notes,
+           owner.name AS owner,
+           reference_cnt,
+           resolution,
+           review_date,
+           reviewer.name AS reviewer,
+           severity.name AS severity,
+           state.name AS state,
+           tag.name AS tags
+    FROM message
+         JOIN snapshot
+              ON snapshot.rowid=message.snapshotid
+              
+         JOIN file
+              ON file.rowid=message.fileid
+              
+         JOIN subsystem
+              ON subsystem.rowid=message.subsystemid
+              
+         JOIN owner_message 
+              ON owner_message.messageid=message.rowid 
+         JOIN owner 
+              ON owner_message.ownerid=owner.rowid
+
+         JOIN reviewer_message 
+              ON reviewer_message.messageid=message.rowid 
+         JOIN reviewer 
+              ON reviewer_message.reviewerid=reviewer.rowid
+
+         JOIN severity_message 
+              ON severity_message.messageid=message.rowid 
+         JOIN severity 
+              ON severity_message.severityid=severity.rowid
+
+         JOIN state_message 
+              ON state_message.messageid=message.rowid 
+         JOIN state 
+              ON state_message.stateid=state.rowid
+
+         JOIN tag_message 
+              ON tag_message.messageid=message.rowid 
+         JOIN tag 
+              ON tag_message.tagid=tag.rowid
+    ORDER BY gid;
+  }
+
+  # Database version & other parameters
+  if {[$SQL eval { SELECT COUNT(*) FROM param WHERE property = 'version' }] == 0} {
+    $SQL eval { INSERT INTO param(property,value) VALUES("version","1.0"); }
+    $SQL eval { INSERT INTO param(property,value) VALUES("date",strftime('%Y-%m-%d %H:%M:%S','now') ); }
+    $SQL eval " INSERT INTO param(property,value) VALUES('directory','[file normalize [uplevel #0 pwd]]' ); "
+  }
+
+  if {[$SQL eval { SELECT COUNT(*) FROM owner WHERE name IS NULL }] == 0} {
+    $SQL eval { INSERT INTO owner(name) VALUES(NULL); }
+  }
+  if {[$SQL eval { SELECT COUNT(*) FROM reviewer WHERE name IS NULL }] == 0} {
+    $SQL eval { INSERT INTO reviewer(name) VALUES(NULL); }
+  }
+  if {[$SQL eval { SELECT COUNT(*) FROM severity WHERE name IS NULL }] == 0} {
+    $SQL eval { INSERT INTO severity(name) VALUES(NULL); }
+  }
+  if {[$SQL eval { SELECT COUNT(*) FROM state WHERE name IS NULL }] == 0} {
+    $SQL eval { INSERT INTO state(name) VALUES(NULL); }
+  }
+  if {[$SQL eval { SELECT COUNT(*) FROM tag WHERE name IS NULL }] == 0} {
+    $SQL eval { INSERT INTO tag(name) VALUES(NULL); }
+  }
+#   $SQL eval { INSERT INTO owner(name) VALUES(NULL); }
+#   $SQL eval { INSERT INTO reviewer(name) VALUES(NULL); }
+#   $SQL eval { INSERT INTO severity(name) VALUES(NULL); }
+#   $SQL eval { INSERT INTO state(name) VALUES(NULL); }
+#   $SQL eval { INSERT INTO tag(name) VALUES(NULL); }
+
+  dbGetOrCreateSeverity {}
+  dbGetOrCreateSeverity {STATUS}
+  dbGetOrCreateSeverity {INFO}
+  dbGetOrCreateSeverity {WARNING}
+  dbGetOrCreateSeverity {CRITICALWARNING}
+  dbGetOrCreateSeverity {ERROR}
+
+  return $SQL
+}
+
+proc ::tb::msgutil::dbGetSnapshotIDByName { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM snapshot WHERE name = $name LIMIT 1}]
+}
+
+proc ::tb::msgutil::dbGetFileIDByName { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM file WHERE name = $name LIMIT 1 }]
+}
+
+proc ::tb::msgutil::dbGetSubsystemIDByName { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM subsystem WHERE name = $name LIMIT 1 }]
+}
+
+proc ::tb::msgutil::dbGetOwnerIDByName { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM owner WHERE name = $name LIMIT 1 }]
+}
+
+proc ::tb::msgutil::dbGetReviewerIDByName { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM reviewer WHERE name = $name LIMIT 1 }]
+}
+
+proc ::tb::msgutil::dbGetSeverityIDByName { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM severity WHERE name = $name LIMIT 1 }]
+}
+
+proc ::tb::msgutil::dbGetStateIDByName { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM state WHERE name = $name LIMIT 1 }]
+}
+
+proc ::tb::msgutil::dbGetTagIDByName { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM tag WHERE name = $name LIMIT 1 }]
+}
+
+proc ::tb::msgutil::dbGetOrCreateSnapshot { name } {
+  variable SQL
+  set id [dbGetSnapshotIDByName $name]
+  if {$id == {}} {
+    $SQL eval { INSERT INTO snapshot(name) VALUES($name); }
+    set id [$SQL last_insert_rowid]
+  }
+  return $id
+}
+
+proc ::tb::msgutil::dbGetOrCreateFile { name } {
+  variable SQL
+  set id [dbGetFileIDByName $name]
+  if {$id == {}} {
+    $SQL eval { INSERT INTO file(name) VALUES($name); }
+    set id [$SQL last_insert_rowid]
+  }
+  return $id
+}
+
+proc ::tb::msgutil::dbGetOrCreateSubsystem { name } {
+  variable SQL
+  set id [dbGetSubsystemIDByName $name]
+  if {$id == {}} {
+    $SQL eval { INSERT INTO subsystem(name) VALUES($name); }
+    set id [$SQL last_insert_rowid]
+  }
+  return $id
+}
+
+proc ::tb::msgutil::dbGetOrCreateOwner { name } {
+  variable SQL
+  set id [dbGetOwnerIDByName $name]
+  if {$id == {}} {
+    $SQL eval { INSERT INTO owner(name) VALUES($name); }
+    set id [$SQL last_insert_rowid]
+  }
+  return $id
+}
+
+proc ::tb::msgutil::dbGetOrCreateReviewer { name } {
+  variable SQL
+  set id [dbGetReviewerIDByName $name]
+  if {$id == {}} {
+    $SQL eval { INSERT INTO reviewer(name) VALUES($name); }
+    set id [$SQL last_insert_rowid]
+  }
+  return $id
+}
+
+proc ::tb::msgutil::dbGetOrCreateSeverity { name } {
+  variable SQL
+  set id [dbGetSeverityIDByName $name]
+  if {$id == {}} {
+    $SQL eval { INSERT INTO severity(name) VALUES($name); }
+    set id [$SQL last_insert_rowid]
+  }
+  return $id
+}
+
+proc ::tb::msgutil::dbGetOrCreateState { name } {
+  variable SQL
+  set id [dbGetStateIDByName $name]
+  if {$id == {}} {
+    $SQL eval { INSERT INTO state(name) VALUES($name); }
+    set id [$SQL last_insert_rowid]
+  }
+  return $id
+}
+
+proc ::tb::msgutil::dbGetOrCreateTag { name } {
+  variable SQL
+  set id [dbGetTagIDByName $name]
+  if {$id == {}} {
+    $SQL eval { INSERT INTO tag(name) VALUES($name); }
+    set id [$SQL last_insert_rowid]
+  }
+  return $id
+}
+
+proc ::tb::msgutil::saveDB {&DB snapshot} {
+  variable SQL
+  upvar ${&DB} DB
+
+  set snapshotid [dbGetOrCreateSnapshot $snapshot]
+  set fileid [dbGetOrCreateFile [file rootname [file tail $DB(FILE)]]]
+  set subsystemid [dbGetOrCreateSubsystem $DB(SUBSYSTEM)]
+  foreach gid $DB(GID) {
+    catch {unset message}
+#     # Just to be safe, initialize the owner and severity parameters
+#     array set message [list owner {} severity {}]
+    array set message $DB($gid)
+    $SQL eval " INSERT INTO message(snapshotid,fileid,subsystemid,gid) VALUES('$snapshotid','$fileid','$subsystemid','$gid'); "
+    set messageid [$SQL last_insert_rowid]
+    foreach param {description format id key modified_format_str notes reference_cnt owner resolution review_date reviewer severity state tags} {
+      if {![info exists message($param)]} { continue }
+      set value $message($param)
+      $SQL eval [format { UPDATE message SET %s = $value WHERE rowid=$messageid } $param]
+    }
+    
+    if {[info exists message(reviewer)] && ($message(reviewer) != {})} {
+      set id [dbGetOrCreateReviewer $message(reviewer)]
+      $SQL eval { INSERT INTO reviewer_message(reviewerid,messageid) VALUES($id,$messageid) }
+    } elseif {[info exists message(reviewer)] && ($message(reviewer) == {})} {
+        set id [dbGetOrCreateReviewer {}]
+        $SQL eval { INSERT INTO reviewer_message(reviewerid,messageid) VALUES($id,$messageid) }
+    } else {
+        set id [$SQL eval { SELECT rowid FROM reviewer WHERE name IS NULL LIMIT 1 }]
+        $SQL eval { INSERT INTO reviewer_message(reviewerid,messageid) VALUES($id,$messageid) }
+    }
+
+    if {[info exists message(owner)] && ($message(owner) != {})} {
+      foreach owner [split [regsub -all { } $message(owner) {}] ,] {
+        set id [dbGetOrCreateOwner $owner]
+        $SQL eval { INSERT INTO owner_message(ownerid,messageid) VALUES($id,$messageid) }
+      }
+    } elseif {[info exists message(owner)] && ($message(owner) == {})} {
+        set id [dbGetOrCreateOwner {}]
+        $SQL eval { INSERT INTO owner_message(ownerid,messageid) VALUES($id,$messageid) }
+    } else {
+        set id [$SQL eval { SELECT rowid FROM owner WHERE name IS NULL LIMIT 1 }]
+        $SQL eval { INSERT INTO owner_message(ownerid,messageid) VALUES($id,$messageid) }
+    }
+
+    if {[info exists message(severity)] && ($message(severity) != {})} {
+      foreach severity [split [regsub -all { } $message(severity) {}] {,:}] {
+        set id [dbGetOrCreateSeverity $severity]
+        $SQL eval { INSERT INTO severity_message(severityid,messageid) VALUES($id,$messageid) }
+      }
+    } elseif {[info exists message(severity)] && ($message(severity) == {})} {
+        set id [dbGetOrCreateSeverity {}]
+        $SQL eval { INSERT INTO severity_message(severityid,messageid) VALUES($id,$messageid) }
+    } else {
+        set id [$SQL eval { SELECT rowid FROM severity WHERE name IS NULL LIMIT 1 }]
+        $SQL eval { INSERT INTO severity_message(severityid,messageid) VALUES($id,$messageid) }
+    }
+
+    if {[info exists message(state)] && ($message(state) != {})} {
+      foreach state [split [regsub -all { } $message(state) {}] {,:}] {
+        set id [dbGetOrCreateState $state]
+        $SQL eval { INSERT INTO state_message(stateid,messageid) VALUES($id,$messageid) }
+      }
+    } elseif {[info exists message(state)] && ($message(state) == {})} {
+        set id [dbGetOrCreateState {}]
+        $SQL eval { INSERT INTO state_message(stateid,messageid) VALUES($id,$messageid) }
+    } else {
+        set id [$SQL eval { SELECT rowid FROM state WHERE name IS NULL LIMIT 1 }]
+        $SQL eval { INSERT INTO state_message(stateid,messageid) VALUES($id,$messageid) }
+    }
+    
+    if {[info exists message(tags)] && ($message(tags) != {})} {
+      foreach tag [split [regsub -all { } $message(tags) {}] {,:}] {
+        set id [dbGetOrCreateTag $tag]
+        $SQL eval { INSERT INTO tag_message(tagid,messageid) VALUES($id,$messageid) }
+      }
+    } elseif {[info exists message(tags)] && ($message(tags) == {})} {
+        set id [dbGetOrCreateTag {}]
+        $SQL eval { INSERT INTO tag_message(tagid,messageid) VALUES($id,$messageid) }
+    } else {
+        set id [$SQL eval { SELECT rowid FROM tag WHERE name IS NULL LIMIT 1 }]
+        $SQL eval { INSERT INTO tag_message(tagid,messageid) VALUES($id,$messageid) }
+    }
+
+  }
+}
+
+##-----------------------------------------------------------------------
+## msgCreateDB
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::msgCreateDB {args} {
+
+  variable SCRIPT_MSGCREATEDB_VERSION
+  variable QUIET
+  variable VERBOSE
+  variable DEBUG
+  variable DB
+  variable SQL
+  
+  # Database
+  array set DB [list]
+  
+  set msgdir {/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/msg}
+  set msgDB {./messages.db}
+  set snapshot {default}
+  set reset 0
+  set show_help 0
+  set error 0
+  # if {[llength $args] == 0} {
+  #   incr show_help
+  # }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -db -
+      --db {
+        set msgDB [lshift args]
+      }
+      -msg-dir -
+      --msg-dir {
+        set msgdir [lshift args]
+      }
+      -snapshot -
+      --snapshot {
+        set snapshot [lshift args]
+      }
+      -createdb {
+           set reset 1
+      }
+      -in-memory {
+           set reset 1
+           set msgDB {:memory:}
+           # To debug, save the database on-disk
+#            set msgDB {inmemory.db}
+      }
+      -v -
+      -verbose {
+          set VERBOSE 1
+      }
+      -d -
+      -debug {
+          set DEBUG 1
+          set VERBOSE 1
+      }
+      -h -
+      -help {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          }
+      }
+    }
+  }
+  
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: msgCreateDB
+                  [-db <sqlite3 database>]
+                  [-createdb]
+                  [-msg-dir <directory>]
+                  [-snapshot <name>]
+                  [-in-memory]
+                  [-verbose|-v]
+                  [-help|-h]
+  
+      Description: Create SQL database for Vivado Messages
+  
+        The default location is: /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/msg
+  
+      Version: %s
+  
+      Example:
+         msgCreateDB -db messages.db -createdb
+         msgCreateDB -in-memory
+         msgCreateDB -msg-dir /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/msg -db messaged.db -createdb
+  
+    } $SCRIPT_MSGCREATEDB_VERSION ]
+    # HELP -->
+  
+    return -code ok
+  }
+  
+  if {![file exists $msgDB] && !$reset} {
+    puts " -E- file $msgDB does not exist"
+    incr error
+  }
+  
+  if {$error} {
+    puts "\n Some error(s) occured. Cannot continue.\n"
+#     exit 1
+    return -code error
+  }
+  
+  set files [lsort [glob -nocomplain ${msgdir}/*.msg]]
+
+  #-------------------------------------------------------
+  # Create SQL database
+  #-------------------------------------------------------
+  if {$reset} {
+    catch {file delete $msgDB}
+    createDB $msgDB
+  } else {
+    sqlite3 SQL[pid] $msgDB
+    set SQL SQL[pid]
+    execSQL $SQL { pragma integrity_check }
+  }
+  
+  #-------------------------------------------------------
+  # Read all message files and build internal data structure
+  #-------------------------------------------------------
+# set files [lrange $files 0 5]
+  catch {unset SUBSYSTEMS}
+  init-db DB
+  set num 0
+  foreach file $files {
+    incr num
+  #   progressBar $num [llength $files] " Reading message files ([file rootname [file tail $file]]): "
+    progressBar $num [llength $files] { Reading message files: }
+    init-db DB
+    read-msg DB $file
+  #   set subsystem $DB(SUBSYSTEM)
+    set subsystem [file rootname [file tail $file]]
+    # Save each sub-system inside the array SUBSYSTEMS
+    set SUBSYSTEMS($subsystem) [array get DB]
+  }
+  puts ""
+  
+  #-------------------------------------------------------
+  # Build SQL database
+  #-------------------------------------------------------
+  set num 0
+  foreach subsystem [lsort [array names SUBSYSTEMS]] {
+    incr num
+    progressBar $num [llength [array names SUBSYSTEMS]] { Building structure:    }
+    init-db DB
+    array set DB $SUBSYSTEMS($subsystem)
+    saveDB DB $snapshot
+  }
+  puts ""
+  
+  #-------------------------------------------------------
+  # Done
+  #-------------------------------------------------------
+  # Closing the SQLite3 database
+#   $SQL close
+#   set SQL {}
+  
+  return -code ok
+}
+
+namespace eval ::tb {
+  namespace import ::tb::msgutil::msgCreateDB
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+# Sourcing 'msgutil'
+source $script
+
+set ::tb::msgutil::QUIET 1
+set ::tb::msgutil::VERBOSE 0
+set ::tb::msgutil::DEBUG 0
+
+# Database
+array set DB [list]
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set ::tb::msgutil::QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$::tb::msgutil::QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tb::msgutil::msgCreateDB
+  # Closing the SQLite3 database
+#   $::tb::msgutil::SQL close
+#   set ::tb::msgutil::SQL {}
+} else {
+  if {[catch {eval [concat ::tb::msgutil::msgCreateDB $argv]} errorstring]} {
+    puts $errorstring
+    # Closing the SQLite3 database
+    catch {$::tb::msgutil::SQL close}
+    set ::tb::msgutil::SQL {}
+    exit 1
+  }
+  # Closing the SQLite3 database
+  catch {$::tb::msgutil::SQL close}
+  set ::tb::msgutil::SQL {}
+
+  exit 0
+}

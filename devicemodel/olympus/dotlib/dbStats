@@ -1,0 +1,171 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+########################################################################################
+## 02-25-2015 - Added stat for pins with clock attribute
+## 11-15-2013 - Initial release
+########################################################################################
+
+# Check for missing timing arcs inside Dotlib files.
+# The flow is to generate fragment files from Dotlib first with dotlib2tcl
+# Once this is done, this script can be run.
+
+set SCRIPT_VERSION {02-25-2015}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+lappend auto_path /wrk/hdstaff/dpefour/support/Olympus/assets/sqlite3.8.0.2
+package require sqlite3
+
+# Execute the SQL command. When failed, retry until the database is unlocked
+proc wait_db_ready { &SQL {cmd {pragma integrity_check} } } {
+  upvar &SQL SQL
+  # Wait for the database to be unlocked
+  while {[catch { SQL eval $cmd } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      puts "SQL database locked ..."
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      puts "SQL database read-only ..."
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+  return 0
+}
+
+# SQLite3 database
+# set filename {sqlite3.db}
+set filename {}
+
+set error 0
+set show_help 0
+set VERBOSE 0
+set DEBUG 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -db -
+    --db {
+      set filename [::tb::lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          set filename $name
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: dbStats
+                [<sqlite3 database>|-db <sqlite3 database>]
+                [-verbose|-v]
+                [-help|-h]
+                
+    Description: Utility to report stats on SQLite3 database
+      The verbose mode provides additional statistics on a per cell basis
+
+    Version: %s
+
+    Example:
+       dbStats './kintex7.db'
+       dbStats -db './kintex7.db' -verbose
+  
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+# SQLite3 database
+if {![file exists $filename]} {
+  puts " -E- file '$filename' does not exist"
+  incr error
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+# Open SQLite3 database
+sqlite3 SQL $filename -readonly true
+wait_db_ready SQL
+set dbVersion [SQL eval { SELECT value FROM param WHERE property='version'; } ]
+
+proc sqliteStats {cells} {
+  set cellids [SQL eval " SELECT id FROM cell WHERE name IN ('[join $cells ',']') "]
+  set pinnum [SQL eval " SELECT count(id) FROM pin WHERE cellid IN ('[join $cellids ',']') "]
+  set timingnum [SQL eval " SELECT count(id) FROM timing WHERE cellid IN ('[join $cellids ',']') "]
+  set arcnum [SQL eval " SELECT count(id) FROM arc WHERE cellid IN ('[join $cellids ',']') "]
+  set fpgacondnum [SQL eval " SELECT count(id) FROM fpga_condition WHERE cellid IN ('[join $cellids ',']') "]
+  if {[catch { set veamcondnum [SQL eval " SELECT count(id) FROM veam_config WHERE cellid IN ('[join $cellids ',']') "] } ]} { set veamcondnum {} }
+  if {[catch { set timerarcnum [SQL eval " SELECT count(id) FROM timer_arc WHERE cellid IN ('[join $cellids ',']') "] } ]} { set timerarcnum {} }
+  if {[catch { set veamarcnum [SQL eval " SELECT count(id) FROM veam_arc WHERE cellid IN ('[join $cellids ',']') "] } ]} { set veamarcnum {} }
+  puts " Number of cells: [llength $cellids]"
+  puts " Number of pins: $pinnum"
+  if {$::dbVersion >= 1.6} {
+    # Only for database version from 1.6 and upward
+    set clockpins [SQL eval " SELECT name FROM pin WHERE cellid IN ('[join $cellids ',']') AND (clock NOT NULL) "]
+    if {[llength $clockpins]} {
+      puts " Number of clock pins: [llength $clockpins]"
+      puts "           clock pins: [lsort -unique $clockpins]"
+    }
+  }
+  puts " Number of timing definition (Dotlib): $timingnum"
+  puts " Number of timing arcs (Dotlib): $arcnum"
+  if {$timerarcnum != {}} { puts " Number of timing arcs (Timer): $timerarcnum" }
+  if {$veamarcnum != {}} { puts " Number of timing arcs (Veam): $veamarcnum" }
+  puts " Number of fpga conditions: $fpgacondnum"
+  if {$veamcondnum != {}} { puts " Number of veam conditions: $veamcondnum" }
+  return 0
+}
+
+puts " Database: $filename"
+puts " Version: $dbVersion"
+set tables [SQL eval { SELECT name FROM sqlite_master WHERE type='table' }]
+puts " Tables: [lsort $tables]"
+set views [SQL eval { SELECT name FROM sqlite_master WHERE type='view' }]
+puts " Views: [lsort $views]"
+set cells [SQL eval "SELECT name FROM cell"]
+sqliteStats $cells
+
+if {$VERBOSE} {
+  foreach cell [lsort -dictionary $cells] {
+    puts "\n ## $cell"
+    sqliteStats $cell
+  }
+}
+
+# Closing the SQLite3 database
+SQL close
+
+exit 0

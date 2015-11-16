@@ -1,0 +1,294 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    Utility to clone the SWAPPS repository from GitHub
+##
+########################################################################################
+
+########################################################################################
+## 2014.11.13 - Initial release
+########################################################################################
+
+# if {[file tail [info script]]!=[file tail $argv0]} {
+#   # This file is sourced
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+# }
+
+namespace eval ::swapps {}
+
+namespace eval ::swapps::get_swapps_repo {
+  namespace export get_swapps_repo
+
+  variable SCRIPT_VERSION {11-13-2014}
+  variable verbose 0
+  variable debug 0
+
+  variable gitBin {}
+  variable gitUser {}
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::swapps::get_swapps_repo::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::swapps::get_swapps_repo::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+#------------------------------------------------------------------------
+# ::swapps::get_swapps_repo::runGitCmd
+#------------------------------------------------------------------------
+# Execute a Git command
+#------------------------------------------------------------------------
+proc ::swapps::get_swapps_repo::runGitCmd {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable params
+  variable verbose
+  variable debug
+  variable gitBin
+  set dir [uplevel #0 pwd]
+  if {$verbose} {
+    puts " -I- Git command: $gitBin $args"
+  }
+  if {[catch { set message [uplevel #0 [concat exec $gitBin $args ]] } errorstring]} {
+    set exitCode 1
+    set message $errorstring
+  } else {
+    set exitCode 0
+  }
+  if {$debug} {
+    puts " -D- exitCode: $exitCode"
+    puts " -D- message: [join $message { }]"
+  }
+  if {$exitCode != 0} {
+    puts " -E- Git command failed"
+    error "$message"
+  }
+  return [list $exitCode $message]
+}
+
+##-----------------------------------------------------------------------
+## get_swapps_repo
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::swapps::get_swapps_repo::get_swapps_repo {args} {
+
+  variable SCRIPT_VERSION
+  variable verbose
+  variable debug
+  variable gitBin
+  variable gitUser
+
+  set verbose 0
+  set debug 0
+
+  set workingDir [uplevel #0 pwd]
+  set force 0
+  set error 0
+  set show_help 0
+  set localDirectory {}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -d -
+      --d -
+      -dir -
+      --dir {
+        set localDirectory [lshift args]
+      }
+      -u -
+      --u -
+      -user -
+      --user {
+        set gitUser [lshift args]
+      }
+      -f -
+      -force {
+          set force 1
+      }
+      -v -
+      -verbose {
+          set verbose 1
+      }
+      -d -
+      -debug {
+          set debug 1
+          set verbose 1
+      }
+      -h -
+      -help {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: get_swapps_repo
+                  -dir <path>|-d <path>
+                  -user <github_username>|-u <github_username>
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Utility to clone the Git SWAPPS repository
+
+      Version: %s
+
+      Example:
+         get_swapps_repo -dir . -user joe
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if  {$localDirectory == {}} {
+    puts " -E- no directory provided (-dir)"
+    incr error
+  } elseif {![file isdirectory $localDirectory]} {
+    if {!$force} {
+      puts " -E- directory '$localDirectory' does not exist"
+      incr error
+    } else {
+      puts " -I- creating directory '$localDirectory'"
+      file mkdir $localDirectory
+    }
+  } else {
+    if {[file isdirectory [file join $localDirectory swapps]]} {
+      puts " -E- directory '[file normalize $localDirectory/swapps]' already exists"
+      incr error
+    }
+  }
+
+#   if {[catch {set result [exec which git]} errorstring]} {}
+  if {[catch {set result [exec which /tools/batonroot/rodin/devkits/lnx64/git-1.8.3/bin/git]} errorstring]} {
+    puts " -E- cannot access 'git' in your search path"
+    incr error
+  } else {
+    set gitBin $result
+    puts " -I' git: $gitBin"
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  set localDirectory [file normalize $localDirectory]
+  set localRepository [file join $localDirectory swapps]
+
+  puts " -I- cloning Xilinx GitHub repository to [file normalize $localDirectory]"
+  cd $localDirectory
+  if {$gitUser == {}} {
+    foreach [list exitCode message] [runGitCmd clone https://github.com/Xilinx/swapps.git] {break}
+  } else {
+    foreach [list exitCode message] [runGitCmd clone https://$gitUser@github.com/Xilinx/swapps.git] {break}
+  }
+  cd $workingDir
+
+  if {$exitCode} {
+    cd $workingDir
+    error " -E- $message"
+  }
+
+  puts " -I- configuring Git"
+  cd $localRepository
+  foreach [list exitCode message] [runGitCmd config http.proxy http://proxy:80] {break}
+  foreach [list exitCode message] [runGitCmd config https.proxy https://proxy:80] {break}
+  foreach [list exitCode message] [runGitCmd config http.postBuffer 524288000] {break}
+  foreach [list exitCode message] [runGitCmd config https.postBuffer 524288000] {break}
+  cd $workingDir
+
+  puts " -I- renaming remote origin -> upstream"
+  cd $localRepository
+  foreach [list exitCode message] [runGitCmd remote rename origin upstream] {break}
+  cd $workingDir
+
+  if {$gitUser != {}} {
+    puts " -I- adding remote origin to https://$gitUser@github.com/$gitUser/swapps.git"
+    cd $localRepository
+    foreach [list exitCode message] [runGitCmd remote add origin https://$gitUser@github.com/$gitUser/swapps.git] {break}
+    cd $workingDir
+  }
+
+  puts " -I- ======================================================================================="
+  puts " -I- To use the 'swapps' repository, choose either:"
+  puts " -I-   1) Set the Linus environment variable TCLLIBPATH. Inside tclsh, require package 'swapps'"
+  puts " -I-        linux% setenv TCLLIBPATH $localRepository"
+  puts " -I-        tclsh% package require swapps"
+  puts " -I-   2) Add 'swapps' directory to auto_path"
+  puts " -I-        tclsh% lappend auto_path $localRepository"
+  puts " -I-        tclsh% package require swapps"
+  puts " -I- ======================================================================================="
+
+
+  return -code ok
+}
+
+namespace eval ::swapps {
+  namespace import ::swapps::get_swapps_repo::get_swapps_repo
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::swapps::get_swapps_repo::verbose 0
+set ::swapps::get_swapps_repo::debug 0
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$QUIET} { puts " INFO - sourcing [info script]" }
+#   ::swapps::get_swapps_repo::get_swapps_repo
+} else {
+  if {[catch {eval [concat ::swapps::get_swapps_repo::get_swapps_repo $argv]} errorstring]} {
+    puts $errorstring
+    exit 1
+  }
+  exit 0
+}

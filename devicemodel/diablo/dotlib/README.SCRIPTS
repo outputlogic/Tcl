@@ -1,0 +1,296 @@
+
+The various scripts related to the Timing Arcs can be accessed through the following BASH scripts:
+  ./compile.bash
+  ./compare.bash
+
+Scripts inside the 'automation' sub-directory are:
+  automation/compile.all       Example script to send multiple compile.bash calls to LSF
+  automation/compare.all       Example script to send multiple compare.bash calls to LSF
+  automation/do.all            Example script that runs compile.all and wait for the results 
+                               before sending compare.all
+
+
+The principle to compare 2 Dotlib libraries has 2 steps:
+ 1) To "compile" each library. This is done through the Bash script compile.bash and results
+    in creating a directory for each Dotlib with all the files related to that particular Dotlib
+ 2) Use the Bash script compare.bash to compare 2 directories that have been created through
+    the previous "compile" step
+
+
+
+compile.bash
+============
+
+  Usage: compile.bash <tag> <path_to_dotlib>
+  
+  The <tag> can be any string (no space) and define the directory name that will have all
+  the generated filed for this Dotlib
+  
+  For example:
+    compile.bash kintex7   /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/kintex7.lib                              
+    compile.bash virtex7   /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtex7/virtex7.lib                              
+    compile.bash kintexu   /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintexu/kintexu/timing/prod_ver2/kintexu.lib     
+    compile.bash virtexu   /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/virtexu/virtexu/timing/prod_ver/virtexu.lib      
+    compile.bash zynquplus /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/zynquplus/zynqupluses1/timing/es1/zynquplus.lib
+    compile.bash zynquplus /proj/xbuilds/2015.2_zub2_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/zynquplus/zynqupluses1/timing/es1/zynquplus.lib
+
+  Generated Files:
+    <tag>/lib         - Dotlib per cell
+    <tag>/ftcl        - Tcl fragment files
+    <tag>/log         - Log file for database creation
+    <tag>/report      - Various reports (csv, text, html)
+                        Some of those files are splitted by COE and are used by compare.bash
+                        ** <tag>_checkTimingArcsDotLib2.rpt is a report that includes many sanity checks **
+    <tag>/<tag>.db    - Database
+    <tag>/<tag>.stats - Database statistics
+
+  The main file to be verified is <tag>/report/<tag>_checkTimingArcsDotLib2.rpt
+
+
+
+compare.bash
+============
+
+  Usage: compare.bash <tag1> <tag2>
+  
+  The <tag1> and <tag2> are 2 tags used with compile.bash. The process of comparing both libraries
+  results in generating files under a new directory named <tag1>_<tag2>
+  
+  For example:
+    compare.bash virtex7 zynquplus
+    compare.bash virtexu zynquplus
+    compare.bash virtex7 virtexu  
+    compare.bash kintex7 kintexu  
+    compare.bash kintex7 virtex7  
+    compare.bash kintexu virtexu  
+
+  Generated Files:
+    <tag1>_<tag2>/log         - Various log files
+    <tag1>_<tag2>/package     - Files of interest packaged by COE
+    <tag1>_<tag2>/report      - Various reports (csv, text, html)
+  
+  The main files of interest are:
+    <tag1>_<tag2>/report/<tag1>_<tag2>_diff.html  - HTML page to compare both libraries over all criterias. A CSV/RPT version exist as well
+    <tag1>_<tag2>/report/<tag1>_<tag2>_sum.html   - HTML page to compare both libraries (only timing arcs). A CSV/RPT version exist as well
+
+
+
+
+######################################################################
+######################################################################
+##
+## BELOW IS A SHORT DESCRIPTION OF INDIVIDUAL SCRIPTS USED
+##
+######################################################################
+######################################################################
+
+All the script can be found under /wrk/hdstaff/dpefour/support/Olympus/dotlib/scripts.
+
+######################################################################
+##
+## Scripts to convert Dotlib and Sitemap2.xml to Tcl fragment files
+##
+######################################################################
+
+The idea of those scripts is to convert the Dotlib and Sitemap2.xml files into fragment of Tcl
+files that can be easily loaded inside any Tcl script to analyze the results.
+
+Note: You can refer to the script 'doit' that chain all those scripts.
+
+The output files of all those scripts are already available under the following locations:
+  /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest/kintex7_sitemap2.ftcl      Fragment file from <HEAD>/../kintex7/Sitemap2.xml
+  /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest/kintex8_sitemap2.ftcl      Fragment file from <HEAD>/../kintex8/Sitemap2.xml
+  /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest/kintex7/*.lib              Splited Dotlib form <HEAD>/../kintex7/kintex7.lib
+  /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest/kintex7/*.ftcl             Fragment file for all Dotlib data from <HEAD>/../kintex7/kintex7.lib
+  /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest/kintex7/*.fcond            Fragment file for fpga conditions from <HEAD>/../kintex7/kintex7.lib
+  /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest/kintex7.db                 SQLite3 database for Kintex7 (includes all Dotlib data)
+  /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest/kintex8/*.lib              Splited Dotlib from <HEAD>/../kintex8/kintex8.lib
+  /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest/kintex8/*.ftcl             Fragment file for all Dotlib data from <HEAD>/../kintex8/kintex8.lib
+  /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest/kintex8.db                 SQLite3 database for Kintex8 (includes all Dotlib data)
+
+Since the Kintex8 library might be updated on a daily basis, I typically re-run the whole flow and re-generate all those data each day.
+
+##
+## SCRIPT: sitemap2tcl
+##
+
+    Usage: sitemap2tcl
+                [-xml <filename or file pattern>]
+                [-file <output file>]
+                [-verbose|-v]
+                [-help|-h]
+
+ Convert Sitemap2.tcl into Tcl fragment file. The fragment file can be loaded inside Tcl with a 'array set sitemap2 [source <fragmentfile>]'
+
+##
+## SCRIPT: splitDotLib
+##
+
+    Usage: splitDotLib
+                [-dotlib <filename or file pattern>]
+                [-cell <cell pattern>]
+                [-output <output directory>]
+                [-verbose|-v]
+                [-help|-h]
+
+Split the library Dotlib into multiple Dotlib with one cell per Dotlib. An output directory must be provided.
+
+##
+## SCRIPT: dotlib2tcl
+##
+
+    Usage: dotlib2tcl
+                [-dotlib <filename or file pattern>]
+                [-output <output directory>]
+                [-verbose|-v]
+                [-help|-h]
+
+Convert Dotlib file(s) into Tcl fragment files. Each fragment file can be loaded inside Tcl with a 'array set DB [source <fragmentfile>]'
+
+##
+## SCRIPT: createSQLiteDB
+##
+
+    Usage: createSQLiteDB
+                [-ftcl <filename or file pattern>]
+                [-db <output SQLite3 database name>]
+                [-verbose|-v]
+                [-help|-h]
+
+Create a SQLite3 database from all the Dotlib fragment files (including fpga conditions for Kintex7).
+
+I recommend to make a local copy of the SQLite3 databases to make sure that no one ends up with a locked or corrupted database.
+
+
+######################################################################
+##
+## Scripts the rely on post-processed Dotlib and Sitemap2.xml
+##
+######################################################################
+
+Once all the various Tcl fragment files have been created, it is easier to make script that search for
+specific information and abnormal patterns.
+
+Note: You can refer to the script 'doit' that illustrates the command line options.
+
+Note: /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest includes all the latest *.csv / *.rpt
+
+Note: all the file under /wrk/hdstaff/dpefour/support/Olympus/dotlib/latest that have no_collapse in their
+name have the buses not collapsed. In other files, the buses are collapsed.
+
+##
+## SCRIPT: reportDotLib
+##
+
+    Usage: reportDotLib
+                [-ftcl <filename or file pattern>]
+                [-file <output report name>]
+                [-no-collapse]
+                [-verbose|-v]
+                [-help|-h]
+
+Generate a CSV and RPT file from all the Tcl fragment files that are specified.
+
+Note: check kintex7_reportDotLib.{rpt,csv} & kintex8_reportDotLib.{rpt,csv}
+
+
+##
+## SCRIPT: checkTimingArcsDotLib & checkTimingArcsDotLib2
+##
+
+    Usage: checkTimingArcsDotLib
+                [-ftcl <filename or file pattern>]
+                [-verbose|-v]
+                [-help|-h]
+
+     Usage: checkTimingArcsDotLib2
+                [-db <sqlite3 database>]
+                [-verbose|-v]
+                [-help|-h]
+
+Those 2 scripts check for some abnormalities inside Dotlib. Although they will be extended, they do cover as of today the following
+three checks:
+  - pins that are not involved in any timing arc
+  - asynchronous pins that are involved in a combinational timing arc
+  - pins that have a falling or rising edge arc defined with a negative or positive unate in addition
+
+The only difference between checkTimingArcsDotLib & checkTimingArcsDotLib2 is that one script is using
+the Tcl fragment files and one is using the SQLite database.
+
+##
+## SCRIPT: normalize
+##
+
+Note: 'normalize' import the script mapping.ftcl that provides the cells and pins pattern matching
+
+    Usage: normalize
+                [-k7 <CSV report from K7 serie>]
+                [-k8 <CSV report from K8 serie>]
+                [-no-collapse]
+                [-verbose|-v]
+                [-help|-h]
+
+This script takes a Kintex7 and Kintex8 CSF file from reportDotLib and generate a DIFF CSV. It works better when using the version of
+the kintex7 & kintex8 CSV that has the buses not collapsed.
+
+The DIFF CSV excludes any cell that does not exist in both Kintex7 & Kintex8. See normalize.log file to get the list of all the cells
+that are being dropped. The script also renames the cells and pins based on some predefined patterns so that cells and pins can
+be compared between K7 & K8. The patterns matching are provided inside mapping.ftcl
+
+For example:
+  FIFO18E1 -> FIFO18
+  FIFO18E2 -> FIFO18
+  RAMB18$: K7 pins DINADIN[*] -> k8 pins DIADI[*]
+
+##
+## SCRIPT: dbQuery
+##
+
+    Usage: dbQuery
+                [<sqlite3 database>|-db <sqlite3 database>]
+                [-c|-cell <pattern>]
+                [-p|-pin <pattern>]
+                [-tt|-timing_type <pattern>]
+                [-ts|-timing_sense <pattern>]
+                [-fc|-fpgacond <pattern>]
+                [-vc|-veamcond <pattern>]
+                [-dotlib|-timer|-veam]
+                [-file <filename>]
+                [-a|-append]
+                [-table|-csv]
+                [-verbose|-v]
+                [-help|-h]
+
+This script uses pattern matching on cell names, pin name, timing type and timing sense with the sqlite database (kintex7 or kintex8)
+and report matching timing arcs.
+
+For example:
+  dbQuery <database> <options>
+  dbQuery <database> -h
+
+shell% dbQuery kintex7.db -c "FD%" -tt "min%"
+  +--------------------------------------------------------------------------+
+  | Timing Arcs Summary                                                      |
+  | Database: /wrk/hdstaff/dpefour/support/Olympus/dotlib/k7vsk8_10302013/kintex7.db |
+  | Cell pattern: FD%                                                        |
+  | Pin pattern: %                                                           |
+  | Timing type pattern: min%                                                |
+  | Timing sense pattern: %                                                  |
+  | Found arc(s): 12                                                         |
+  +-----------+------+-----+-----------------+--------------+----------------+
+  | Cell Name | From | To  | Timing Type     | Timing Sense | FPGA Condition |
+  +-----------+------+-----+-----------------+--------------+----------------+
+  | FDCE      | C    | C   | min_pulse_width |              |                |
+  | FDCE      | C    | C   | minimum_period  |              |                |
+  | FDCE      | CLR  | CLR | min_pulse_width |              |                |
+  | FDPE      | C    | C   | min_pulse_width |              |                |
+  | FDPE      | C    | C   | minimum_period  |              |                |
+  | FDPE      | PRE  | PRE | min_pulse_width |              |                |
+  | FDRE      | C    | C   | min_pulse_width |              |                |
+  | FDRE      | C    | C   | minimum_period  |              |                |
+  | FDRE      | R    | R   | min_pulse_width |              |                |
+  | FDSE      | C    | C   | min_pulse_width |              |                |
+  | FDSE      | C    | C   | minimum_period  |              |                |
+  | FDSE      | S    | S   | min_pulse_width |              |                |
+  +-----------+------+-----+-----------------+--------------+----------------+
+  Found 12 arc(s)

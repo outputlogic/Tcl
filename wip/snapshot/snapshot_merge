@@ -1,0 +1,168 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2014.10.27
+## Description:    Example script to merge multiple snapshot database
+##
+########################################################################################
+
+########################################################################################
+## 2014.10.27 - Initial release
+########################################################################################
+
+# Example usage:
+# % snapshot_merge metrics.db -runtime
+
+package require toolbox
+
+proc progressBar {cur tot {indent {}}} {
+  # http://wiki.tcl.tk/16939
+  # if you don't want to redraw all the time, uncomment and change ferquency
+  #if {$cur % ($tot/300)} { return }
+  # set to total width of progress bar
+  set total 76
+
+  # Do not show the progress bar in GUI and Batch modes
+  catch { if {$rdi::mode != {tcl}} { return } }
+
+  set half [expr {$total/2}]
+  set percent [expr {100.*$cur/$tot}]
+  set val (\ [format "%6.2f%%" $percent]\ )
+  set str "|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
+  set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
+  puts -nonewline stderr "\r${indent}${str}"
+}
+
+# The list L contains a list of column name(s) along with an offset. Each column
+# must be either a primary key or a foreign key. The offset indicates by how many
+# the primary/foreign key should be offset-ed.
+# For example: 
+#  L for 'snapshot' table -> [list id 10 parentid 10]
+#  L for 'metric' table -> [list snapshotid 10 id 100]
+proc copy_table {SQL srcTable destTable L} {
+  set CMD ""
+  append CMD "\nDROP TABLE IF EXISTS ${destTable}_tmp;"
+  append CMD "\nCREATE TABLE ${destTable}_tmp AS SELECT * FROM ${srcTable};"
+  if {$L != {}} {
+    append CMD "\nUPDATE ${destTable}_tmp SET"
+    foreach {column increment} $L {
+      append CMD "\n         $column = $column + $increment,"
+    }
+    # Remove last comma
+    regsub {,$} $CMD "" CMD
+#    append CMD "\n         WHERE id IN ( SELECT ${destTable}_tmp.id FROM ${destTable}_tmp )"
+    append CMD ";"
+  }
+  append CMD "\nINSERT INTO ${destTable} SELECT * from ${destTable}_tmp;"
+  append CMD "\nDROP TABLE IF EXISTS ${destTable}_tmp;"
+  append CMD "\nVACUUM;"
+#   puts "CMD==<$CMD>"
+  $SQL eval $CMD
+  return 0
+}
+
+
+
+set files {}
+set filename {merged.db}
+set sortBy {}
+set saveResults 0
+set showRuntime 0
+set showPostRoute 0
+set help 0
+set error 0
+if {[llength $::argv] == 0} {
+  set help 1
+}
+while {[llength $::argv]} {
+  set name [::tb::lshift ::argv]
+  switch -exact -- $name {
+    -db -
+    -db {
+         set files [concat $files [glob -nocomplain [lshift ::argv]]]
+    }
+    -o -
+    -out -
+    -output {
+         set filename [lshift ::argv]
+    }
+    -h -
+    -help {
+         set help 1
+    }
+    default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option."
+            incr error
+          } else {
+            set files [concat $files [glob -nocomplain $name]]
+          }
+    }
+  }
+}
+
+if {$help} {
+  puts [format {
+Usage: snapshot_merge
+            [-db <input_database(s)>]
+            [-o <output_database>|-output <output_database>]
+            [-help|-h]
+
+Description: Merge multiple snapshot databases
+  
+Example:
+   snapshot_merge -db 'metrics*.db'
+   snapshot_merge -db '*/metrics*.db' -o merged.db
+} ]
+  # HELP -->
+
+  puts ""
+  exit 0
+}
+
+if {$files == {}} {
+  puts " -E- no snapshot db provided (-db)"
+  incr error
+}
+
+if {$error} {
+  puts " -E- some error(s) happened. Cannot continue.\n"
+  exit 1
+}
+
+# Create empty snapshot database
+set SQL [::tb::snapshot::create_snapshot_db -db $filename -force]
+set count 0
+foreach db $files {
+  incr count
+  puts " Processing database \[$count/[llength $files]\] $db"
+  # Get the last snapshotid from the database
+  set snapshotid [$SQL eval { SELECT MAX(id) FROM snapshot; } ]; if {$snapshotid == [list {}]} { set snapshotid 0 }
+  # Get the last metricid from the database
+  set metricid [$SQL eval { SELECT MAX(id) FROM metric; } ]; if {$metricid == [list {}]} { set metricid 0 }
+  $SQL eval "ATTACH DATABASE '$db' AS DB"
+  set dbVersion [$SQL eval { SELECT value FROM DB.param WHERE property='version' LIMIT 1; } ]
+  if {$dbVersion < 1.5} {
+    puts " -W- snapshot database $dbVersion is not supported. Skipped"
+    continue
+  }
+  puts "   Database [file tail $db] / version=$dbVersion / snapshot offset=$snapshotid / metric offset=$metricid"
+  copy_table $SQL DB.snapshot snapshot [list id $snapshotid parentid $snapshotid]
+  copy_table $SQL DB.metric metric [list snapshotid $snapshotid id $metricid]
+  $SQL eval "DETACH DATABASE DB;"
+}
+::tb::snapshot::close_snapshot_db

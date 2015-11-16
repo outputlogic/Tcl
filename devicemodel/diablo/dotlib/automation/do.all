@@ -1,0 +1,30 @@
+#!/bin/bash
+
+DIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+
+SCR="/proj/xsjhdstaff2/dpefour/support/Olympus/dotlib/scripts_DEV"
+
+$DIR/compile.all
+
+LOOP=true
+while $LOOP; do
+ LOOP=false
+ for file_start in */start; do
+#    file_stop="${file_start/start/stop}"
+#    file_stop=$(echo $file_start | sed -e 's/start/stop/g')
+   file_stop=`echo -n $file_start | sed -e 's/start/stop/g'`
+#    echo "file_start=$file_start"
+#    echo "file_stop=$file_stop"
+   if [ ! -e "$file_stop" ]; then
+      echo " ... waiting ($file_stop)"
+      LOOP=true
+   fi
+ done
+#  echo " ... waiting "
+ sleep 10
+ echo ""
+done
+
+$DIR/compare.all
+
+exit 0

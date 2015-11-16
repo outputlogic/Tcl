@@ -1,0 +1,614 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+########################################################################################
+## 02-23-2015 - Added support for saving the clock attribute 'clock : true' from Dotlib 
+##              libraries inside SQLite database
+##            - Changed default values for some of the tables columns to be NULL 
+##            - Change database version to 1.6
+## 12-03-2013 - Initial release
+########################################################################################
+
+# Generate SQLite3 database from Dotlib fragment files (*.ftcl)
+
+set SCRIPT_VERSION {02-23-2015}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+lappend auto_path /wrk/hdstaff/dpefour/support/Olympus/assets/sqlite3.8.0.2
+package require sqlite3
+
+array set cellNameRemap {}
+set pinNameRemap [list]
+
+# Load external cell/pin/csv header name mapping if file exists
+if {[file exists [file join [file dirname [info script]] mapping.ftcl]]} {
+  puts " Mapping file found: [file normalize [file join [file dirname [info script]] mapping.ftcl]]"
+  source [file join [file dirname [info script]] mapping.ftcl]
+}
+
+proc dbGetOrCreateCell { cellname } {
+  global SQL
+  global cellNameRemap
+  set cellid [dbGetCellIDByName $cellname]
+  if {$cellid == {}} {
+    if {[info exist cellNameRemap($cellname)]} {
+     set mappedCell $cellNameRemap($cellname)
+     if {$::VERBOSE} { puts " -I- cell remapping $cellname\t->\t$mappedCell" }
+      SQL eval { INSERT INTO cell(name,alias) VALUES($cellname,$mappedCell); }
+    } else {
+      SQL eval { INSERT INTO cell(name) VALUES($cellname); }
+    }
+    set cellid [SQL last_insert_rowid]
+  }
+  return $cellid
+}
+
+proc dbGetCellIDByName { cellname } {
+  global SQL
+  return [SQL eval { SELECT id FROM cell WHERE name = $cellname }]
+}
+
+proc dbGetPinIDByName { cellname pinname } {
+  global SQL
+  set cellid [dbGetCellIDByName $cellname]
+# puts "dbGetPinIDByName:<cellname:$cellname><cellid:$cellid>"
+  if {$cellid == {}} { return {} }
+  return [SQL eval { SELECT id FROM pin WHERE (name = $pinname) AND (cellid = $cellid) }]
+}
+
+proc dbGetCellNames {} {
+  global SQL
+  return [SQL eval { SELECT name FROM cell }]
+}
+
+proc dbGetCellIDs {} {
+  global SQL
+  return [SQL eval { SELECT id FROM cell }]
+}
+
+proc dbGetPinNames { cellname } {
+  global SQL
+  set cellid [dbGetCellIDByName $cellname]
+# puts "dbGetCellPins:<cellname:$cellname>"
+  if {$cellid == {}} { return {} }
+  return [SQL eval { SELECT name FROM pin WHERE cellid = $cellid }]
+}
+
+proc dbGetPinIDs { cellname } {
+  global SQL
+  set cellid [dbGetCellIDByName $cellname]
+# puts "dbGetCellPins:<cellname:$cellname>"
+  if {$cellid == {}} { return {} }
+  return [SQL eval { SELECT id FROM pin WHERE cellid = $cellid }]
+}
+
+proc dbGetFPGACondByName { fpgacond } {
+  global SQL
+  return [SQL eval { SELECT id FROM fpga_condition WHERE name = $fpgacond }]
+}
+
+proc lskim { L key } {
+  set res [list]
+  foreach elm $L {
+    catch {unset ar}
+    array set ar $elm
+    if {[info exists ar($key)]} { lappend res $ar($key) }
+  }
+  set res
+}
+
+# Fragment files to process
+set files [lsort -dictionary [glob -nocomplain ./output/*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./output/*LUT6*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./output/*DSP*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./*DSP*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./output/*FDCE*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./output/*FIFO18E2*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./output/*LUT*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./k7vsk8_10162013/kintex8/*LUT2*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./k7vsk8_10162013/kintex8/*DSP_PREADD_DATA*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./k7vsk8_10162013/kintex8/*CARRY*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./k7vsk8_10162013/kintex7/*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./output/*MMCM*2*.ftcl]]
+set files [list]
+
+# Output SQLite3 database
+set filename {sqlite3.db}
+
+set VERBOSE 0
+set DEBUG 0
+set error 0
+set show_help 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -ftcl -
+    --ftcl {
+      set files [concat $files [glob -nocomplain [::tb::lshift argv]]]
+    }
+    -db -
+    --db {
+      set filename [::tb::lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: createSQLiteDB
+                [-ftcl <filename or file pattern>]
+                [-db <output SQLite3 database name>]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to create a SQLite3 database from the library Tcl fragment files
+
+    Version: %s
+
+    Example:
+       createSQLiteDB
+       createSQLiteDB -ftcl './kintex7/*.ftcl' -file kintex7.db
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+# SQLite3 database
+catch {file delete $filename}
+sqlite3 SQL $filename -create true
+SQL eval { PRAGMA foreign_keys = ON; }
+# PRAGMA for very large databases:
+SQL eval {
+  PRAGMA main.temp_store = MEMORY;
+  PRAGMA main.page_size = 4096;
+  PRAGMA main.cache_size=10000;
+  PRAGMA main.locking_mode=EXCLUSIVE;
+  PRAGMA main.synchronous=NORMAL;
+  PRAGMA main.journal_mode=MEMORY;
+  PRAGMA main.cache_size=5000;
+}
+SQL eval {
+  CREATE TABLE IF NOT EXISTS param (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           property TEXT,
+           value TEXT
+           );
+  CREATE TABLE IF NOT EXISTS cell (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           name TEXT,
+           alias TEXT
+           );
+  CREATE TABLE IF NOT EXISTS pin (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           cellid INTEGER,
+           name TEXT,
+           belname TEXT,
+           alias TEXT,
+           direction TEXT,
+           bus TEXT,
+           bus_type TEXT,
+           function TEXT,
+           three_state TEXT,
+           clock TEXT,
+           FOREIGN KEY(cellid) REFERENCES cell(id) ON UPDATE SET NULL
+           );
+  CREATE TABLE IF NOT EXISTS timing (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           cellid INTEGER,
+           pinid INTEGER,
+           timing_type TEXT,
+           timing_sense TEXT,
+           related_pin TEXT,
+           related_bus_pins TEXT,
+           all_related_pins TEXT,
+           fpga_arc_condition TEXT,
+           fpga_arc_condition_id INTEGER,
+           FOREIGN KEY(cellid) REFERENCES cell(id) ON UPDATE SET NULL,
+           FOREIGN KEY(pinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(fpga_arc_condition_id) REFERENCES fpga_condition(id) ON UPDATE SET NULL
+           );
+  CREATE TABLE IF NOT EXISTS arc (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           cellid INTEGER,
+           pinid INTEGER,
+           relatedpinid INTEGER,
+           timingid INTEGER,
+           fpga_arc_condition_id INTEGER,
+           FOREIGN KEY(cellid) REFERENCES cell(id) ON UPDATE SET NULL,
+           FOREIGN KEY(pinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(relatedpinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(timingid) REFERENCES timing(id) ON UPDATE SET NULL,
+           FOREIGN KEY(fpga_arc_condition_id) REFERENCES fpga_condition(id) ON UPDATE SET NULL
+           );
+  CREATE TABLE IF NOT EXISTS timer_arc (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           cellid INTEGER,
+           pinid INTEGER,
+           relatedpinid INTEGER,
+           timing_type TEXT,
+           timing_sense TEXT,
+           delay_max_rise REAL,
+           delay_max_fall REAL,
+           delay_min_rise REAL,
+           delay_min_fall REAL,
+           count INTEGER DEFAULT 0,
+           veam_config_id INTEGER,
+           arcid INTEGER,
+           FOREIGN KEY(cellid) REFERENCES cell(id) ON UPDATE SET NULL,
+           FOREIGN KEY(pinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(relatedpinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(arcid) REFERENCES arc(id) ON UPDATE SET NULL,
+           FOREIGN KEY(veam_config_id) REFERENCES veam_config(id) ON UPDATE SET NULL
+           );
+  CREATE TABLE IF NOT EXISTS veam_arc (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           cellid INTEGER,
+           pinid INTEGER,
+           relatedpinid INTEGER,
+           timing_type TEXT,
+           timing_sense TEXT,
+           count INTEGER DEFAULT 0,
+           veamcondition TEXT,
+           veam_config_id INTEGER,
+           arcid INTEGER,
+           FOREIGN KEY(cellid) REFERENCES cell(id) ON UPDATE SET NULL,
+           FOREIGN KEY(pinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(relatedpinid) REFERENCES pin(id) ON UPDATE SET NULL,
+           FOREIGN KEY(arcid) REFERENCES arc(id) ON UPDATE SET NULL,
+           FOREIGN KEY(veam_config_id) REFERENCES veam_config(id) ON UPDATE SET NULL
+           );
+  CREATE TABLE IF NOT EXISTS veam_config (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           cellid INTEGER,
+           name TEXT,
+           attribute TEXT,
+           FOREIGN KEY(cellid) REFERENCES cell(id) ON UPDATE SET NULL
+           );
+  CREATE TABLE IF NOT EXISTS fpga_condition (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           cellid INTEGER,
+           name TEXT,
+           value TEXT,
+           FOREIGN KEY(cellid) REFERENCES cell(id) ON UPDATE SET NULL
+           );
+}
+
+SQL eval {
+  CREATE VIEW v_pin AS
+  SELECT id,
+         (SELECT name FROM cell WHERE cell.id=pin.cellid) AS cellname,
+         name,
+         belname,
+         alias,
+         direction,
+         bus,
+         bus_type,
+         function,
+         three_state,
+         clock
+  FROM pin
+  ORDER BY cellName, name;
+
+  CREATE VIEW v_timing AS
+  SELECT id,
+         (SELECT name FROM cell WHERE cell.id=timing.cellid) AS cellname,
+         (SELECT name FROM pin WHERE pin.id=timing.pinid) AS pinname,
+         timing_type,
+         timing_sense,
+         related_pin,
+         related_bus_pins,
+         all_related_pins,
+         fpga_arc_condition,
+         fpga_arc_condition_id
+  FROM timing
+  ORDER BY cellName, pinname, timing_type, timing_sense;
+
+  CREATE VIEW v_arc AS
+  SELECT id,
+         (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellname,
+         (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS relatedpinname,
+         (SELECT name FROM pin WHERE pin.id=arc.pinid) AS pinname,
+         (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+         (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense,
+         (SELECT name FROM fpga_condition WHERE fpga_condition.id=arc.fpga_arc_condition_id) AS fpga_condition,
+         timingid,
+         fpga_arc_condition_id
+  FROM arc
+  ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, fpga_condition;
+
+  CREATE VIEW v_fpga_condition AS
+  SELECT id,
+         (SELECT name FROM cell WHERE cell.id=fpga_condition.cellid) AS cellname,
+         name,
+         value
+  FROM fpga_condition
+  ORDER BY name;
+
+  CREATE VIEW v_timer_arc AS
+  SELECT id,
+         (SELECT name FROM cell WHERE cell.id=timer_arc.cellid) AS cellname,
+         (SELECT name FROM pin WHERE pin.id=timer_arc.relatedpinid) AS relatedpinname,
+         (SELECT name FROM pin WHERE pin.id=timer_arc.pinid) AS pinname,
+         timing_type,
+         timing_sense,
+         delay_max_rise,
+         delay_max_fall,
+         delay_min_rise,
+         delay_min_fall,
+         (SELECT name FROM veam_config WHERE veam_config.id=timer_arc.veam_config_id) AS veam_config,
+         count,
+         arcid,
+         veam_config_id
+  FROM timer_arc
+  ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, veam_config;
+
+  CREATE VIEW v_veam_arc AS
+  SELECT id,
+         (SELECT name FROM cell WHERE cell.id=veam_arc.cellid) AS cellname,
+         (SELECT name FROM pin WHERE pin.id=veam_arc.relatedpinid) AS relatedpinname,
+         (SELECT name FROM pin WHERE pin.id=veam_arc.pinid) AS pinname,
+         timing_type,
+         timing_sense,
+         veamcondition,
+         (SELECT name FROM veam_config WHERE veam_config.id=veam_arc.veam_config_id) AS veam_config,
+         count,
+         arcid,
+         veam_config_id
+  FROM veam_arc
+  ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, veam_config;
+}
+
+
+# Loading all fragment files first
+# catch {unset data}
+# catch {unset fpgacond}
+foreach file $files {
+  puts " Importing fragment $file"
+  array set data [source $file]
+  set fcond "[file rootname $file].fcond"
+  if {[file exists $fcond]} {
+    puts " Importing fpga condition file $fcond"
+    array set fpgacond [source $fcond]
+  }
+}
+puts " [llength [array names data]] cell(s) have been imported in [llength $files] file(s)"
+if {[info exists fpgacond]} {
+  puts " [llength [array names fpgacond]] fpga condition(s) have been imported"
+}
+puts ""
+
+# Build the database
+
+# Database version & other parameters
+SQL eval { INSERT INTO param(property,value) VALUES("version","1.6"); }
+SQL eval { INSERT INTO param(property,value) VALUES("date",strftime('%Y-%m-%d %H:%M:%S','now') ); }
+SQL eval " INSERT INTO param(property,value) VALUES('directory','[file normalize [uplevel #0 pwd]]' ); "
+foreach file $files {
+  SQL eval { INSERT INTO param(property,value) VALUES("file",$file); }
+}
+
+if {[info exists fpgacond]} {
+  foreach elm [lsort -dictionary [array names fpgacond]] {
+    # Extract the cell name from the FPGA condition.
+    # E.g: bufgctrl.INIT_OUT_0
+    set cellname [string toupper [lindex [split $elm .] 0] ]
+    set cellid [dbGetOrCreateCell $cellname]
+    set cond $fpgacond($elm)
+    SQL eval { INSERT INTO fpga_condition(cellid,name,value) VALUES($cellid,$elm,$cond) }
+#     set fpgacondid [SQL last_insert_rowid]
+    # Save the primary key value
+#     set fpgacond(${elm}:id) $fpgacondid
+#     puts "<$elm:$fpgacond($elm):$fpgacondid>"
+  }
+}
+
+# List of all inserted pins inside the database (workaround for Kintex7/SRLC32E that has an uncommon bus definition)
+set insertedPins [list]
+
+foreach cell [lsort -dictionary [array names data]] {
+  puts " Processing $cell"
+  set cellid [dbGetOrCreateCell $cell]
+#   SQL eval { INSERT INTO cell(name) VALUES($cell); }
+#   set cellid [SQL last_insert_rowid]
+# puts "<cellid:$cellid><[dbGetCellIDByName $cell]><[dbGetCellIDByName foo]>"
+  lappend DB(_) $cell
+  foreach elm $data($cell) {
+    # Each $elm is a pin information
+    catch {unset pininfo}
+    array set pininfo $elm
+    set allPins [list]
+    if {[info exists pininfo(pin)]} {
+      set allPins $pininfo(pin)
+    } elseif {[info exists pininfo(bus)]} {
+# puts "pininfo(bus):$pininfo(bus)"
+      # Expand all the bits of the bus if the current pin is a bus
+      if {[regexp {bus_([0-9]+)_([0-9]+)$} $pininfo(bus_type) - n1 n2]} {
+        if {$n1 >= $n2} {
+          for {set i $n1} {$i >= $n2} {incr i -1} {
+            lappend allPins [format {%s[%s]} $pininfo(bus) $i]
+          }
+        } else {
+          for {set i $n1} {$i <= $n2} {incr i 1} {
+            lappend allPins [format {%s[%s]} $pininfo(bus) $i]
+          }
+        }
+      } else {
+        # Should never go there unless the original dotlib is missing some serious information
+        puts "   error - incorrect bus_type information [parray pininfo]"
+        exit
+      }
+    } else {
+      # Should never go there unless the original dotlib is missing some serious information
+      puts "   error - pin and bus not defined [parray pininfo]"
+      exit
+    }
+
+# puts "<allPins:$allPins>"
+    foreach pin $allPins {
+      if {[lsearch -exact $insertedPins "$cell/$pin"] != -1} {
+        puts " -W- Pin $cell/$pin is already inserted"
+        continue
+      }
+      lappend insertedPins "$cell/$pin"
+# puts "<insertedPins:$insertedPins>"
+# puts "inserting pin <$pin>"
+
+      # Does the pin have an alias defined inside 'pinNameRemap'?
+      set mappedPin {}
+      # Get the mapped cell name if one has been defined, otherwise get the cell name
+      set mappedCell [SQL eval { SELECT COALESCE(alias,name) FROM cell WHERE id=$cellid; }]
+      foreach {pattern mapping} $pinNameRemap {
+        if {![regexp $pattern $mappedCell]} {
+          continue
+        }
+        foreach {old new} $mapping { break }
+        if {[regexp $old $pin]} {
+          regsub $old $pin $new mappedPin
+#           if {$VERBOSE} { puts " -I- pin remapping $cell: \t$pin\t->\t$mappedPin" }
+          if {$VERBOSE} { puts " -I- pin remapping $mappedCell: \t$pin\t->\t$mappedPin" }
+          break
+        }
+      }
+      if {$mappedPin != {}} {
+        # BEL pin name: [] are removed
+        set belpin [regsub -all {(\[|\])} $pin {}]
+        SQL eval { INSERT INTO pin(cellid,name,belname,alias,direction,bus,bus_type,function,three_state,clock) VALUES($cellid,$pin,$belpin,$mappedPin,$pininfo(direction),$pininfo(bus),$pininfo(bus_type),$pininfo(function),$pininfo(three_state),$pininfo(clock)); }
+        set pinid [SQL last_insert_rowid]
+      } else {
+        set belpin [regsub -all {(\[|\])} $pin {}]
+        SQL eval { INSERT INTO pin(cellid,name,belname,direction,bus,bus_type,function,three_state,clock) VALUES($cellid,$pin,$belpin,$pininfo(direction),$pininfo(bus),$pininfo(bus_type),$pininfo(function),$pininfo(three_state),$pininfo(clock)); }
+        set pinid [SQL last_insert_rowid]
+      }
+
+#       puts "<$pin:$pinid>"
+      if {![info exists pininfo(timing)]} { continue }
+      foreach timing $pininfo(timing) {
+        catch {unset timinginfo}
+        array set timinginfo $timing
+        # Expand all the related pins (from single pin to buses) and remove potential curly brackets
+        set all_related_pins [regsub -all {(\{|\})} [concat [::tb::expandBusNames $timinginfo(related_pin)] [::tb::expandBusNames $timinginfo(related_bus_pins)]] {}]
+# puts "<all_related_pins:$all_related_pins>"
+        SQL eval { INSERT INTO
+                   timing(cellid,pinid,timing_type,timing_sense,related_pin,related_bus_pins,all_related_pins,fpga_arc_condition,fpga_arc_condition_id)
+                   VALUES($cellid,$pinid,$timinginfo(timing_type),$timinginfo(timing_sense),$timinginfo(related_pin),$timinginfo(related_bus_pins),$all_related_pins,$timinginfo(fpga_arc_condition),NULL );
+               }
+        set timingid [SQL last_insert_rowid]
+
+        set fpga_arc_condition_id [dbGetFPGACondByName $timinginfo(fpga_arc_condition)]
+        if {$fpga_arc_condition_id != {}} {
+          SQL eval { UPDATE timing SET fpga_arc_condition_id=$fpga_arc_condition_id WHERE id=$timingid }
+        } else {
+          if {$timinginfo(fpga_arc_condition) != {}} {
+            puts " -W- missing fpga condition entry for '${timinginfo(fpga_arc_condition)}'"
+          }
+        }
+
+      }
+# puts "<[dbGetPinIDByName $cell $pin]><[dbGetPinIDByName $cell foo]>"
+    }
+
+  }
+
+  # Populate the 'arc' table
+  foreach pinid [dbGetPinIDs $cell] {
+    # Get all timing entries for that pinid
+# puts "<cell:$cell><cellid:$cellid><pin:[SQL eval { SELECT name FROM pin WHERE id = $pinid }]><pinid:$pinid>"
+    SQL eval { SELECT * FROM timing WHERE pinid = $pinid } timinginfo {
+#       parray timinginfo
+      set all_related_pins $timinginfo(all_related_pins)
+      set timingid $timinginfo(id)
+      set fpga_arc_condition_id $timinginfo(fpga_arc_condition_id)
+# puts "<all_related_pins:$all_related_pins>"
+      foreach related_pin $all_related_pins {
+        set related_pin_id [dbGetPinIDByName $cell $related_pin]
+        if {$related_pin_id == {}} { set related_pin_id {NULL} }
+# puts "<pin:$pin:$pinid><related_pin:$related_pin:$related_pin_id><timingid:$timingid>"
+       if {$fpga_arc_condition_id == {}} { set fpga_arc_condition_id {NULL} }
+       SQL eval " INSERT INTO arc(cellid,pinid,relatedpinid,timingid,fpga_arc_condition_id) VALUES($cellid,$pinid,$related_pin_id,$timingid,$fpga_arc_condition_id) "
+#         if {$fpga_arc_condition_id != {}} {
+# #           SQL eval { INSERT INTO arc(cellid,pinid,relatedpinid,timingid,fpga_arc_condition_id) VALUES($cellid,$pinid,$related_pin_id,$timingid,$fpga_arc_condition_id) }
+#           SQL eval " INSERT INTO arc(cellid,pinid,relatedpinid,timingid,fpga_arc_condition_id) VALUES($cellid,$pinid,$related_pin_id,$timingid,$fpga_arc_condition_id) "
+#         } else {
+# #           SQL eval { INSERT INTO arc(cellid,pinid,relatedpinid,timingid,fpga_arc_condition_id) VALUES($cellid,$pinid,$related_pin_id,$timingid,NULL) }
+#           SQL eval " INSERT INTO arc(cellid,pinid,relatedpinid,timingid,fpga_arc_condition_id) VALUES($cellid,$pinid,$related_pin_id,$timingid,NULL) "
+#         }
+      }
+    }
+#     catch {unset timinginfo}
+  }
+
+}
+
+# Closing the SQLite3 database
+SQL close
+
+puts "\n SQLite3 database [file normalize $filename] has been generated"
+
+exit 0
+
+# Example of SQL queries:
+
+.mode column
+.header on
+.width 20 20 30 30 20 100 150
+.output query.rpt
+
+SELECT
+  cell.name AS "cell",
+  pin.name AS "pin",
+  timing.timing_sense AS "timing sense",
+  timing.timing_type AS "timing type",
+  (select name from pin where id = arc.relatedpinid) AS "related pin",
+  timing.fpga_arc_condition AS "fpga arc condition",
+  (select value from fpga_condition where id = timing.fpga_arc_condition_id) AS "fpga condition value"
+FROM cell
+  JOIN pin ON cell.id = pin.cellid
+  JOIN timing ON pin.id = timing.pinid
+  JOIN arc ON arc.timingid = timing.id
+WHERE
+cell.name = 'DSP48E1'
+LIMIT 100
+;
+
+.output stdout
+
+

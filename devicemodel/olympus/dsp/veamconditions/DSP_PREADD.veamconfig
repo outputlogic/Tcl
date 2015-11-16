@@ -1,0 +1,8 @@
+# File generated on Thu Nov 07 21:39:13 PST 2013
+# Number of configurations for DSP_PREADD: 1
+# Backup Veam attributes: 
+set backupVeamAttributes [::report_timing_arcs::getVeamAttributes {DSP48E2_inst/DSP_PREADD_INST}]
+puts -nonewline { [1/1]}; report_timing_arcs -timer -dotlib -of [get_cells DSP48E2_inst/DSP_PREADD_INST] -veamattr {} -veamlog DSP_PREADD.veam -file DSP_PREADD.arcs
+# Restore Veam attributes
+::report_timing_arcs::setVeamAttributes {DSP48E2_inst/DSP_PREADD_INST} $backupVeamAttributes
+# ::report_timing_arcs::setVeamAttributes {DSP48E2_inst/DSP_PREADD_INST} [list ]

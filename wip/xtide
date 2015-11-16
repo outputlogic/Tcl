@@ -1,0 +1,929 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    This utility reports the tide
+##
+########################################################################################
+
+########################################################################################
+## 2015.04.02 - Initial release
+########################################################################################
+
+namespace eval ::tb {}
+
+namespace eval ::tb::xtide {
+  namespace export main
+
+  variable SCRIPT_VERSION {04-02-2015}
+  variable VERBOSE 0
+  variable QUIET 0
+  variable DEBUG 0
+  variable QUIET 0
+
+  variable INSERTED 0
+  variable UPDATED 0
+  variable SQL
+}
+
+if {[catch {package require prettyTable}]} {
+  lappend auto_path {/home/dpefour/git/scripts/toolbox}
+  package require prettyTable
+}
+
+if {[catch {package require sqlite3}]} {
+  lappend auto_path {/home/dpefour/root/usr/lib/sqlite3.8.0.2}
+  package require sqlite3
+}
+
+##-----------------------------------------------------------------------
+## progressBar
+##-----------------------------------------------------------------------
+## Progress bar
+##-----------------------------------------------------------------------
+proc ::tb::xtide::progressBar {cur tot {indent {}}} {
+  # http://wiki.tcl.tk/16939
+  # if you don't want to redraw all the time, uncomment and change ferquency
+  #if {$cur % ($tot/300)} { return }
+  # set to total width of progress bar
+  set total 76
+
+  # Do not show the progress bar in GUI and Batch modes
+  catch { if {$rdi::mode != {tcl}} { return } }
+
+  set half [expr {$total/2}]
+  set percent [expr {100.*$cur/$tot}]
+  set val (\ [format "%6.2f%%" $percent]\ )
+  set str "|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
+  set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
+  puts -nonewline stderr "\r${indent}${str}"
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tb::xtide::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+#------------------------------------------------------------------------
+# execSQL
+#------------------------------------------------------------------------
+# Execute SQL command
+#------------------------------------------------------------------------
+proc ::tb::xtide::execSQL {&SQL {cmd {pragma integrity_check} } } {
+
+  variable VERBOSE
+  variable DEBUG
+  if {$DEBUG} {
+    puts " DEBUG - SQL command: $cmd"
+  }
+
+  # Wait for the database to be unlocked
+#   while {[catch { uplevel [list ${&SQL} eval $cmd] } errorstring]} {}
+  while {[catch { set res [uplevel [list ${&SQL} eval $cmd]] } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database locked ..." }
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database read-only ..." }
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+#   return 0
+  return $res
+}
+
+#------------------------------------------------------------------------
+# createDB
+#------------------------------------------------------------------------
+# Create database
+#------------------------------------------------------------------------
+proc ::tb::xtide::createDB {filename} {
+  variable SQL
+
+  # SQLite3 database
+#   catch {file delete $filename}
+  sqlite3 SQL[pid] $filename -create true
+  set SQL SQL[pid]
+  execSQL $SQL { pragma integrity_check }
+  $SQL eval { PRAGMA foreign_keys = ON; }
+  # PRAGMA for very large databases:
+  $SQL eval {
+    PRAGMA main.temp_store = MEMORY;
+    PRAGMA main.page_size = 4096;
+    PRAGMA main.cache_size=10000;
+    PRAGMA main.locking_mode=EXCLUSIVE;
+    PRAGMA main.synchronous=NORMAL;
+    PRAGMA main.journal_mode=MEMORY;
+    PRAGMA main.cache_size=5000;
+  }
+  $SQL eval {
+    CREATE TABLE IF NOT EXISTS param (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             property TEXT,
+             value TEXT
+             );
+    CREATE TABLE IF NOT EXISTS user (
+             rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+             userid TEXT,
+             name TEXT,
+             loc TEXT DEFAULT NULL,
+             timein TEXT DEFAULT NULL,
+             timeout TEXT DEFAULT NULL,
+             datein TEXT DEFAULT NULL,
+             dateout TEXT DEFAULT NULL
+             );
+  }
+
+  # Database version & other parameters
+  if {[$SQL eval { SELECT COUNT(*) FROM param WHERE property = 'version' }] == 0} {
+    $SQL eval { INSERT INTO param(property,value) VALUES("version","1.0"); }
+    $SQL eval { INSERT INTO param(property,value) VALUES("date",strftime('%Y-%m-%d %H:%M:%S','now') ); }
+    $SQL eval " INSERT INTO param(property,value) VALUES('directory','[file normalize [uplevel #0 pwd]]' ); "
+  }
+
+  return $SQL
+}
+
+#------------------------------------------------------------------------
+# lastUpdate
+#------------------------------------------------------------------------
+# Return the latest time the datbase was updated. Based on the latest
+# timein and timeout columns
+#------------------------------------------------------------------------
+proc ::tb::xtide::lastUpdate {} {
+  variable SQL
+  set timein [$SQL eval { SELECT timein FROM user WHERE timein NOT NULL ORDER BY timein DESC LIMIT 1}]
+  set timeout [$SQL eval { SELECT timeout FROM user WHERE timeout NOT NULL ORDER BY timeout DESC LIMIT 1}]
+# puts "<timein:$timein><timeout:$timeout>"
+  if {$timein > $timeout} {
+    return $timein
+  } else {
+    return $timeout
+  }
+}
+
+#------------------------------------------------------------------------
+# dbGetIDByUserid
+#------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------
+proc ::tb::xtide::dbGetIDByUserid { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM user WHERE userid = $name LIMIT 1}]
+}
+
+#------------------------------------------------------------------------
+# dbGetIDByName
+#------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------
+proc ::tb::xtide::dbGetIDByName { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM user WHERE name = $name LIMIT 1 }]
+}
+
+#------------------------------------------------------------------------
+# dbGetIDByLoc
+#------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------
+proc ::tb::xtide::dbGetIDByLoc { name } {
+  variable SQL
+  return [$SQL eval { SELECT rowid FROM user WHERE loc = $name LIMIT 1 }]
+}
+
+#------------------------------------------------------------------------
+# dbGetOrCreateUser
+#------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------
+proc ::tb::xtide::dbGetOrCreateUser { name } {
+  variable SQL
+  set id [dbGetIDByUserid $name]
+  if {$id == {}} {
+    $SQL eval { INSERT INTO user(userid) VALUES($name); }
+    set id [$SQL last_insert_rowid]
+  }
+  return $id
+}
+
+#------------------------------------------------------------------------
+# getData
+#------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------
+proc ::tb::xtide::getData {} {
+#   set report [exec ypcat -k passwd]
+
+#   catch { exec ssh git-dev ypcat -k passwd } returnstring
+#   # When ssh to git-dev, remove the first and last lines:
+#   # First line: >>> Start of .cshrc ...
+#   # Last line: The use of this system is restricted to authorized persons only.  All others will be prosecuted to the full extent of the law.
+#   set report [join [lrange [split $returnstring \n] 1 end-1] \n]
+
+  catch { exec ssh git-dev ypcat -k passwd } returnstring
+  # When ssh to git-dev, remove the lines that are not coming from ypcat command:
+  # First line: >>> Start of .cshrc ...
+  # Last line: The use of this system is restricted to authorized persons only.  All others will be prosecuted to the full extent of the law.
+  set lines [list]
+  foreach line [split $returnstring \n] {
+    # E.g: userid userid:x:11111:11111:<full name>,XSJ,,11111:/home/userid:/bin/csh
+    #      userid userid:*:11111:111::/nohome:/bin/false>
+    if {[regexp {^.*:.*:.*:.*:.*:.*$} $line]} {
+      lappend lines $line
+    } else {
+# puts "<line:$line>"
+    }
+  }
+  set report [join $lines \n]
+
+  return $report
+}
+
+#------------------------------------------------------------------------
+# queryDB
+#------------------------------------------------------------------------
+# Query database. Report the list of new and disabled users since
+# the specified date
+#------------------------------------------------------------------------
+proc ::tb::xtide::queryDB { {date 2000-01-01} } {
+  variable SQL
+  variable VERBOSE
+  variable DEBUG
+
+  set timein [clock scan $date]
+  set timeout [clock scan $date]
+  set numIn 0
+  set numOut 0
+
+  set tbl [::tb::prettyTable "IN since $date"]
+  $tbl configure -indent 2
+  $tbl header [list {User ID} {Full Name} {Location} {Date In} {Date Out}]
+  set CMD " SELECT userid, name, loc, timein, datein, timeout, dateout FROM user WHERE timein >= $timein ;"
+  $SQL eval $CMD values {
+    $tbl addrow [list $values(userid) $values(name) $values(loc) $values(datein) $values(dateout)]
+    incr numIn
+  }
+  $tbl sort -dictionary +2 +0
+  if {$numIn} { puts [$tbl print] }
+  catch {$tbl destroy}
+
+  set tbl [::tb::prettyTable "OUT since $date"]
+  $tbl configure -indent 2
+  $tbl header [list {User ID} {Full Name} {Location} {Date In} {Date Out}]
+  set CMD " SELECT userid, name, loc, timein, datein, timeout, dateout FROM user WHERE timeout >= $timeout ;"
+  $SQL eval $CMD values {
+    $tbl addrow [list $values(userid) $values(name) $values(loc) $values(datein) $values(dateout)]
+    incr numOut
+  }
+  $tbl sort -dictionary +2 +0
+  if {$numOut} { puts [$tbl print] }
+  catch {$tbl destroy}
+
+  set date [clock format $timein -format {%Y-%m-%d}]
+  puts " -I- Number of new record(s) since $date: $numIn"
+  puts " -I- Number of disabled record(s) since $date: $numOut"
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# statsDB
+#------------------------------------------------------------------------
+# Some stats from the database
+#------------------------------------------------------------------------
+proc ::tb::xtide::statsDB {} {
+  variable SQL
+  variable VERBOSE
+  variable DEBUG
+
+  set users [$SQL eval { SELECT userid FROM user }]
+  puts " -I- Number of records: [llength $users]"
+  set users [$SQL eval { SELECT userid FROM user WHERE timein IS NOT NULL AND timeout IS NULL}]
+  puts " -I- Number of active records: [llength $users]"
+  set users [$SQL eval { SELECT userid FROM user WHERE timein IS NOT NULL AND timeout IS NOT NULL}]
+  puts " -I- Number of disabled records: [llength $users]"
+  set date [clock format [lastUpdate] -format {%Y-%m-%d}]
+  puts " -I- Date of last record change: $date"
+  set time [clock seconds]
+  set date [clock format $time -format {%Y-%m-%d}]
+  set time [clock scan $date]
+  set t [expr $time - (3600 * 24 * 7)]
+  set users [$SQL eval " SELECT userid FROM user WHERE timein >= $t AND timeout IS NULL"]
+  puts " -I- Number of new active records in the past 7 days: [llength $users]"
+  set users [$SQL eval " SELECT userid FROM user WHERE timein IS NOT NULL AND timeout >= $t"]
+  puts " -I- Number of new disabled records in the past 7 days: [llength $users]"
+  set t [expr $time - (3600 * 24 * 30)]
+  set users [$SQL eval " SELECT userid FROM user WHERE timein >= $t AND timeout IS NULL"]
+  puts " -I- Number of new active records in the past 30 days: [llength $users]"
+  set users [$SQL eval " SELECT userid FROM user WHERE timein IS NOT NULL AND timeout >= $t"]
+  puts " -I- Number of new disabled records in the past 30 days: [llength $users]"
+  set lastupdate [$SQL eval { SELECT value FROM param WHERE property = 'update' ORDER BY rowid DESC LIMIT 1}]
+  puts " -I- Date of last database update: [lindex $lastupdate 0]"
+  set updates [$SQL eval { SELECT value FROM param WHERE property = 'update' ORDER BY rowid DESC}]
+  puts " -I- Number of database updates: [llength $updates]"
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# summaryDB
+#------------------------------------------------------------------------
+# Report all users inside the database
+#------------------------------------------------------------------------
+proc ::tb::xtide::summaryDB {} {
+  variable SQL
+  variable VERBOSE
+  variable DEBUG
+
+  set tbl [::tb::prettyTable "Summary"]
+  $tbl configure -indent 2
+  $tbl header [list {User ID} {Full Name} {Location} {Date In} {Date Out}]
+  set CMD { SELECT userid, name, loc, timein, datein, timeout, dateout FROM user ;}
+  $SQL eval $CMD values {
+    $tbl addrow [list $values(userid) $values(name) $values(loc) $values(datein) $values(dateout)]
+  }
+  $tbl sort -dictionary +2 +0
+  puts [$tbl print]
+  catch {$tbl destroy}
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# diffDB
+#------------------------------------------------------------------------
+# Make a diff between the state of the database versus the current list
+# of users
+#------------------------------------------------------------------------
+proc ::tb::xtide::diffDB { {result {}} } {
+  variable SQL
+  variable VERBOSE
+  variable QUIET
+  variable DEBUG
+  variable INSERTED
+  variable UPDATED
+
+  if {$result == {}} {
+#     set result [exec ypcat -k passwd]
+    set result [getData]
+  }
+
+  set count 0
+  set users [list]
+  foreach line [split $result \n] {
+    if {[regexp {^\s*$} $line]} { continue }
+    incr count
+    # dpefour dpefour:x:13283:10115:David Pefourque,XSJ,,13283:/home/dpefour:/bin/csh
+    regexp {^([^\s]+)\s+(.+)\s*$} $line - userid entry
+    # dpefour:x:13283:10115:David Pefourque,XSJ,,13283:/home/dpefour:/bin/csh
+    foreach {field1 loc} [split $entry ,] { break }
+    # dpefour:x:13283:10115:David Pefourque
+    foreach {id passwd - - name} [split $field1 :] { break }
+# puts "<$userid><$id><$passwd><$name><$loc>"
+    set userid [string trim $userid]
+    set name [string trim $name]
+    set passwd [string trim $passwd]
+    set loc [string toupper [string trim $loc]]
+    lappend users [list $userid $name $passwd $loc]
+
+  }
+  puts " -I- Number of users: $count"
+  set addedUsers [list]
+  set disabledUsers [list]
+  set addedUsersTbl [::tb::prettyTable "IN since [clock format [lastUpdate] -format {%Y-%m-%d}]\n(NOT in the database)"]
+  set disabledUsersTbl [::tb::prettyTable "OUT since [clock format [lastUpdate] -format {%Y-%m-%d}]\n(NOT in the database)"]
+  $addedUsersTbl configure -indent 2
+  $addedUsersTbl header [list {User ID} {Full Name} {Location}]
+  $disabledUsersTbl configure -indent 2
+  $disabledUsersTbl header [list {User ID} {Full Name} {Location}]
+  set start [clock seconds]
+  set count 0
+  foreach user $users {
+    incr count
+    foreach {userid name passwd loc} $user { break }
+    if {$VERBOSE} {
+      if {$DEBUG} {
+        puts " -I- Processing \[$count/[llength $users]\] $userid (name=$name / loc=$loc)"
+      } else {
+        puts " -I- Processing \[$count/[llength $users]\] $userid"
+      }
+    } else {
+      if {!$QUIET} {
+        progressBar $count [llength $users] { Processing users: }
+      }
+    }
+    set id [dbGetIDByUserid $userid]
+    if {$id == {}} {
+      lappend addedUsers $userid
+      $addedUsersTbl addrow [list $userid $name $loc]
+    } else {
+      if {[regexp -nocase {^DIS-} $passwd]} {
+        # The user is currently disabled, but is he disabled inside the database?
+        set timeout [$SQL eval { SELECT timeout FROM user WHERE rowid = $id }]
+        if {$timeout == "{}"} {
+          lappend disabledUsers $userid
+          $disabledUsersTbl addrow [list $userid $name $loc]
+        }
+      }
+    }
+  }
+  set end [clock seconds]
+  puts ""
+
+  $addedUsersTbl sort -dictionary +2 +0
+  puts [$addedUsersTbl print]
+  catch {$addedUsersTbl destroy}
+  $disabledUsersTbl sort -dictionary +2 +0
+  puts [$disabledUsersTbl print]
+  catch {$disabledUsersTbl destroy}
+
+  puts " -I- Users processed in [expr $end - $start] seconds"
+  puts " -I- Number of added users: [llength $addedUsers]"
+  puts " -I- Number of disabled users: [llength $disabledUsers]"
+  puts ""
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# updateDB
+#------------------------------------------------------------------------
+# Update the database based on the current list of users. New users get
+# added and disabled users get updated
+#------------------------------------------------------------------------
+proc ::tb::xtide::updateDB { {result {}} } {
+  variable SQL
+  variable VERBOSE
+  variable QUIET
+  variable DEBUG
+  variable INSERTED
+  variable UPDATED
+
+  if {$result == {}} {
+#     set result [exec ypcat -k passwd]
+    set result [getData]
+  }
+
+  set count 0
+  set users [list]
+  foreach line [split $result \n] {
+    if {[regexp {^\s*$} $line]} { continue }
+    incr count
+    # dpefour dpefour:x:13283:10115:David Pefourque,XSJ,,13283:/home/dpefour:/bin/csh
+    # userid userid:*:11111:111::/nohome:/bin/false>
+    regexp {^([^\s]+)\s+(.+)\s*$} $line - userid entry
+    # dpefour:x:13283:10115:David Pefourque,XSJ,,13283:/home/dpefour:/bin/csh
+    foreach {field1 loc} [split $entry ,] { break }
+    # dpefour:x:13283:10115:David Pefourque
+    foreach {id passwd - - name} [split $field1 :] { break }
+# puts "<$userid><$id><$passwd><$name><$loc>"
+    set userid [string trim $userid]
+    set name [string trim $name]
+    set passwd [string trim $passwd]
+    set loc [string toupper [string trim $loc]]
+    lappend users [list $userid $name $passwd $loc]
+
+  }
+#   puts " -I- Number of users: $count"
+  puts " -I- Number of records: $count"
+  set INSERTED 0
+  set UPDATED 0
+  set start [clock seconds]
+  set count 0
+  foreach user $users {
+    incr count
+    foreach {userid name passwd loc} $user { break }
+    if {$VERBOSE} {
+      if {$DEBUG} {
+        puts " -I- Processing \[$count/[llength $users]\] $userid (name=$name / loc=$loc)"
+      } else {
+        puts " -I- Processing \[$count/[llength $users]\] $userid"
+      }
+    } else {
+      if {!$QUIET} {
+        progressBar $count [llength $users] { Processing users: }
+      }
+    }
+    updateUser $userid $name $passwd $loc
+#     exec sleep 1
+  }
+  set end [clock seconds]
+  puts ""
+#   puts " -I- Users processed in [expr $end - $start] seconds"
+  puts " -I- Records processed in [expr $end - $start] seconds"
+#   puts " -I- Number of inserted users: $INSERTED"
+  puts " -I- Number of inserted records: $INSERTED"
+#   puts " -I- Number of updated users: $UPDATED"
+  puts " -I- Number of updated records: $UPDATED"
+
+  if {[expr $INSERTED + $UPDATED] > 0} {
+    $SQL eval { INSERT INTO param(property,value) VALUES("update",strftime('%Y-%m-%d %H:%M:%S','now') ); }
+  } else {
+    $SQL eval { INSERT INTO param(property,value) VALUES("update",strftime('%Y-%m-%d %H:%M:%S','now') ); }
+  }
+
+
+  puts ""
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# updateUser
+#------------------------------------------------------------------------
+# Update or add a user to the database
+#------------------------------------------------------------------------
+proc ::tb::xtide::updateUser {userid name passwd loc} {
+  variable SQL
+  variable VERBOSE
+  variable DEBUG
+  variable INSERTED
+  variable UPDATED
+
+  set disabled 0
+  if {[regexp -nocase {^DIS-} $passwd]} {
+    set disabled 1
+  }
+
+  # Replace ' with " to prevent issue in the SQL command
+  regsub -all {'} $name {"} name
+# puts "<name:$name>"
+
+  set id [dbGetIDByUserid $userid]
+  set time [clock seconds]
+  set date [clock format $time -format {%Y-%m-%d}]
+  set time [clock scan $date]
+  if {$id == {}} {
+    # New user
+    if {$disabled} {
+      # Disabled user
+      $SQL eval " INSERT INTO user(userid,name,loc,timein,datein,timeout,dateout) VALUES('$userid','$name','[string toupper $loc]','$time','$date','$time','$date'); "
+      if {$DEBUG} {
+        puts " -I- Add disabled user '$userid' ($name)"
+      }
+# puts "adding:<$userid><$id><$passwd><$name><$loc>"
+    } else {
+      $SQL eval " INSERT INTO user(userid,name,loc,timein,datein) VALUES('$userid','$name','[string toupper $loc]','$time','$date'); "
+# puts "adding:<$userid><$id><$passwd><$name><$loc>"
+      if {$DEBUG} {
+        puts " -I- Add user '$userid' ($name)"
+      }
+    }
+    incr INSERTED
+  } else {
+    # The user is already inside the database
+    if {$disabled} {
+      set timeout [$SQL eval { SELECT timeout FROM user WHERE rowid = $id }]
+# puts "<id:$id><userid:$userid><timeout:$timeout>"
+      # If the user already disabled?
+      if {$timeout == "{}"} {
+        # No - Update the database and disable the user
+        $SQL eval " UPDATE user SET timeout = '$time', dateout = '$date' WHERE rowid=$id ;"
+        if {$VERBOSE} {
+          puts " -I- Disable user '$userid' ($name)"
+        }
+        incr UPDATED
+# puts "updating timeout to $time"
+      }
+    }
+
+  }
+
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## main
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::xtide::main {args} {
+
+  variable SCRIPT_VERSION
+  variable QUIET
+  variable VERBOSE
+  variable DEBUG
+  variable SQL
+
+  # Database
+  array set DB [list]
+
+  # debug
+  set filename {}
+#   set filename {xtide.1}
+  set xtideDB {~/.xtidedb}
+  set reset 0
+  set days 0
+#   set days 1
+  set months 0
+  set years 0
+  set mode {query} ; # update|summary|query|diff|stats
+  set show_help 0
+  set error 0
+  # if {[llength $args] == 0} {
+  #   incr show_help
+  # }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -f -
+      --f {
+        set filename [lshift args]
+      }
+      -db -
+      --db {
+        set xtideDB [lshift args]
+      }
+      -d -
+      -day -
+      -days {
+        set days [lshift args]
+      }
+      -m -
+      -month -
+      -months {
+        set months [lshift args]
+      }
+      -y -
+      -year -
+      -years {
+        set years [lshift args]
+      }
+      -q -
+      -query {
+           set mode {query}
+      }
+      -u -
+      -up -
+      -update {
+           set mode {update}
+      }
+      -s -
+      -sum -
+      -summary {
+           set mode {summary}
+      }
+      -diff {
+           set mode {diff}
+      }
+      -stat -
+      -stats {
+           set mode {stats}
+      }
+      -createdb {
+           set reset 1
+           set mode {update}
+      }
+      -in-memory {
+           set reset 1
+           set xtideDB {:memory:}
+           # To debug, save the database on-disk
+#            set xtideDB {inmemory.db}
+           set mode {update}
+      }
+      --v -
+      -verbose {
+          set VERBOSE 1
+      }
+      --q -
+      -quiet {
+          set QUIET 1
+      }
+      --d -
+      -debug {
+          set DEBUG 1
+          set VERBOSE 1
+      }
+      -h -
+      -help {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: xtide
+                   [-db <database>]
+                   [-days <num>|-d <num>]
+                   [-months <num>|-m <num>]
+                   [-years <num>|-y <num>]
+                   [-query]
+                   [-diff]
+                   [-update]
+                   [-summary]
+                   [-stats]
+                   [-createdb]
+                   [-quiet|--q]
+                   [-verbose|--v]
+                   [-help|-h]
+
+      Description: Report the tide ...
+
+        Default database location: ~/.xtidedb
+
+        -query   : query the datbase with -days/-months/-years
+        -diff    : report the differences between the database and the current list of users
+        -update  : update the database
+        -stats   : some stats
+        -summary : database summary
+        -created : create database
+
+      Version: %s
+
+      Example:
+         xtide -query -day 2
+         xtide -update
+         xtide -diff
+
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if {![file exists $xtideDB] && !$reset} {
+    puts " -E- file $xtideDB does not exist"
+    incr error
+  }
+
+  if {![regexp {^[0-9]+$} $days]} {
+    puts " -E- invalid number of days provided with -days"
+    incr error
+  }
+
+  if {![regexp {^[0-9]+$} $months]} {
+    puts " -E- invalid number of months provided with -months"
+    incr error
+  }
+
+  if {![regexp {^[0-9]+$} $years]} {
+    puts " -E- invalid number of years provided with -years"
+    incr error
+  }
+
+  if {$error} {
+    puts "\n Some error(s) occured. Cannot continue.\n"
+#     exit 1
+    return -code error
+  }
+
+  if {$QUIET} {
+    set VERBOSE 0
+  }
+
+  puts " -I- Database: $xtideDB"
+
+  # Calculate the time/date to look for inside the database
+  set time [expr [clock seconds] - (3600 * 24 * $days) - (3600 * 24 * 30 * $months) - (3600 * 24 * 365 * $years)]
+  # Format: <YEAR>-<MONTH>-<DAY>
+  set date [clock format $time -format {%Y-%m-%d}]
+
+  #-------------------------------------------------------
+  # Create SQL database
+  #-------------------------------------------------------
+  if {$reset} {
+    catch {file delete $xtideDB}
+    createDB $xtideDB
+  } else {
+    sqlite3 SQL[pid] $xtideDB
+    set SQL SQL[pid]
+    execSQL $SQL { pragma integrity_check }
+  }
+
+  #-------------------------------------------------------
+  #
+  #-------------------------------------------------------
+  switch $mode {
+    diff {
+#       set report [exec ypcat -k passwd]
+      if {$filename == {}} {
+#         set report [exec ypcat -k passwd]
+        set report [getData]
+      } else {
+        set FH [open $filename {r}]
+#         set FH [open {xtide.1} {r}]
+#         set FH [open {xtide.2} {r}]
+#         set FH [open {xtide.3} {r}]
+#         set FH [open {xtide.4} {r}]
+        set report [read $FH]
+        close $FH
+      }
+      diffDB $report
+#       diffDB
+    }
+    summary {
+      summaryDB
+    }
+    update {
+#       set report [exec ypcat -k passwd]
+      if {$filename == {}} {
+#         set report [exec ypcat -k passwd]
+        set report [getData]
+      } else {
+        set FH [open $filename {r}]
+#         set FH [open {xtide.1} {r}]
+#         set FH [open {xtide.2} {r}]
+#         set FH [open {xtide.3} {r}]
+#         set FH [open {xtide.4} {r}]
+        set report [read $FH]
+        close $FH
+      }
+      updateDB $report
+#       updateDB
+    }
+    query {
+      queryDB $date
+    }
+    stats {
+      statsDB
+    }
+    default {
+    }
+  }
+
+  #-------------------------------------------------------
+  # Done
+  #-------------------------------------------------------
+  # Closing the SQLite3 database
+#   $SQL close
+#   set SQL {}
+
+  return -code ok
+}
+
+namespace eval ::tb {
+  namespace import ::tb::xtide::main
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::tb::xtide::QUIET 0
+set ::tb::xtide::VERBOSE 0
+set ::tb::xtide::DEBUG 0
+
+# Database
+array set DB [list]
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set ::tb::xtide::QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$::tb::xtide::QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tb::xtide::main
+  # Closing the SQLite3 database
+#   $::tb::xtide::SQL close
+#   set ::tb::xtide::SQL {}
+} else {
+  set ::tb::xtide::QUIET 0
+  if {[catch {eval [concat ::tb::xtide::main $argv]} errorstring]} {
+    puts $errorstring
+    # Closing the SQLite3 database
+    catch {$::tb::xtide::SQL close}
+    set ::tb::xtide::SQL {}
+    exit 1
+  }
+  # Closing the SQLite3 database
+  catch {$::tb::xtide::SQL close}
+  set ::tb::xtide::SQL {}
+
+  exit 0
+}

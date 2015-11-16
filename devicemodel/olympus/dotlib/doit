@@ -1,0 +1,156 @@
+#!/bin/csh -f
+
+setenv SCR "/wrk/hdstaff/dpefour/support/Olympus/dotlib/scripts"
+
+##-----------------------------------------------------------------------
+## Make link to media
+##-----------------------------------------------------------------------
+
+ln -s /wrk/hdstaff/dpefour/support/Olympus/assets/www/media .
+
+##-----------------------------------------------------------------------
+## Convert Sitemape2.xml to Tcl fragments for Kintex 7 & kintex 8
+##-----------------------------------------------------------------------
+
+${SCR}/sitemap2tcl -file kintex7_sitemap2.ftcl -xml /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/Sitemap2.xml
+${SCR}/sitemap2tcl -file kintex8_sitemap2.ftcl -xml /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex8/Sitemap2.xml
+
+##-----------------------------------------------------------------------
+## Locally copy the Dotlib for future reference
+##-----------------------------------------------------------------------
+
+cp /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex8/kintex8.lib .
+cp /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/kintex7.lib .
+
+##-----------------------------------------------------------------------
+## Kintex 8
+##-----------------------------------------------------------------------
+
+# ${SCR}/splitDotLib -output ./kintex8 -dotlib /proj/xbuilds/2013.3_UB3_INT_daily_latest/installs/lin64/Vivado/2013.3_UB3/data/parts/xilinx/kintex8/kintex8.lib
+${SCR}/splitDotLib -output ./kintex8 -dotlib /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex8/kintex8.lib
+${SCR}/dotlib2tcl -dotlib './kintex8/*.lib' -output ./kintex8
+${SCR}/checkTimingArcsDotLib -ftcl './kintex8/*.ftcl' > kintex8_checkTimingArcsDotLib.rpt
+${SCR}/reportDotLib -ftcl './kintex8/*.ftcl' -file kintex8_reportDotLib.rpt
+${SCR}/reportDotLib -ftcl './kintex8/*.ftcl' -no-collapse -file kintex8_reportDotLib.no_collapse.rpt
+
+# Generate CSV per COE
+${SCR}/splitCSVbyCOE -csv kintex8_reportDotLib.csv
+
+# Generate SQLite3 database
+\rm -rf createSQLiteDB_kintex8.log
+${SCR}/createSQLiteDB -ftcl './kintex8/*.ftcl' -db kintex8.db -verbose > createSQLiteDB_kintex8.log
+${SCR}/dbStats -db kintex8.db -verbose > kintex8.stats
+${SCR}/checkTimingArcsDotLib2 -db './kintex8.db' > kintex8_checkTimingArcsDotLib2.rpt
+
+##-----------------------------------------------------------------------
+## Kintex 7
+##-----------------------------------------------------------------------
+
+# ${SCR}/splitDotLib -output ./kintex7 -dotlib /proj/xbuilds/2013.3_UB3_INT_daily_latest/installs/lin64/Vivado/2013.3_UB3/data/parts/xilinx/kintex7/kintex7.lib
+${SCR}/splitDotLib -output ./kintex7 -dotlib /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/kintex7.lib
+# Skip kintex7/kintex7_GTZE2_OCTAL.lib as it takes ~30mns to be converted as Tcl fragment
+# kintex7_GTZE2_OCTAL.lib: 6.8MB / 230K lines
+# mv ./kintex7/kintex7_GTZE2_OCTAL.lib ./kintex7/kintex7_GTZE2_OCTAL.lib_SKIP
+${SCR}/dotlib2tcl -dotlib './kintex7/*.lib' -output ./kintex7
+${SCR}/checkTimingArcsDotLib -ftcl './kintex7/*.ftcl' -verbose > kintex7_checkTimingArcsDotLib.rpt
+${SCR}/reportDotLib -ftcl './kintex7/*.ftcl' -file kintex7_reportDotLib.rpt
+${SCR}/reportDotLib -ftcl './kintex7/*.ftcl' -no-collapse -file kintex7_reportDotLib.no_collapse.rpt
+
+# Generate SQLite3 database
+\rm -rf createSQLiteDB_kintex7.log
+${SCR}/createSQLiteDB -ftcl './kintex7/*.ftcl' -db kintex7.db > createSQLiteDB_kintex7.log
+${SCR}/dbStats -db kintex7.db -verbose > kintex7.stats
+${SCR}/checkTimingArcsDotLib2 -db './kintex7.db' > kintex7_checkTimingArcsDotLib2.rpt
+
+##-----------------------------------------------------------------------
+## Compare K7 with K8
+##-----------------------------------------------------------------------
+
+${SCR}/normalize -no-collapse -k7 kintex7_reportDotLib.no_collapse.csv -k8 kintex8_reportDotLib.no_collapse.csv
+mv normalize.log normalize.no_collapse.log
+mv kintex7_cmp.csv kintex7_cmp.no_collapse.csv
+mv kintex8_cmp.csv kintex8_cmp.no_collapse.csv
+mv kintex7_kintex8_diff.csv kintex7_kintex8_diff.no_collapse.csv
+
+# ${SCR}/normalize -k7 kintex7_reportDotLib.csv -k8 kintex8_reportDotLib.csv
+${SCR}/normalize -split_by_coe -k7 kintex7_reportDotLib.no_collapse.csv -k8 kintex8_reportDotLib.no_collapse.csv
+
+##-----------------------------------------------------------------------
+## SQLite databases comparison K7 with K8
+##-----------------------------------------------------------------------
+
+# Compare SQL databases
+${SCR}/dbCmp -db1 ./kintex7.db -db2 ./kintex8.db -split_by_coe -csv -file k7k8summary.csv -v > k7k8summary.log
+# Convert result to HTML
+${SCR}/csv2html -csv ./k7k8summary.csv -out ./k7k8summary.html
+# Convert CSVs to tabular format
+foreach CSV (k7k8summary.*csv)
+  set RPT =  `echo -n $CSV | sed -e 's/\.csv/\.rpt/g'`
+  ${SCR}/csv2tbl -csv $CSV -out $RPT
+end
+
+##-----------------------------------------------------------------------
+## Convert CSV to report & HTML
+##-----------------------------------------------------------------------
+
+${SCR}/csv2tbl -csv kintex7_cmp.no_collapse.csv -out kintex7_cmp.no_collapse.rpt
+${SCR}/csv2tbl -csv kintex8_cmp.no_collapse.csv -out kintex8_cmp.no_collapse.rpt
+${SCR}/csv2tbl -csv kintex7_kintex8_diff.no_collapse.csv -out kintex7_kintex8_diff.no_collapse.rpt
+# Convert the splitted by COE CSV
+foreach CSV (kintex8_reportDotLib.*.csv)
+  set RPT =  `echo -n $CSV | sed -e 's/\.csv/\.rpt/g'`
+  ${SCR}/csv2tbl -csv $CSV -out $RPT
+end
+
+${SCR}/csv2tbl -csv kintex7_cmp.csv -out kintex7_cmp.rpt
+${SCR}/csv2tbl -csv kintex8_cmp.csv -out kintex8_cmp.rpt
+# ${SCR}/csv2tbl -csv kintex7_kintex8_diff.csv -out kintex7_kintex8_diff.rpt
+foreach CSV (*diff*csv)
+  set RPT =  `echo -n $CSV | sed -e 's/\.csv/\.rpt/g'`
+  ${SCR}/csv2tbl -csv $CSV -out $RPT
+end
+/bin/rm -f kintex8_reportDotLib.no_collapse.rpt
+
+
+${SCR}/csv2html -csv kintex7_reportDotLib.csv -out kintex7_reportDotLib.html
+${SCR}/csv2html -csv kintex8_reportDotLib.csv -out kintex8_reportDotLib.html
+# ${SCR}/csv2html -csv kintex7_cmp.csv -out kintex7_cmp.html
+# ${SCR}/csv2html -csv kintex8_cmp.csv -out kintex8_cmp.html
+# ${SCR}/csv2html -diff -csv kintex7_kintex8_diff.no_collapse.csv -out kintex7_kintex8_diff.no_collapse.html
+# ${SCR}/csv2html -diff -csv kintex7_kintex8_diff.csv -out kintex7_kintex8_diff.html
+foreach CSV (*diff*csv)
+  set HTML =  `echo -n $CSV | sed -e 's/\.csv/\.html/g'`
+  ${SCR}/csv2html -diff -csv $CSV -out $HTML
+end
+# Convert the splitted by COE CSV
+foreach CSV (kintex8_reportDotLib.*.csv)
+  set HTML =  `echo -n $CSV | sed -e 's/\.csv/\.html/g'`
+  ${SCR}/csv2html -csv $CSV -out $HTML
+end
+/bin/rm -f kintex8_reportDotLib.no_collapse.html
+
+##-----------------------------------------------------------------------
+## Package files by COE
+##-----------------------------------------------------------------------
+ 
+# Removing of COE directories
+\rm -rf CLB CLOCK CMAC CONFIG DSP GT ILKN IO PCI RAMB XIPHY MISC
+
+foreach coe (CLB CLOCK CMAC CONFIG DSP GT ILKN IO PCI RAMB XIPHY MISC)
+  # Format e.g: 10302013
+  set _date_=`date +"%m%d20%g"`
+  echo " Creating package for COE '$coe'"
+  mkdir -p $coe
+  /bin/tar cvfh ./${coe}/kintex8_${_date_}.${coe}.tar ./kintex7_reportDotLib.{csv,html} ./*.${coe}.{csv,rpt,html} ./media
+  # Keep an un-tar version of the files
+  cd ./${coe}
+  tar xvf kintex8_${_date_}.${coe}.tar
+  cd ..
+#   /bin/gzip ./${coe}/kintex8_${_date_}.${coe}.tar
+end
+
+##-----------------------------------------------------------------------
+## Done
+##-----------------------------------------------------------------------
+
+exit 0

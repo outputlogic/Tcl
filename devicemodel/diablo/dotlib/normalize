@@ -1,0 +1,726 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+# Normalize names and filter cells between 7-serie and 8-serie
+# Cell namea that are not inside 'cellNameRemap' are not exported in output CSV
+
+########################################################################################
+## 05-13-2015 - Added support for internal pins (DIR column vs IN/OUT columns)
+##            - Added support for clock pins (column CLOCK)
+## 05-04-2015 - Added -log to specify log file location
+## 04-29-2015 - Replaced -no-collapse by -expand
+##            - Cleaned code to remove dependancies to Kintex7/Kintex8
+##            - Added support for output directory (-output-dir)
+## 10-31-2013 - Initial release
+########################################################################################
+
+set SCRIPT_VERSION {05-13-2015}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+
+set cellsToSkip []
+# set cellsToSkip [list {^PCI.*} {^GTH.*} ]
+# set cellsToSkip [list {^PCI.*} ]
+
+array set cellNameRemap {}
+set pinNameRemap [list]
+array set headerRemap {}
+set COEGroups [list]
+
+# Load external cell/pin/csv header name mapping if file exists
+if {[file exists [file join [file dirname [info script]] mapping.ftcl]]} {
+  puts " Mapping file found: [file normalize [file join [file dirname [info script]] mapping.ftcl]]"
+  source [file join [file dirname [info script]] mapping.ftcl]
+}
+
+
+set orderHeader [list \
+  {Mapped Cell Name}    \
+  {Mapped Pin Name}     \
+  {Cell Name}           \
+  {Pin Name}            \
+  {DIR}                 \
+  {CLOCK}               \
+  {ARC}                 \
+  {RELATED PIN}         \
+  setup_fal             \
+  setup_ris             \
+  hold_fal              \
+  hold_ris              \
+  rec_fal               \
+  rec_ris               \
+  rem_fal               \
+  rem_ris               \
+  comb                  \
+  comb_neg_una          \
+  comb_pos_una          \
+  cle_neg_una           \
+  pre_pos_una           \
+  fal_edg               \
+  fal_edg_neg_una       \
+  fal_edg_pos_una       \
+  ris_edg               \
+  ris_edg_neg_una       \
+  ris_edg_pos_una       \
+  3state_dis_pos_una    \
+  3state_ena_neg_una    \
+  min_pulse_width       \
+  min_period            \
+  skew_fal              \
+  skew_ris              \
+  {HAS FCT}             \
+  {FCT}                 \
+  {TIMING TYPE}         \
+  {TIMING SENSE}        \
+  {FPGA ARC CONDITION}  \
+  ]
+
+
+proc log { msg } {
+  if {$::LOG != {}} {
+    puts $::LOG $msg
+  }
+  puts $msg
+}
+
+proc list2csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+proc csv2list { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+proc parseLibCSV {csvFile} {
+  global cellNameRemap
+  global pinNameRemap
+  global cellsToSkip
+  log "\n Importing CSV $csvFile"
+  set CSV [open $csvFile r]
+  set libCells [list]
+  set header [list]
+  set skippedCells [list]
+  while {[gets $CSV line] >= 0} {
+    if {[regexp {^\s*\#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    set l [csv2list $line ,]
+    set libCell [lindex $l 0]
+    set libPin [lindex $l 1]
+    if {$libCell == "Cell Name"} {
+      # Add to the CSV header two additional columns for the mapped cell and pin names
+      set header [concat [list {Mapped Cell Name} {Mapped Pin Name}] $l ]
+      continue
+    }
+    # Remap cell names
+    if {[info exist cellNameRemap($libCell)]} {
+      set libCell $cellNameRemap($libCell)
+    }
+    # Remap pin name
+    foreach {pattern mapping} $pinNameRemap {
+      if {![regexp $pattern $libCell]} {
+        continue
+      }
+      foreach {old new} $mapping { break }
+        if {[regexp $old $libPin]} {
+          regsub $old $libPin $new libPinNew
+          log " -I- pin remapping $libCell: \t$libPin\t->\t$libPinNew"
+          set libPin $libPinNew
+        }
+    }
+    # Keep track of the original cell name and pin name by saving the complete list
+    eval set ${libCell}(\$libPin) \[lrange \$l 0 end\]
+    lappend libCells $libCell
+  }
+  close $CSV
+  foreach libCell [lsort -unique $libCells] {
+    set keep 1
+    foreach pattern $cellsToSkip {
+      if {[regexp $pattern $libCell]} {
+        if {[lsearch -exact $skippedCells $libCell] == -1} {
+          log " -W- skipping '$libCell' (matching '$pattern')"
+        }
+        lappend skippedCells $libCell
+        set keep 0
+        break
+      }
+    }
+    if {$keep == 0} { continue }
+    set result($libCell) [array get $libCell]
+  }
+  # Save the header of the CSV file as key "_"
+  array set result [list _ $header]
+  return [array get result]
+}
+
+proc generateDIFFCSV { {filter {}} {tag {}} } {
+  # K7 and K8 should have at that point the same header and the same number of rows
+  set CSV1 [open ${::outputDir}${::DBname1}_cmp${::outputSuffix}.csv r]
+  set CSV2 [open ${::outputDir}${::DBname2}_cmp${::outputSuffix}.csv r]
+  set CSV [open ${::outputDir}${::DBname1}_${::DBname2}_diff${tag}${::outputSuffix}.csv w]
+
+  set header {}
+  set lineno -1
+  puts $CSV "# values: -2:only in $::DBname1 / -1:only in $::DBname2 / 0:match between $::DBname1 & $::DBname2 / 1:mismatch between $::DBname1 & $::DBname2"
+  if {$filter != {}} {
+    puts $CSV "# CSV generated for following cells: $filter"
+  }
+  while {![eof $CSV1] && ![eof $CSV2]} {
+    incr lineno
+# if {$lineno > 2} { break }
+    gets $CSV1 line1
+    gets $CSV2 line2
+# puts "<line1:$line1>"
+# puts "<line2:$line2>"
+    if {[regexp {^\s*$} $line1] && [regexp {^\s*$} $line2]} { continue }
+    set line1 [csv2list $line1 ,]
+    set line2 [csv2list $line2 ,]
+    set mappedLibCell1 [lindex $line1 0]
+    set mappedLibPin1 [lindex $line1 1]
+    set originalLibCell1 [lindex $line1 2]
+    set originalLibPin1 [lindex $line1 3]
+    set mappedLibCell2 [lindex $line2 0]
+    set mappedLibPin2 [lindex $line2 1]
+    set originalLibCell2 [lindex $line2 2]
+    set originalLibPin2 [lindex $line2 3]
+# puts "<mappedLibCell1:$mappedLibCell1>"
+    if {$mappedLibCell1 == "Mapped Cell Name"} {
+      set header $line1
+# puts "<header:$header>"
+      puts $CSV [list2csv [concat [list "Cell $::DBname1" "Pin $::DBname1" "Cell $::DBname2" "Pin $::DBname2" {Mapped Cell Name} "Mapped Pin $::DBname1" "Mapped Pin $::DBname2" {Full Match} {Num Mismatchs}] [lrange $header 4 end]] ,]
+      continue
+    }
+    if {$filter != {}} {
+      # If a filter has been specified and none of the cell names match, then skip it
+      set keep 0
+      foreach cell $filter {
+        if {[regexp $cell $mappedLibCell1] || [regexp $cell $mappedLibCell2] || [regexp $cell $originalLibCell1] || [regexp $cell $originalLibCell2]} {
+          set keep 1
+          break
+        }
+      }
+      if {!$keep} {
+        continue
+      }
+    }
+    set diff [list]
+    if {$mappedLibPin1 == {-}} {
+      # Entry for the new columns {Full Match} {Num Mismatchs}
+      lappend diff -1
+      lappend diff -1
+      foreach elm [lrange $line1 4 end] {
+        # Pin exists only in K8
+        lappend diff -1
+      }
+      puts $CSV [list2csv [concat [list $originalLibCell1 $originalLibPin1 $originalLibCell2 $originalLibPin2 $mappedLibCell1 $mappedLibPin1 $mappedLibPin2] $diff] ,]
+      continue
+    } elseif {$mappedLibPin2 == {-}} {
+      # Entry for the new columns {Full Match} {Num Mismatchs}
+      lappend diff -2
+      lappend diff -2
+      foreach elm [lrange $line2 4 end] {
+        # Pin exists only in K7
+        lappend diff -2
+      }
+      puts $CSV [list2csv [concat [list $originalLibCell1 $originalLibPin1 $originalLibCell2 $originalLibPin2 $mappedLibCell1 $mappedLibPin1 $mappedLibPin2] $diff] ,]
+      continue
+    }
+    if {($mappedLibCell1 != $mappedLibCell2) || ($mappedLibPin1 != $mappedLibPin2)} {
+      # This should never happen
+      log " -E- ${::DBname1}_cmp.csv and ${::DBname1}_cmp.csv differ on the cell name or pin name on line $lineno (mappedLibCell1=$mappedLibCell1 / mappedLibPin1=$mappedLibPin1 / mappedLibCell2=$mappedLibCell2 / mappedLibPin2=$mappedLibPin2)"
+      continue
+    }
+    # Assume full match between k7 & k8 on all the columns
+    set mismatch 0
+    foreach {db1val db2val} [::tb::linterleave [lrange $line1 4 end] [lrange $line2 4 end]] {
+      if {$db1val == $db2val} {
+        # Match
+        lappend diff 0
+      } else {
+        # Mismatch
+        lappend diff 1
+        incr mismatch
+      }
+# puts "<db1val:$db1val><db2val:$db2val><diff:$diff>"
+    }
+    # Entry for the new columns {Full Match} {Num Mismatchs}
+    if {!$mismatch} {
+      # Num Mismatchs
+      set diff [linsert $diff 0 0]
+      # Full match
+      set diff [linsert $diff 0 0]
+    } else {
+      # Num Mismatchs
+      set diff [linsert $diff 0 $mismatch]
+      # Full match
+      set diff [linsert $diff 0 1]
+    }
+# puts "<[list2csv [concat [list $originalLibCell1 $originalLibPin1 $originalLibCell2 $originalLibPin2 $mappedLibCell1 $mappedLibPin1 $mappedLibPin2] $diff] ,]>"
+    puts $CSV [list2csv [concat [list $originalLibCell1 $originalLibPin1 $originalLibCell2 $originalLibPin2 $mappedLibCell1 $mappedLibPin1 $mappedLibPin2] $diff] ,]
+  }
+
+  close $CSV
+  close $CSV2
+  close $CSV1
+  log " File [file normalize ${::outputDir}${::DBname1}_${::DBname2}_diff${tag}${::outputSuffix}.csv] has been generated"
+  return 0
+}
+
+
+set logfile {normalize.log}
+
+set DB1CSV {kintex7_reportDotLib.csv}
+set DB2CSV {kintex8_reportDotLib.csv}
+
+set DBname1 {Database1}
+set DBname2 {Database2}
+
+set outputDir {./}
+set outputSuffix {}
+
+# Collapse bus names inside final DIFF CSV
+set collapseCSVDiffNames 1
+
+# Split DIFF CSV by COE group
+set splitCSVDiffByCOEGrp 0
+
+set error 0
+set show_help 0
+set VERBOSE 0
+set DEBUG 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -csv1 -
+    -k7 -
+    -1 -
+    -db1 -
+    --db1 {
+      set DB1CSV [::tb::lshift argv]
+    }
+    -csv2 -
+    -k8 -
+    -2 -
+    -db2 -
+    --db2 {
+      set DB2CSV [::tb::lshift argv]
+    }
+    -name1 -
+    -1name -
+    -dbname1 -
+    --dbname1 {
+      set DBname1 [::tb::lshift argv]
+    }
+    -name2 -
+    -2name -
+    -dbname2 -
+    --dbname2 {
+      set DBname2 [::tb::lshift argv]
+    }
+    -output-suffix -
+    --output-suffix {
+      set outputSuffix [::tb::lshift argv]
+    }
+    -output-dir -
+    --output-dir {
+      set outputDir [::tb::lshift argv]
+    }
+    -logfile -
+    --logfile -
+    -log -
+    --log {
+      set logfile [::tb::lshift argv]
+    }
+    -expand -
+    --expand -
+    -no-collapse -
+    --no-collapse {
+      set collapseCSVDiffNames 0
+    }
+    -split_by_coe -
+    --split_by_coe {
+      set splitCSVDiffByCOEGrp 1
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: normalize
+                [-k7 <CSV report from K7 serie>]
+                [-k8 <CSV report from K8 serie>]
+                [-csv1 <CSV report from 1st serie>]
+                [-csv2 <CSV report from 2nd serie>]
+                [-name1 <name>]
+                [-name2 <name>]
+                [-output-dir <output directory>]
+                [-log <log filename>]
+                [-expand]
+                [-split_by_coe]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to convert and filter CSV report files
+
+    Version: %s
+
+    Use -expand to prevent bus compaction
+
+    Example:
+       normalize -csv1 kintex7_reportDotLib.csv -csv2 kintex8_reportDotLib.csv
+       normalize -csv1 kintex7_reportDotLib.csv -csv2 kintex8_reportDotLib.csv -split_by_coe
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+
+# Create log file
+file mkdir [file dirname $logfile]
+set LOG [open $logfile w]
+puts $LOG "# Log file created on [clock format [clock seconds]]"
+
+# Create output directory. Append '/' to make it easier to build paths with $outputDir
+append outputDir /
+file mkdir $outputDir
+
+##-----------------------------------------------------------------------
+## Import original CSV files
+##-----------------------------------------------------------------------
+
+array set DB1 [parseLibCSV $DB1CSV]
+array set DB2 [parseLibCSV $DB2CSV]
+
+##-----------------------------------------------------------------------
+## Process first CSV file
+##-----------------------------------------------------------------------
+
+# The code below does the following:
+#   - remap the column names according to array 'headerRemap'. Any column missing from the array
+#     is skipped in the output CSV
+#   - create a proc DB1ColMapping that maps the columns from original CSV to the columns order
+#     defined by list 'orderHeader'
+set header $DB1(_); unset DB1(_)
+# puts "DB1<header:$header>"
+set mappedheader [list]
+set DB1mappingList [list]
+set idx 0
+foreach name $header {
+  # Remove quotes to be able to match keys inside 'headerRemap'
+  set name [regsub -all {"} $name {}]
+  if {[lsearch -exact [array names headerRemap] $name] == -1} {
+    log " -W- the colomn name '$name' is not inside the headerRemap array. column skip"
+    incr idx
+    continue
+  }
+  # Append to the list the mapped column name
+  lappend mappedheader $headerRemap($name)
+  # Create a list that keeps track of the current column order versus the desired one
+  lappend DB1mappingList [list [lsearch -exact $orderHeader $headerRemap($name)] $headerRemap($name) $idx $name ]
+  incr idx
+}
+# Order the list based on the final columns order we want
+set DB1mappingList [lsort -integer -increasing -index 0 $DB1mappingList]
+# Dynamically create the proc that will reorder the columns
+set DB1mappingProc "proc DB1ColMapping {L} \{ return \[list "
+foreach elm $DB1mappingList {
+  foreach {- - idx -} $elm { break }
+  append DB1mappingProc [format {[lindex $L %s] } $idx]
+}
+append DB1mappingProc " \] \} "
+# The proc is created inside the Tcl interpreter
+eval $DB1mappingProc
+# Generate new header
+set DB1Header [DB1ColMapping $mappedheader]
+
+
+##-----------------------------------------------------------------------
+## Process second CSV file
+##-----------------------------------------------------------------------
+
+# The code below does the following:
+#   - remap the column names according to array 'headerRemap'. Any column missing from the array
+#     is skipped in the output CSV
+#   - create a proc DB2ColMapping that maps the columns from original CSV to the columns order
+#     defined by list 'orderHeader'
+set header $DB2(_); unset DB2(_)
+set mappedheader [list]
+set DB2mappingList [list]
+set idx 0
+foreach name $header {
+  # Remove quotes to be able to match keys inside 'headerRemap'
+  set name [regsub -all {"} $name {}]
+  if {[lsearch -exact [array names headerRemap] $name] == -1} {
+    log " -W- the colomn name '$name' is not inside the headerRemap array. column skip"
+    incr idx
+    continue
+  }
+  # Append to the list the mapped column name
+  lappend mappedheader $headerRemap($name)
+  # Create a list that keeps track of the current column order versus the desired one
+  lappend DB2mappingList [list [lsearch -exact $orderHeader $headerRemap($name)] $headerRemap($name) $idx $name ]
+  incr idx
+}
+# Order the list based on the final columns order we want
+set DB2mappingList [lsort -integer -increasing -index 0 $DB2mappingList]
+# Dynamically create the proc that will reorder the columns
+set DB2mappingProc "proc DB2ColMapping {L} \{ return \[list "
+foreach elm $DB2mappingList {
+  foreach {- - idx -} $elm { break }
+  append DB2mappingProc [format {[lindex $L %s] } $idx]
+}
+append DB2mappingProc " \] \} "
+# The proc is created inside the Tcl interpreter
+eval $DB2mappingProc
+# Generate new header
+set DB2Header [DB2ColMapping $mappedheader]
+
+
+##-----------------------------------------------------------------------
+## Generate output CSV files (Kintex7 & Kintex8)
+## At this stage, those are temporary CSV files that only include cells
+## that belong to both Kintex 7 & Kintex 8. Cell pins are also aligned
+## which means that both CSV files have the same number of rows
+##-----------------------------------------------------------------------
+
+set CSV1List [list]
+set CSV2List [list]
+lappend CSV1List $DB1Header
+lappend CSV2List $DB2Header
+
+if {$DEBUG} {
+  set CSV1 [open ${DBname1}_cmp_tmp.csv w]
+  puts $CSV1 [list2csv $DB1Header ,]
+  set CSV2 [open ${DBname1}_cmp_tmp.csv w]
+  puts $CSV2 [list2csv $DB2Header ,]
+}
+
+log "\n Generating output CSV files"
+
+# For information purpose, dump the list of K8 cells that won't be part of the
+# DIFF CSV since they are K8 only cells
+foreach libCell [lsort [array names DB2]] {
+  if {![info exist DB1($libCell)]} {
+    log " -W- cell $libCell not found in $DBname1. Cell removed from output CSV"
+    continue
+  }
+}
+
+foreach libCell [lsort [array names DB1]] {
+  if {![info exist DB2($libCell)]} {
+    log " -W- cell $libCell not found in $DBname2. Cell removed from output CSV"
+    continue
+  }
+  array set lc1 $DB1($libCell)
+  array set lc2 $DB2($libCell)
+  set mergedpins [lsort -unique -dictionary [concat [array names lc1] [array names lc2]]]
+#   foreach libPin [lsort [array names lc1]] {}
+  foreach libPin $mergedpins {
+    if {[info exists lc1($libPin)]} {
+      if {$DEBUG} { puts $CSV1 [list2csv [DB1ColMapping [concat $libCell $libPin $lc1($libPin)]] ,] }
+      lappend CSV1List [DB1ColMapping [concat $libCell $libPin $lc1($libPin)]]
+    } else {
+      if {$DEBUG} { puts $CSV1 [list2csv [DB1ColMapping [concat $libCell -]] ,] }
+      lappend CSV1List [DB1ColMapping [concat $libCell -]]
+    }
+  }
+  unset lc1
+#   foreach libPin [lsort [array names lc2]] {}
+  foreach libPin $mergedpins {
+    if {[info exists lc2($libPin)]} {
+      if {$DEBUG} { puts $CSV2 [list2csv [DB2ColMapping [concat $libCell $libPin $lc2($libPin)]] ,] }
+      lappend CSV2List [DB2ColMapping [concat $libCell $libPin $lc2($libPin)]]
+    } else {
+      if {$DEBUG} { puts $CSV2 [list2csv [DB2ColMapping [concat $libCell -]] ,] }
+      lappend CSV2List [DB2ColMapping [concat $libCell -]]
+    }
+  }
+  unset lc2
+}
+
+if {$DEBUG} {
+  close $CSV1
+  close $CSV2
+}
+
+##-----------------------------------------------------------------------
+## Generate the intermediate files to get to DIFF CSV file
+##-----------------------------------------------------------------------
+
+set CSV1 [open ${outputDir}${DBname1}_cmp${outputSuffix}.csv w]
+set CSV2 [open ${outputDir}${DBname2}_cmp${outputSuffix}.csv w]
+
+# Write CSV header
+puts $CSV1 [list2csv [lindex $CSV1List 0] ,]
+puts $CSV2 [list2csv [lindex $CSV2List 0] ,]
+catch {unset previous}
+foreach key {db1cell db1pin mapdb1cell mapdb1pin tail1} { set previous($key) [list] }
+foreach key {db2cell db2pin mapdb2cell mapdb2pin tail2} { set previous($key) [list] }
+foreach row1 [lrange $CSV1List 1 end] row2 [lrange $CSV2List 1 end] {
+  set mapdb1cell [lindex $row1 0]
+  set mapdb1pin [lindex $row1 1]
+  set db1cell [lindex $row1 2]
+  set db1pin [lindex $row1 3]
+  set tail1 [lrange $row1 4 end]
+  set mapdb2cell [lindex $row2 0]
+  set mapdb2pin [lindex $row2 1]
+  set db2cell [lindex $row2 2]
+  set db2pin [lindex $row2 3]
+  set tail2 [lrange $row2 4 end]
+  # The way the CSV1List & CSV2List were built, mapdb1cell==mapdb2cell
+  if {[lindex $previous(mapdb1cell) end] == {}} {
+    # If first row, the 'previous' array is empty. Just fill it up
+    foreach key {db1cell db1pin mapdb1cell mapdb1pin db2cell db2pin mapdb2cell mapdb2pin} { set previous($key) [set $key] }
+    set previous(tail1) [list $tail1]
+    set previous(tail2) [list $tail2]
+    continue
+  }
+  # Below are all the conditions under which rows can be collapsed. The test is done using lsort -unique
+  # since a name '-' means that the pin does not exist in K7 or K8. In this case, ::tb::collapseBusNames
+  # cannot collapse anything.
+  if {([lindex $previous(mapdb1cell) end] == $mapdb1cell) &&
+      ([llength [lsort -unique [::tb::collapseBusNames [concat $previous(mapdb1pin) $mapdb1pin]]]] == 1) &&
+      ([llength [lsort -unique [::tb::collapseBusNames [concat $previous(mapdb2pin) $mapdb2pin]]]] == 1) &&
+      [::tb::lequal [lindex $previous(tail1) end] $tail1] &&
+      [::tb::lequal [lindex $previous(tail2) end] $tail2] &&
+      $collapseCSVDiffNames} {
+        foreach key {db1cell db1pin mapdb1cell mapdb1pin tail1 db2cell db2pin mapdb2cell mapdb2pin tail2} { lappend previous($key) [set $key] }
+        continue
+      }
+  # The current row cannot be collapse with the previous one(s). Then write the previous row(s) to CSV and
+  # save current row inside 'previous' structure
+  puts $CSV1 [list2csv [concat [list [lindex $previous(mapdb1cell) end] \
+                                     [lindex [::tb::collapseBusNames $previous(mapdb1pin)] 0] \
+                                     [lindex $previous(db1cell) end] \
+                                     [lindex [::tb::collapseBusNames $previous(db1pin)] 0] \
+                               ]\
+                               [lindex $previous(tail1) end] \
+                      ] \
+             ,]
+  puts $CSV2 [list2csv [concat [list [lindex $previous(mapdb2cell) end] \
+                                     [lindex [::tb::collapseBusNames $previous(mapdb2pin)] 0] \
+                                     [lindex $previous(db2cell) end] \
+                                     [lindex [::tb::collapseBusNames $previous(db2pin)] 0] \
+                               ]\
+                               [lindex $previous(tail2) end] \
+                      ] \
+             ,]
+  foreach key {db1cell db1pin mapdb1cell mapdb1pin db2cell db2pin mapdb2cell mapdb2pin} { set previous($key) [set $key] }
+  set previous(tail1) [list $tail1]
+  set previous(tail2) [list $tail2]
+}
+
+# Save last element that was not saved before.
+puts $CSV1 [list2csv [concat [list [lindex $previous(mapdb1cell) end] \
+                                   [lindex [::tb::collapseBusNames $previous(mapdb1pin)] 0] \
+                                   [lindex $previous(db1cell) end] \
+                                   [lindex [::tb::collapseBusNames $previous(db1pin)] 0] \
+                             ]\
+                             [lindex $previous(tail1) end] \
+                    ] \
+           ,]
+puts $CSV2 [list2csv [concat [list [lindex $previous(mapdb2cell) end] \
+                                   [lindex [::tb::collapseBusNames $previous(mapdb2pin)] 0] \
+                                   [lindex $previous(db2cell) end] \
+                                   [lindex [::tb::collapseBusNames $previous(db2pin)] 0] \
+                             ]\
+                             [lindex $previous(tail2) end] \
+                    ] \
+           ,]
+
+close $CSV1
+close $CSV2
+
+log " File [file normalize ${outputDir}${DBname1}_cmp${outputSuffix}.csv] has been generated"
+log " File [file normalize ${outputDir}${DBname2}_cmp${outputSuffix}.csv] has been generated"
+
+#-----------------------------------------------------------------------
+## Generate the DIFF CSV file
+##-----------------------------------------------------------------------
+generateDIFFCSV
+
+if {$splitCSVDiffByCOEGrp} {
+  foreach {name cells} $COEGroups {
+    generateDIFFCSV $cells ".${name}"
+  }
+}
+
+##-----------------------------------------------------------------------
+## Done
+##-----------------------------------------------------------------------
+
+log " File [file normalize $logfile] has been generated"
+
+close $LOG
+
+exit 0

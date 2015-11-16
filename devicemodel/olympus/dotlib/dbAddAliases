@@ -1,0 +1,176 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+# Check for missing timing arcs inside Dotlib files.
+# The flow is to generate fragment files from Dotlib first with dotlib2tcl
+# Once this is done, this script can be run.
+
+set SCRIPT_VERSION {11-01-2013}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+lappend auto_path /wrk/hdstaff/dpefour/support/Olympus/assets/sqlite3.8.0.2
+package require sqlite3
+
+
+array set cellNameRemap {}
+set pinNameRemap [list]
+array set headerRemap {}
+
+# Load external cell/pin/csv header name mapping if file exists
+if {[file exists [file join [file dirname [info script]] mapping.ftcl]]} {
+  puts " Mapping file found: [file normalize [file join [file dirname [info script]] mapping.ftcl]]"
+  source [file join [file dirname [info script]] mapping.ftcl]
+}
+
+proc progressBar {cur tot} {
+  # http://wiki.tcl.tk/16939
+  # if you don't want to redraw all the time, uncomment and change ferquency
+  #if {$cur % ($tot/300)} { return }
+  # set to total width of progress bar
+  set total 76
+  set half [expr {$total/2}]
+  set percent [expr {100.*$cur/$tot}]
+  set val (\ [format "%6.2f%%" $percent]\ )
+  set str "\r|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
+  set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
+  puts -nonewline stderr $str
+}
+
+# SQLite3 database
+# set filename {sqlite3.db}
+set filename {}
+
+set error 0
+set show_help 0
+set VERBOSE 0
+set DEBUG 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -db -
+    --db {
+      set filename [::tb::lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          set filename $name
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: dbAddAliases
+                [<sqlite3 database>|-db <sqlite3 database>]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to add the 'alias' columns and remap the cell and pin names inside SQLite3 database
+
+    Version: %s
+
+    Example:
+       dbAddAliases './kintex7.db'
+       dbAddAliases -db './kintex7.db'
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+# SQLite3 database
+if {![file exists $filename]} {
+  error " File '$filename' does not exist"
+}
+
+# Open SQLite3 database
+# sqlite3 SQL $filename -readonly true
+
+# Create new SQLite3 database
+set newfilename [file rootname $filename]_remap[file extension $filename]
+catch {file delete $newfilename}
+sqlite3 SQL $newfilename -create true
+
+# Copy the tables
+SQL eval " ATTACH DATABASE '$filename' AS original "
+SQL eval { CREATE TABLE param AS SELECT * FROM original.param }
+SQL eval { CREATE TABLE cell AS SELECT * FROM original.cell }
+SQL eval { CREATE TABLE pin AS SELECT * FROM original.pin }
+SQL eval { CREATE TABLE timing AS SELECT * FROM original.timing }
+SQL eval { CREATE TABLE arc AS SELECT * FROM original.arc }
+SQL eval { CREATE TABLE fpga_condition AS SELECT * FROM original.fpga_condition }
+SQL eval { DETACH DATABASE original }
+
+SQL eval { ALTER TABLE cell ADD COLUMN alias TEXT DEFAULT NULL }
+SQL eval { ALTER TABLE pin ADD COLUMN alias TEXT DEFAULT NULL }
+
+set count 0
+set total [ SQL eval { SELECT count(id) FROM cell }]
+SQL eval { SELECT name AS cellname, id AS cellid FROM cell } {
+  incr count
+  if {!$VERBOSE} { progressBar $count $total }
+#   if {$VERBOSE} { puts " cellid:$cellid \t cellname:$cellname" }
+  if {[info exist cellNameRemap($cellname)]} {
+   set mappedCell $cellNameRemap($cellname)
+   if {$VERBOSE} { puts " -I- cell remapping $cellname\t->\t$mappedCell" }
+    SQL eval { UPDATE cell SET alias=$mappedCell WHERE id=$cellid }
+  } else {
+    set mappedCell $cellname
+  }
+  SQL eval { SELECT name AS pinname, id AS pinid FROM pin WHERE cellid=$cellid} {
+#     if {$VERBOSE} { puts " \t\tpinid:$pinid \t pinname:$pinname (cellname:$cellname)" }
+    foreach {pattern mapping} $pinNameRemap {
+      if {![regexp $pattern $mappedCell]} {
+        continue
+      }
+      foreach {old new} $mapping { break }
+      if {[regexp $old $pinname]} {
+        regsub $old $pinname $new mappedPin
+        if {$VERBOSE} { puts " -I- pin remapping $cellname: \t$pinname\t->\t$mappedPin" }
+        set pinname $mappedPin
+        SQL eval { UPDATE pin SET alias=$mappedPin WHERE id=$pinid }
+        break
+      }
+    }
+  }
+}
+
+puts "\n File [file normalize $newfilename] has been generated"
+
+# Closing the SQLite3 database
+SQL close
+
+exit 0

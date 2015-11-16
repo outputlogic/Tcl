@@ -1,0 +1,22 @@
+#!/bin/csh -f
+
+setenv SCR {/wrk/hdstaff/dpefour/support/Olympus/dotlib/scripts}
+
+##-----------------------------------------------------------------------
+## Kintex 7
+##-----------------------------------------------------------------------
+
+# ${SCR}/splitDotLib -output ./kintex7 -dotlib /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/kintex7.lib
+${SCR}/splitDotLib -output ./kintex7 -dotlib /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/parts/xilinx/kintex7/kintex7.lib
+# Skip kintex7/kintex7_GTZE2_OCTAL.lib as it takes ~30mns to be converted as Tcl fragment
+# kintex7_GTZE2_OCTAL.lib: 6.8MB / 230K lines
+# mv ./kintex7/kintex7_GTZE2_OCTAL.lib ./kintex7/kintex7_GTZE2_OCTAL.lib_SKIP
+${SCR}/dotlib2tcl -dotlib './kintex7/*.lib' -output ./kintex7
+${SCR}/checkTimingArcsDotLib -ftcl './kintex7/*.ftcl' > kintex7_checkTimingArcsDotLib.rpt
+${SCR}/reportDotLib -ftcl './kintex7/*.ftcl' -file kintex7_reportDotLib.rpt
+${SCR}/reportDotLib -ftcl './kintex7/*.ftcl' -no-collapse -file kintex7_reportDotLib.no_collapse.rpt
+
+# Generate SQLite3 database
+${SCR}/createSQLiteDB -ftcl './kintex7/*.ftcl' -db kintex7.db
+${SCR}/dbStats -db kintex7.db -verbose > kintex7.stats
+${SCR}/checkTimingArcsDotLib2 -db './kintex7.db' > kintex7_checkTimingArcsDotLib2.rpt

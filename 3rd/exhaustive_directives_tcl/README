@@ -1,0 +1,4 @@
+
+To report WNS/TND on all reports:
+  egrep -A 6 "Design Timing Summary" */post*.rpt | egrep -A 3 "WNS\(ns\)"
+

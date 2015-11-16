@@ -1,0 +1,282 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    This utility provides information on SQLite database
+##
+########################################################################################
+
+########################################################################################
+## 2014.11.06 - Initial release
+########################################################################################
+
+# if {[file tail [info script]]!=[file tail $argv0]} {
+#   # This file is sourced
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+# }
+
+if {[catch {package require sqlite3}]} {
+  lappend auto_path {/home/dpefour/root/usr/lib/sqlite3.8.0.2}
+  package require sqlite3
+}
+
+namespace eval ::tb {}
+
+namespace eval ::tb::dbinfo {
+  namespace export dbinfo
+
+  variable SCRIPT_VERSION {11-06-2014}
+  variable VERBOSE 0
+  variable DEBUG 0
+  
+  variable SQL
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tb::dbinfo::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::dbinfo::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+#------------------------------------------------------------------------
+# execSQL
+#------------------------------------------------------------------------
+# Execute SQL command
+#------------------------------------------------------------------------
+proc ::tb::dbinfo::execSQL {&SQL {cmd {pragma integrity_check} } } {
+  variable VERBOSE
+  set loop 0
+  set timeout 600
+  # Wait for the database to be unlocked
+#   while {[catch { uplevel [list ${&SQL} eval $cmd] } errorstring]} {}
+  while {[catch { set res [uplevel [list ${&SQL} eval $cmd]] } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database locked ..." }
+      exec sleep 1
+      incr loop
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database read-only ..." }
+      exec sleep 1
+      incr loop
+    } else {
+      error $errorstring
+    }
+    if {$loop > $timeout} { break }
+  }
+#   return 0
+  return $res
+}
+
+#------------------------------------------------------------------------
+# dbGetTableColumns
+#------------------------------------------------------------------------
+# Get the list of columns of a SQL table
+#------------------------------------------------------------------------
+proc ::tb::dbinfo::dbGetTableColumns {&SQL table} {
+  variable DEBUG
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return -1
+  }
+  set L [execSQL ${&SQL} [format {pragma table_info(%s);} $table]]
+  set cols [list]
+  foreach [list cid name type notnull dflt_value pk] $L {
+#     # Skip the first 2 columns: id tag
+#     if {[regexp {^(id|tag)$} $name]} { continue }
+    lappend cols $name
+  }
+  if {$DEBUG} {
+    puts "dbGetTableColumns: table: $table"
+    puts "dbGetTableColumns: $cols"
+  }
+  return $cols
+}
+
+#------------------------------------------------------------------------
+# dbGetTables
+#------------------------------------------------------------------------
+# Get the list of SQL tables
+#------------------------------------------------------------------------
+proc ::tb::dbinfo::dbGetTables {&SQL} {
+  variable DEBUG
+  set tables [${&SQL} eval { SELECT name FROM sqlite_master WHERE type='table' }]
+  if {$DEBUG} {
+    puts "dbGetTables: $tables"
+  }
+  return $tables
+}
+
+##-----------------------------------------------------------------------
+## dbinfo
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::dbinfo::dbinfo {args} {
+
+  variable SCRIPT_VERSION
+  variable VERBOSE
+  variable DEBUG
+  
+  variable SQL
+
+  set VERBOSE 0
+  set DEBUG 0
+
+  set error 0
+  set show_help 0
+  set ifilename {}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -db -
+      --db {
+        set ifilename [lshift args]
+      }
+      -v -
+      -verbose {
+          set VERBOSE 1
+      }
+      -d -
+      -debug {
+          set DEBUG 1
+          set VERBOSE 1
+      }
+      -h -
+      -help {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            if {![file exists $name]} {
+              puts " -W- file '$name' does not exist"
+            } else {
+              set ifilename $name
+            }
+#             puts " -E- option '$name' is not a valid option"
+#             incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: dbinfo
+                  [-db <filename>]
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Utility to provides information on SQLite database
+
+      Version: %s
+
+      Example:
+         dbinfo -db file1.db 
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if  {$ifilename == {}} {
+    puts " -E- no input database provided"
+    incr error
+  } elseif {![file exists $ifilename]} {
+    puts " -E- no file $ifilename does not exist"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  if {[catch {sqlite3 SQL[pid] $ifilename -readonly true} errorstring]} {
+    error " -E- $errorstring"
+  }
+  set SQL SQL[pid]
+
+  set tables [dbGetTables $SQL]
+  # Remove 'sqlite_sequence' from the list
+  set tables [lsearch -inline -all -not -exact $tables {sqlite_sequence}]
+
+  if {$VERBOSE} {
+      puts " -I- database $ifilename"
+      puts " -I- tables \[[llength $tables]\]: [lsort $tables]"
+  }
+
+  foreach table [lsort $tables] {
+    set columns [dbGetTableColumns $SQL $table]
+    set count [execSQL $SQL [format {SELECT count(*) FROM '%s' ;} $table]]
+    puts " -I- Table: '$table' \t # columns = [llength $columns] \t # entries = $count"
+    if {$VERBOSE} { puts " -I- Columns: $columns" }
+  }
+
+  # Close SQlite database
+  $SQL close
+  set SQL {}
+
+  return -code ok
+}
+
+namespace eval ::tb {
+  namespace import ::tb::dbinfo::dbinfo
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::tb::dbinfo::VERBOSE 0
+set ::tb::dbinfo::DEBUG 0
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tb::dbinfo::dbinfo
+} else {
+  if {[catch {eval [concat ::tb::dbinfo::dbinfo $argv]} errorstring]} {
+    puts $errorstring
+    # Close SQlite database
+    catch { $::tb::dbinfo::SQL close }
+    exit 1
+  }
+  exit 0
+}

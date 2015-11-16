@@ -1,0 +1,101 @@
+#!/bin/csh -f
+
+setenv DSP_SCR "/wrk/hdstaff/dpefour/support/Olympus/dsp/scripts"
+setenv DOTLIB_SCR "/wrk/hdstaff/dpefour/support/Olympus/dotlib/scripts"
+
+##-----------------------------------------------------------------------
+## Make link to run directory with the '*.arcs' files
+##-----------------------------------------------------------------------
+
+# ln -s .././OOC2_01302014_SANDBOX .
+
+##-----------------------------------------------------------------------
+## Copy SQLite3 database
+##-----------------------------------------------------------------------
+
+# cp /wrk/hdstaff/dpefour/support/Olympus/dotlib/kintex8.db .
+
+##-----------------------------------------------------------------------
+## Import .arcs files
+##-----------------------------------------------------------------------
+
+${DSP_SCR}/arcs2db -indb kintex8.db -outdb kintex8_DSP_M_DATA.db -arcs './OOC2_01302014_SANDBOX/DSP_M_DATA.*.arcs' > arcs2db.DSP_M_DATA.log
+${DSP_SCR}/arcs2db -indb kintex8.db -outdb kintex8_DSP_C_DATA.db -arcs './OOC2_01302014_SANDBOX/DSP_C_DATA.*.arcs' > arcs2db.DSP_C_DATA.log
+${DSP_SCR}/arcs2db -indb kintex8.db -outdb kintex8_DSP_PREADD_DATA.db -arcs './OOC2_01302014_SANDBOX/DSP_PREADD_DATA.*.arcs' > arcs2db.DSP_PREADD_DATA.log
+${DSP_SCR}/arcs2db -indb kintex8.db -outdb kintex8_DSP_PREADD.db -arcs './OOC2_01302014_SANDBOX/DSP_PREADD.arcs' > arcs2db.DSP_PREADD.log
+${DSP_SCR}/arcs2db -indb kintex8.db -outdb kintex8_DSP_MULTIPLIER.db -arcs './OOC2_01302014_SANDBOX/DSP_MULTIPLIER.*.arcs' > arcs2db.DSP_MULTIPLIER.log
+${DSP_SCR}/arcs2db -indb kintex8.db -outdb kintex8_DSP_A_B_DATA.db -arcs './OOC2_01302014_SANDBOX/DSP_A_B_DATA.*.arcs' > arcs2db.DSP_A_B_DATA.log
+${DSP_SCR}/arcs2db -indb kintex8.db -outdb kintex8_DSP_OUTPUT.db -arcs './OOC2_01302014_SANDBOX/DSP_OUTPUT.*.arcs' > arcs2db.DSP_OUTPUT.log
+# ${DSP_SCR}/arcs2db -indb kintex8.db -outdb kintex8_DSP_ALU.db -arcs './OOC2_01302014_SANDBOX/DSP_ALU.*.arcs' > arcs2db.DSP_ALU.log
+
+
+# ${DSP_SCR}/arcs2db -indb kintex8.db -outdb kintex8_ALL.db -arcs './OOC2_01302014_SANDBOX/DSP_M_DATA.*.arcs' \
+#    -arcs './OOC2_01302014_SANDBOX/DSP_C_DATA.*.arcs' \
+#    -arcs './OOC2_01302014_SANDBOX/DSP_PREADD_DATA.*.arcs' \
+#    -arcs './OOC2_01302014_SANDBOX/DSP_PREADD.*.arcs' \
+#    -arcs './OOC2_01302014_SANDBOX/DSP_MULTIPLIER.*.arcs' \
+#    -arcs './OOC2_01302014_SANDBOX/DSP_A_B_DATA.*.arcs' \
+#    -arcs './OOC2_01302014_SANDBOX/DSP_OUTPUT.*.arcs' > arcs2db.ALL.log
+# 
+# #    -arcs './OOC2_01302014_SANDBOX/DSP_ALU.*.arcs'
+
+
+# ${DSP_SCR}/arcs2db -indb kintex8.db -outdb kintex8_incr.db -arcs './OOC2_01302014_SANDBOX/DSP_M_DATA.*.arcs' > arcs2db.DSP_M_DATA.incr.log
+# ${DSP_SCR}/arcs2db -indb kintex8_incr.db -outdb kintex8_incr.db -arcs './OOC2_01302014_SANDBOX/DSP_C_DATA.*.arcs' > arcs2db.DSP_C_DATA.incr.log
+# ${DSP_SCR}/arcs2db -indb kintex8_incr.db -outdb kintex8_incr.db -arcs './OOC2_01302014_SANDBOX/DSP_PREADD_DATA.*.arcs' > arcs2db.DSP_PREADD_DATA.incr.log
+# ${DSP_SCR}/arcs2db -indb kintex8_incr.db -outdb kintex8_incr.db -arcs './OOC2_01302014_SANDBOX/DSP_PREADD.*.arcs' > arcs2db.DSP_PREADD.incr.log
+# ${DSP_SCR}/arcs2db -indb kintex8_incr.db -outdb kintex8_incr.db -arcs './OOC2_01302014_SANDBOX/DSP_MULTIPLIER.*.arcs' > arcs2db.DSP_MULTIPLIER.incr.log
+# # ${DSP_SCR}/arcs2db -indb kintex8_incr.db -outdb kintex8_incr.db -arcs './OOC2_01302014_SANDBOX/DSP_A_B_DATA.*.arcs' > arcs2db.DSP_A_B_DATA.incr.log
+# ${DSP_SCR}/arcs2db -indb kintex8_incr.db -outdb kintex8_incr.db -arcs './OOC2_01302014_SANDBOX/DSP_OUTPUT.*.arcs' > arcs2db.DSP_OUTPUT.incr.log
+# # ${DSP_SCR}/arcs2db -indb kintex8_incr.db -outdb kintex8_incr.db -arcs './OOC2_01302014_SANDBOX/DSP_ALU.*.arcs' > arcs2db.DSP_ALU.incr.log
+
+# exit
+
+##-----------------------------------------------------------------------
+## List of *.arcs files that do not have any timing arc found by the Timer
+##-----------------------------------------------------------------------
+
+grep "timing arc(s) found" ./OOC2_01302014_SANDBOX/*.arcs | grep TIMER | grep -- "-I- 0" > timer_found_0_arc.rpt
+
+##-----------------------------------------------------------------------
+## Generate statistics
+##-----------------------------------------------------------------------
+
+echo "Generating statistics"
+foreach DB (kintex8_DSP*.db)
+  echo "  Processing $DB"
+  set RPT =  `echo -n $DB | sed -e 's/\.db/\.stats/g'`
+  rm -f ${RPT}
+#   echo "${DOTLIB_SCR}/dbStats ${DB} -v > ${RPT}"
+  ${DOTLIB_SCR}/dbStats ${DB} -v > ${RPT}
+end
+
+##-----------------------------------------------------------------------
+## Generate list of timing arcs found by Vivado Timer
+##-----------------------------------------------------------------------
+
+echo "Generating list of timing arcs"
+foreach DB (kintex8_DSP*.db)
+  echo "  Processing $DB"
+  set CELL =  `echo -n $DB | sed -e 's/\.db//g' | sed -e 's/kintex8_//g'`
+#   echo "${DOTLIB_SCR}/dbQuery ${DB} -c ${CELL} -timer -file ${CELL}.arcs"
+  ${DOTLIB_SCR}/dbQuery ${DB} -c ${CELL} -timer -file ${CELL}.arcs
+end
+
+##-----------------------------------------------------------------------
+## Import .arcs files
+##-----------------------------------------------------------------------
+
+${DSP_SCR}/getUnmatchArcs
+
+###-----------------------------------------------------------------------
+## Import .arcs files
+##-----------------------------------------------------------------------
+
+${DSP_SCR}/arcsSanityCheck > arcsSanityCheck.log
+
+#-----------------------------------------------------------------------
+## Import .arcs files
+##-----------------------------------------------------------------------
+
+exit 0

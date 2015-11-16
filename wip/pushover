@@ -1,0 +1,260 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  error " ERROR - this file is meant to be executed and not sourced.\n"
+}
+
+
+# set CURL_PATH {curl}
+set CURL_PATH {/usr/bin/curl}
+
+# set PUSHOVER_TOKEN {b9loOL4lAckjfoxDpjxClTzazPma1Q}
+set PUSHOVER_TOKEN {aKbCVnsBBtFMkvD8DUzaqw6R88i6de}
+set PUSHOVER_USER {SnvJ7ZikZ9UvqYtGr1OvMDehh1m27f}
+set PUSHOVER_URL {https://api.pushover.net/1/messages.json}
+# set PUSHOVER_EMAIL {SnvJ7ZikZ9UvqYtGr1OvMDehh1m27f+iPhone@api.pushover.net}
+set PUSHOVER_EMAIL {SnvJ7ZikZ9UvqYtGr1OvMDehh1m27f@api.pushover.net}
+
+set EVERNOTE_EMAIL {maadsc2012.a069352@m.evernote.com}
+# set EVERNOTE_NOTEBOOK {*INBOX}
+set EVERNOTE_NOTEBOOK {Xilinx}
+set EVERNOTE_TAG {Work}
+
+set MESSAGE [format {%s logged in at %s} {David} [clock format [clock seconds]] ]
+set EMAIL_SUBJECT {This is the subject}
+set EMAIL_BODY {This is the body}
+
+catch {unset options}
+array set options [list token aKbCVnsBBtFMkvD8DUzaqw6R88i6de user SnvJ7ZikZ9UvqYtGr1OvMDehh1m27f]
+array set options [list device {iphone} priority 0 sound {bike}]
+array set options [list message {}]
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## debug
+##-----------------------------------------------------------------------
+## Debug proc
+##-----------------------------------------------------------------------
+proc debug { body } {
+  if {$::debug == 1} {
+    if {[catch [list uplevel #0 $body] errorstring]} {
+      puts " -E- $errorstring"
+    }
+  }
+}
+
+###########################################################################
+###########################################################################
+##
+## MAIN
+##
+###########################################################################
+###########################################################################
+
+set error 0
+set debug 0
+set verbose 0
+set show_help 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [lshift argv]
+  switch -exact -- $name {
+    -m -
+    -message -
+    -msg {
+        set MESSAGE [lshift argv]
+    }
+    -f -
+    -file {
+        set filename [lshift argv]
+        set FH [open $filename r]
+        set MESSAGE [read $FH]
+        close $FH
+    }
+    -T -
+    -t -
+    -title  {
+        set options(title) [lshift argv]
+    }
+    -C -
+    -callback  {
+        set options(callback) [lshift argv]
+    }
+    -D -
+    -device  {
+        set options(device) [lshift argv]
+    }
+    -T -
+    -timestamp  {
+        set options(timestamp) [lshift argv]
+    }
+    -E -
+    -expire  {
+        set options(expire) [lshift argv]
+    }
+    -P -
+    -priority  {
+        set options(priority) [lshift argv]
+    }
+    -R -
+    -retry  {
+        set options(retry) [lshift argv]
+    }
+    -token  {
+        set options(token) [lshift argv]
+    }
+    -S -
+    -sound  {
+        set options(sound) [lshift argv]
+    }
+    -U -
+    -url  {
+        set options(url) [lshift argv]
+    }
+    -UT -
+    -url_title  {
+        set options(url_title) [lshift argv]
+    }
+    -d -
+    -debug {
+        set debug 1
+    }
+    -v -
+    -verbose {
+        set verbose 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: pushover
+                [-msg <string>|-m <string>]
+                [-file <filename>|-f <filename>]
+                [-callback <string>|-C <string>]
+                [-device <string>|-D <string>]
+                [-timestamp <string>|-T <string>]
+                [-expire <string>|-E <string>]
+                [-priority <string>|-P <string>]
+                [-retry <string>|-R <string>]
+                [-sound <string>|-S <string>]
+                [-url <string>|-U <string>]
+                [-url_title <string>|-UT <string>]
+                [-verbose|-v]
+                [-help|-h]
+                
+    Description: Utility to send SMS/email notifications through 'pushover'
+    
+    Example:
+       pushover
+  
+  } ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$error} {
+  puts "\n Some error(s) occur. Cannot continue.\n"
+  exit -1
+}
+
+# set CURL_CMD [list --output - --silent -k --proxy-anyauth --socks5 https://proxy -F "sound=bike" -F "url=www.cnn.com" -F "device=iphone" -F "title=This is a test" -F "priority=0" -F "token=$PUSHOVER_TOKEN" -F "user=$PUSHOVER_USER" -F "message=$MESSAGE"]
+set CURL_CMD [list --output - --silent -k --proxy-anyauth --socks5 https://proxy]
+set options(message) $MESSAGE
+foreach {param value} [array get options] {
+  lappend CURL_CMD {-F}
+  lappend CURL_CMD [format {%s=%s} $param $value]
+}
+lappend CURL_CMD $PUSHOVER_URL
+
+debug {
+  puts [format " Executing: %s" [concat $CURL_PATH $CURL_CMD] ]
+}
+
+if {[catch {set result [uplevel #0 [concat exec $CURL_PATH $CURL_CMD]]} errorstring]} {
+  set result {}
+  puts " -E $errorstring"
+} else {
+  puts " -I- result: $result"
+}
+
+exit 0
+
+#################################################################
+#################################################################
+#################################################################
+#################################################################
+#################################################################
+
+set EMAIL_SUBJECT [format {%s (email)} $MESSAGE]
+if {$EVERNOTE_NOTEBOOK != {}} {
+  append EMAIL_SUBJECT "@${EVERNOTE_NOTEBOOK}"
+}
+if {$EVERNOTE_TAG != {}} {
+  append EMAIL_SUBJECT "#${EVERNOTE_TAG}"
+}
+set PUSHOVER_EMAIL $EVERNOTE_EMAIL
+
+# set FH [open /home/dpefour/xroads/index.html]
+# set EMAIL_BODY [read $FH]
+# close $FH
+
+set MAIL_CMD [list echo [list $EMAIL_BODY] | mail -s $EMAIL_SUBJECT $PUSHOVER_EMAIL]
+set MAIL_CMD [list mail -s $EMAIL_SUBJECT $PUSHOVER_EMAIL < /home/dpefour/xroads/index.html]
+set MAIL_CMD [list echo | mutt -a /home/dpefour/xroads/index.html -s $EMAIL_SUBJECT $PUSHOVER_EMAIL]
+
+# set MAIL_CMD [list echo | mutt -a /home/dpefour/bin/ne -s $EMAIL_SUBJECT $PUSHOVER_EMAIL]
+# set MAIL_CMD [list echo | mutt -a /home/dpefour/bin/sample.csv -s $EMAIL_SUBJECT $PUSHOVER_EMAIL]
+# set MAIL_CMD [list uuencode /home/dpefour/bin/sample.csv sample.csv | mutt -a /home/dpefour/bin/sample.csv -s $EMAIL_SUBJECT $PUSHOVER_EMAIL]
+# set MAIL_CMD [list echo | mutt -a /home/dpefour/bin/ne.tar -s $EMAIL_SUBJECT $PUSHOVER_EMAIL]
+set MAIL_CMD [list echo | mutt -a /wrk/hdstaff/dpefour/support/TclApps/vivado.log -a /wrk/hdstaff/dpefour/support/TclApps/vivado.jou -s $EMAIL_SUBJECT $PUSHOVER_EMAIL]
+# set MAIL_CMD [list echo | mutt -a /wrk/hdstaff/dpefour/support/TclApps/vivado.log -a /wrk/hdstaff/dpefour/support/TclApps/vivado.jou -s $EMAIL_SUBJECT dpefour]
+
+debug {
+  puts [format " Executing: %s" [concat $MAIL_CMD] ]
+}
+
+if {[catch {set result [uplevel #0 [concat exec $MAIL_CMD]]} errorstring]} {
+  set result {}
+  puts " -E $errorstring"
+}
+

@@ -1,0 +1,202 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+# Split Synopsys Liberty files based on cell names
+
+set SCRIPT_VERSION {09-04-2014}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+
+proc count_open_curly_brackets {string} {
+  if {$string == {}} { return 0 }
+  set rc [llength [split $string "\{" ]]
+  incr rc -1
+  return $rc
+}
+ 
+proc count_close_curly_brackets {string} {
+  if {$string == {}} { return 0 }
+  set rc [llength [split $string "\}" ]]
+  incr rc -1
+  return $rc
+}
+
+set current_level_curly_brackets 0
+set cell_level_curly_brackets 0
+
+##-----------------------------------------------------------------------
+## MAIN
+##-----------------------------------------------------------------------
+
+# Output directory to save the fragment files
+set output {./output}
+# set output {./kintex8}
+# set output {./kintex7}
+
+# Files to process
+# set files [glob -nocomplain /proj/xbuilds/2013.3_UB3_INT_daily_latest/installs/lin64/Vivado/2013.3_UB3/data/parts/xilinx/kintex8/kintex*lib]
+# set files [glob -nocomplain /proj/xbuilds/2013.3_UB3_INT_daily_latest/installs/lin64/Vivado/2013.3_UB3/data/parts/xilinx/kintex7/kintex*lib]
+# set files [glob -nocomplain /proj/xbuilds/2013.3_UB3_INT_daily_latest/installs/lin64/Vivado/2013.3_UB3/data/parts/xilinx/kintex7/kintex7.lib]
+# set files [glob -nocomplain /proj/xbuilds/2013.3_UB3_INT_daily_latest/installs/lin64/Vivado/2013.3_UB3/data/parts/xilinx/kintex8/kintex8.lib]
+# set files [list ./kintex7.lib]
+# set files [list ./kintex8.lib]
+set files [list]
+
+# Cells of interest
+# set cells [list DSP_ALU DSP_A_B_DATA DSP_C_DATA DSP_MULTIPLIER DSP_M_DATA DSP_OUTPUT DSP_PREADD DSP_PREADD_DATA]
+
+# Make cells a pattern for regexp
+# set pattern [format {^(%s)$} [join $cells |]]
+
+# Pattern for all cells
+set pattern {^.+$}
+
+set error 0
+set show_help 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -dotlib -
+    --dotlib {
+      set files [concat $files [glob -nocomplain [::tb::lshift argv]]]
+    }
+    -cell -
+    --cell -
+    -cells -
+    --cells {
+      set pattern [::tb::lshift argv]
+    }
+    -output -
+    --output {
+      set output [::tb::lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: splitDotLib
+                [-dotlib <filename or file pattern>]
+                [-cell <cell pattern>]
+                [-output <output directory>]
+                [-verbose|-v]
+                [-help|-h]
+                
+    Description: Utility to split DotLib libraries. The result is one fragment
+                 Dotlib file per cell
+
+    Version: %s
+
+    Example:
+       splitDotLib -dotlib ./kintex.lib
+       splitDotLib -dotlib ./kintex.lib -cell '^DSP_.+'
+  
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+if {![file exists $output]} {
+  file mkdir $output
+} elseif {![file isdirectory $output]} {
+  error " error - $output exist and is not a directory"
+}
+
+catch {unset ar}
+foreach file [lsort -dictionary $files] {
+  if {![file exists $file]} { puts " Error - $file does not exist"; continue }
+  puts " Processing $file"
+  set FH [open $file]
+  set FHout {}
+  set SM {init}
+  while {![eof $FH]} {
+    gets $FH line
+    # Update the level of curly brackets
+    incr current_level_curly_brackets [count_open_curly_brackets $line]
+    incr current_level_curly_brackets -[count_close_curly_brackets $line]
+    switch $SM {
+      init {
+        if {[regexp -nocase -- {^\s*cell\s*\(\s*([^\(\)]+)\s*\)} $line -- cell]} {
+          # Remove white spaces at the beginning/end
+          set cell [string trimleft [string trimright $cell]]
+          if {[regexp -nocase -- $pattern $cell]} {
+            set SM {cell}
+            set FHout [open [file join $output [file rootname [file tail $file]]_${cell}.lib] {w}]
+            puts "   Creating file [file join $output [file rootname [file tail $file]]_${cell}.lib]"
+            puts $FHout $line
+            # Save the current level of curly brackets (minus 1). The end of the cell will be reached
+            # when the parser will reach again cell_level_curly_brackets
+            set cell_level_curly_brackets [expr $current_level_curly_brackets -1]
+          }
+        }
+      }
+      cell {
+        if {[regexp -nocase -- {^\s*cell\s*\(([^\(\)]+)\)} $line -- cell]} {
+          close $FHout
+          set FHout {}
+          if {[regexp -nocase -- $pattern $cell]} {
+            set SM {cell}
+            set FHout [open [file join $output [file rootname [file tail $file]]_${cell}.lib] {w}]
+            puts "   Creating file [file join $output [file rootname [file tail $file]]_${cell}.lib]"
+            puts $FHout $line
+          } else {
+            set SM {init}
+          }
+        } elseif {$current_level_curly_brackets == $cell_level_curly_brackets} {
+          # The end of the cell since we have now reached the same level of curly brackets as
+          # when we started the 'cell' section
+          puts $FHout $line
+          close $FHout
+          set FHout {}
+          set SM {init}
+        } else {
+          puts $FHout $line
+        }
+      }
+      default {
+      }
+    }
+  }
+  catch {close $FHout}
+  close $FH
+}
+
+exit 0

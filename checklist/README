@@ -1,0 +1,13 @@
+
+To load to scripts inside Vivado, there are 2 choices:
+
+ 1) Use 'package require'
+    vivado% lappend auto_path <ABSOLUTE_PATH_TO_THIS_DIRECTORY>
+    vivado% package require checklist
+    
+    Note: to remove the package from being use: 
+       vivado% package forget checklist
+ 
+ 2) Source checklist.tcl script
+    vivado% source -notrace <ABSOLUTE_PATH_TO_THIS_DIRECTORY>.checklist.tcl
+

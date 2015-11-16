@@ -1,0 +1,731 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    This utility reports statistics on Vivado Message files
+##
+########################################################################################
+
+########################################################################################
+## 2014.11.06 - Code reorganization under namespace ::tb::msgutil
+##            - Minor improvements
+## 2014.06.06 - Initial release
+########################################################################################
+
+namespace eval ::tb {}
+
+namespace eval ::tb::msgutil {
+  namespace export msgstatus
+
+  variable SCRIPT_MSGSTATUS_VERSION {11-06-2014}
+  variable VERBOSE 0
+  variable DEBUG 0
+  variable QUIET 0
+  
+  variable SQL
+
+  # Variables from msgutil
+  variable OWNER_REGEXP
+  variable SEVERITY_REGEXP
+  variable UNIQUIFY_OWNER
+}
+
+if {[catch {set script [exec which msgutil]} errorstring]} {
+  puts " ERROR - cannot access 'msgutil' in your search path"
+  exit 1
+} else {
+  set ::tb::msgutil::UNIQUIFY_OWNER 0
+}
+
+if {[catch {set script [exec which msgCreateDB]} errorstring]} {
+  puts " ERROR - cannot access 'msgCreateDB' in your search path"
+  exit 1
+}
+
+if {[catch {package require prettyTable}]} {
+  lappend auto_path {/home/dpefour/git/scripts/toolbox}
+  package require prettyTable
+}
+
+if {[catch {package require sqlite3}]} {
+  lappend auto_path {/home/dpefour/root/usr/lib/sqlite3.8.0.2}
+  package require sqlite3
+}
+
+proc ::tb::msgutil::progressBar {cur tot {indent {}}} {
+  # http://wiki.tcl.tk/16939
+  # if you don't want to redraw all the time, uncomment and change ferquency
+  #if {$cur % ($tot/300)} { return }
+  # set to total width of progress bar
+  set total 76
+
+  # Do not show the progress bar in GUI and Batch modes
+  catch { if {$rdi::mode != {tcl}} { return } }
+
+  set half [expr {$total/2}]
+  set percent [expr {100.*$cur/$tot}]
+  set val (\ [format "%6.2f%%" $percent]\ )
+  set str "|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
+  set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
+  puts -nonewline stderr "\r${indent}${str}"
+}
+
+#------------------------------------------------------------------------
+# execSQL
+#------------------------------------------------------------------------
+# Execute SQL command
+#------------------------------------------------------------------------
+proc ::tb::msgutil::execSQL {&SQL {cmd {pragma integrity_check} } } {
+
+  variable VERBOSE
+  variable DEBUG
+  if {$DEBUG} {
+    puts " DEBUG - SQL command: $cmd"
+  }
+
+  # Wait for the database to be unlocked
+#   while {[catch { uplevel [list ${&SQL} eval $cmd] } errorstring]} {}
+  while {[catch { set res [uplevel [list ${&SQL} eval $cmd]] } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database locked ..." }
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database read-only ..." }
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+#   return 0
+  return $res
+}
+
+##-----------------------------------------------------------------------
+## msgQuery
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::msgstatus {args} {
+
+  variable SCRIPT_MSGSTATUS_VERSION
+  variable QUIET
+  variable VERBOSE
+  variable DEBUG
+  variable SQL
+  
+  variable OWNER_REGEXP
+  variable SEVERITY_REGEXP
+  variable UNIQUIFY_OWNER
+
+  set QUIET 1
+  set VERBOSE 0
+  set DEBUG 0
+  # Regular expressions to filter by owner and/or severity
+  set OWNER_REGEXP {.*}
+  set SEVERITY_REGEXP {.*}
+  set UNIQUIFY_OWNER 0
+  # Database
+  array set DB [list]
+  
+  set msgdir {/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/msg}
+  # set msgDB {./messages.db}
+  set msgDB {}
+  set snapshot {default}
+  set reportfilename {}
+  set filemode {w}
+  set format {table}
+  set show_help 0
+  set show_long_help 0
+  set error 0
+  # if {[llength $args] == 0} {
+  #   incr show_help
+  # }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -db -
+      --db {
+        set msgDB [lshift args]
+      }
+      -msg-dir -
+      --msg-dir {
+        set msgdir [lshift args]
+      }
+      -snapshot -
+      --snapshot {
+        set snapshot [lshift args]
+      }
+      -file {
+        set reportfilename [lshift args]
+      }
+      -a -
+      -append {
+        set filemode {a}
+      }
+      -table {
+        set format {table}
+      }
+      -csv {
+        set format {csv}
+      }
+      -v -
+      -verbose {
+          set VERBOSE 1
+      }
+      -d -
+      -debug {
+          set DEBUG 1
+          set VERBOSE 1
+      }
+      -h -
+      -help {
+          incr show_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          }
+      }
+    }
+  }
+  
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: msgstatus
+                  [<sqlite3 database>|-db <sqlite3 database>]
+                  [-msg-dir <directory>]
+                  [-snapshot <name>]
+                  [-file <filename>]
+                  [-a|-append]
+                  [-table|-csv]
+                  [-verbose|-v]
+                  [-help|-h]
+  
+      Description: Summary Reports on Vivado Messages
+  
+        The default location is: /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/msg
+  
+        The -table|-csv select the output format. The default is -table that
+        generates a tabular format. The -csv generates a CSV format. 
+  
+      Version: %s
+  
+      Example:
+         msgstatus
+         msgstatus -msg-dir /proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data/msg
+         msgstatus -db messages.db
+  
+    } $SCRIPT_MSGSTATUS_VERSION ]
+    # HELP -->
+  
+    if {$show_long_help} { print_help }
+  
+    return -code ok
+  }
+  
+  if {($msgDB != {}) && ![file exists $msgDB]} {
+    puts " -E- file $msgDB does not exist"
+    incr error
+  }
+  
+  if {$error} {
+    puts "\n Some error(s) occured. Cannot continue.\n"
+#     exit 1
+    return -code error
+  }
+  
+  set files [lsort [glob -nocomplain ${msgdir}/*.msg]]
+  
+  #-------------------------------------------------------
+  # Create SQL database
+  #-------------------------------------------------------
+  if {$msgDB != {}} {
+  
+    package require sqlite3
+  
+    if {0} {
+      progressBar 0 1 " Loading database:     "
+      sqlite3 SQL[pid] $msgDB -readonly true
+      set SQL SQL[pid]
+      progressBar 1 1 " Loading database:     "
+      puts ""
+    } else {
+      sqlite3 SQL[pid] {:memory:}
+      set SQL SQL[pid]
+      execSQL $SQL { pragma integrity_check }
+      $SQL eval " ATTACH DATABASE '$msgDB' AS DB "
+      set num 0
+      set tables [$SQL eval { SELECT name FROM DB.sqlite_master WHERE type='table' }]
+  #     puts " Tables: [lsort $tables]"
+      foreach table $tables {
+        incr num
+        progressBar $num [llength $tables] " Loading database:            "
+        if {$table == {sqlite_sequence}} { continue }
+        $SQL eval " CREATE TABLE $table AS SELECT * FROM DB.$table "
+      }
+      $SQL eval { DETACH DATABASE DB }
+      puts ""
+    }
+    
+    set stepNum 0
+    set totalStepNum 4
+  
+  } else {
+  
+    #-------------------------------------------------------
+    # Read all message files and build internal data structure
+    #-------------------------------------------------------
+    msgCreateDB -in-memory -msg-dir $msgdir
+    set msgDB {:memory:}
+  
+    set stepNum 0
+    set totalStepNum 4
+  
+  }
+  
+  set output [list]
+  
+  #-------------------------------------------------------
+  # Messages that are not obsolete and that have not been
+  # reviewed
+  #-------------------------------------------------------
+  
+  if {$msgDB != {}} {
+  
+    set subsystems [lsort [$SQL eval "SELECT name FROM file"]]
+    set owners [lsort [$SQL eval "SELECT name FROM owner WHERE (name IS NOT NULL) AND (name <> '')"]]
+    set reviewerids [$SQL eval "SELECT DISTINCT messageid FROM reviewer_message WHERE reviewerid IN ( SELECT rowid FROM reviewer WHERE (name IS NOT NULL) AND (name <> '') )"]
+    set obsoleteids [$SQL eval "SELECT DISTINCT messageid FROM tag_message WHERE tagid IN ( SELECT rowid FROM tag WHERE name IN ('internal','obsolete','unreachable') )
+                               UNION
+                               SELECT DISTINCT messageid FROM state_message WHERE stateid IN ( SELECT rowid FROM state WHERE name IN ('obselete','internal','obsolete','unreachable') ) "]
+    set errorids [$SQL eval "SELECT DISTINCT messageid FROM severity_message WHERE severityid IN ( SELECT rowid FROM severity WHERE name='ERROR')"]
+    set criticalwarningsids [$SQL eval "SELECT DISTINCT messageid FROM severity_message WHERE severityid IN ( SELECT rowid FROM severity WHERE name='CRITICALWARNING')"]
+    set warningids [$SQL eval "SELECT DISTINCT messageid FROM severity_message WHERE severityid IN ( SELECT rowid FROM severity WHERE name='WARNING')"]
+    set infoids [$SQL eval "SELECT DISTINCT messageid FROM severity_message WHERE severityid IN ( SELECT rowid FROM severity WHERE name='INFO')"]
+    set statusids [$SQL eval "SELECT DISTINCT messageid FROM severity_message WHERE severityid IN ( SELECT rowid FROM severity WHERE name='STATUS')"]
+    set unsetids [$SQL eval "SELECT DISTINCT messageid FROM severity_message WHERE severityid IN ( SELECT rowid FROM severity WHERE name='' OR name IS NULL)"]
+  
+    if {1} {
+      lappend output {}
+      lappend output { #######################################################################}
+      lappend output { ## Non-obsolete messages that need to be reviewed (per Vivado subsystem)}
+      lappend output { #######################################################################}
+      lappend output {}
+      
+      set header {Sub-System TOTAL ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>}
+  #     set tbl [Table::Create]
+      set tbl [::tb::prettyTable]
+      $tbl configure -indent 1
+      $tbl header $header
+      set ERROR 0; set CRITICALWARNING 0; set WARNING 0; set INFO 0; set STATUS 0; set UNSET 0
+      set num 0
+      incr stepNum
+      foreach subsystem $subsystems {
+        incr num
+        progressBar $num [llength $subsystems] " Generating report \[$stepNum/$totalStepNum\]:     "
+        set fileid [$SQL eval "SELECT rowid FROM file WHERE name='$subsystem'"]
+        set filteredids [$SQL eval "SELECT rowid FROM message WHERE (rowid NOT IN ('[join $reviewerids ',']'))
+                                                                   AND (rowid NOT IN ('[join $obsoleteids ',']'))
+                                                                   AND fileid=$fileid"]
+        set summary [list \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $errorids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $criticalwarningsids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $warningids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $infoids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $statusids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $unsetids ',']')"] ] \
+                    ]
+        incr ERROR [lindex $summary 0]
+        incr CRITICALWARNING [lindex $summary 1]
+        incr WARNING [lindex $summary 2]
+        incr INFO [lindex $summary 3]
+        incr STATUS [lindex $summary 4]
+        incr UNSET [lindex $summary 5]
+        if {[expr [join $summary {+}]] == 0} {
+          # If the sub-system has no ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>
+          # then do not add it to the table and go to the next sub-system
+          continue
+        }
+        $tbl addrow [concat $subsystem [expr [join $summary {+}]] $summary ]
+      }
+      $tbl separator
+      $tbl addrow [list TOTAL [expr $ERROR + $CRITICALWARNING + $WARNING + $INFO + $STATUS + $UNSET] $ERROR $CRITICALWARNING $WARNING $INFO $STATUS $UNSET]
+  #     puts [$tbl print]
+  #     set output [concat $output [split [$tbl print] \n] ]
+      switch $format {
+        table {
+          set output [concat $output [split [$tbl print] \n] ]
+        }
+        csv {
+          set output [concat $output [split [$tbl export -format csv] \n] ]
+        }
+        default {
+        }
+      }
+      catch {$tbl destroy}
+    }
+    
+    if {1} { 
+      lappend output {}
+      lappend output { #######################################################################}
+      lappend output { ## Non-obsolete messages that need to be reviewed (per message owner)}
+      lappend output { #######################################################################}
+      lappend output {}
+      
+      set header {Owner TOTAL ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>}
+  #     set tbl [Table::Create]
+      set tbl [::tb::prettyTable]
+      $tbl configure -indent 1
+      $tbl header $header
+      set ERROR 0; set CRITICALWARNING 0; set WARNING 0; set INFO 0; set STATUS 0; set UNSET 0
+      set num 0
+      incr stepNum
+      set allowners [lsort [$SQL eval "SELECT name FROM owner WHERE name IS NOT NULL"]]
+      foreach owner $allowners {
+        incr num
+        progressBar $num [llength $allowners] " Generating report \[$stepNum/$totalStepNum\]:     "
+        set ownerid [$SQL eval "SELECT rowid FROM owner WHERE name='$owner'"]
+        set filteredids [$SQL eval "SELECT rowid FROM message WHERE (rowid IN ( SELECT DISTINCT messageid FROM owner_message WHERE ownerid = $ownerid ))
+                                                                   AND (rowid NOT IN ('[join $obsoleteids ',']')) "]
+        set summary [list \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $errorids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $criticalwarningsids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $warningids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $infoids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $statusids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $unsetids ',']')"] ] \
+                    ]
+        incr ERROR [lindex $summary 0]
+        incr CRITICALWARNING [lindex $summary 1]
+        incr WARNING [lindex $summary 2]
+        incr INFO [lindex $summary 3]
+        incr STATUS [lindex $summary 4]
+        incr UNSET [lindex $summary 5]
+        if {[expr [join $summary {+}]] == 0} {
+          # If the sub-system has no ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>
+          # then do not add it to the table and go to the next sub-system
+          continue
+        }
+        if {$owner == {}} { set owner {<UNSET>} }
+        $tbl addrow [concat $owner [expr [join $summary {+}]] $summary ]
+      }
+      $tbl separator
+      $tbl addrow [list TOTAL [expr $ERROR + $CRITICALWARNING + $WARNING + $INFO + $STATUS + $UNSET] $ERROR $CRITICALWARNING $WARNING $INFO $STATUS $UNSET]
+  #     puts [$tbl print]
+  #     set output [concat $output [split [$tbl print] \n] ]
+      switch $format {
+        table {
+          set output [concat $output [split [$tbl print] \n] ]
+        }
+        csv {
+          set output [concat $output [split [$tbl export -format csv] \n] ]
+        }
+        default {
+        }
+      }
+      catch {$tbl destroy}
+    }
+     
+    if {1} { 
+      lappend output {}
+      lappend output { #######################################################################}
+      lappend output { ## Messages that have already been reviewed (per Vivado subsystem)}
+      lappend output { #######################################################################}
+      lappend output {}
+      
+      set header {Sub-System TOTAL ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>}
+  #     set tbl [Table::Create]
+      set tbl [::tb::prettyTable]
+      $tbl configure -indent 1
+      $tbl header $header
+      set ERROR 0; set CRITICALWARNING 0; set WARNING 0; set INFO 0; set STATUS 0; set UNSET 0
+      set num 0
+      incr stepNum
+      foreach subsystem $subsystems {
+        incr num
+        progressBar $num [llength $subsystems] " Generating report \[$stepNum/$totalStepNum\]:     "
+        set fileid [$SQL eval "SELECT rowid FROM file WHERE name='$subsystem'"]
+        set filteredids [$SQL eval "SELECT rowid FROM message WHERE (rowid IN ('[join $reviewerids ',']'))
+                                                                   AND fileid=$fileid"]
+        set summary [list \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $errorids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $criticalwarningsids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $warningids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $infoids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $statusids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $unsetids ',']')"] ] \
+                    ]
+        incr ERROR [lindex $summary 0]
+        incr CRITICALWARNING [lindex $summary 1]
+        incr WARNING [lindex $summary 2]
+        incr INFO [lindex $summary 3]
+        incr STATUS [lindex $summary 4]
+        incr UNSET [lindex $summary 5]
+        if {[expr [join $summary {+}]] == 0} {
+          # If the sub-system has no ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>
+          # then do not add it to the table and go to the next sub-system
+          continue
+        }
+        $tbl addrow [concat $subsystem [expr [join $summary {+}]] $summary ]
+      }
+      $tbl separator
+      $tbl addrow [list TOTAL [expr $ERROR + $CRITICALWARNING + $WARNING + $INFO + $STATUS + $UNSET] $ERROR $CRITICALWARNING $WARNING $INFO $STATUS $UNSET]
+  #     puts [$tbl print]
+  #     set output [concat $output [split [$tbl print] \n] ]
+      switch $format {
+        table {
+          set output [concat $output [split [$tbl print] \n] ]
+        }
+        csv {
+          set output [concat $output [split [$tbl export -format csv] \n] ]
+        }
+        default {
+        }
+      }
+      catch {$tbl destroy}
+    }
+    
+    if {1} {  
+      lappend output {}
+      lappend output { #######################################################################}
+      lappend output { ## Messages that have already been reviewed (per message owner)}
+      lappend output { #######################################################################}
+      lappend output {}
+      
+      set header {Owner TOTAL ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>}
+  #     set tbl [Table::Create]
+      set tbl [::tb::prettyTable]
+      $tbl configure -indent 1
+      $tbl header $header
+      set ERROR 0; set CRITICALWARNING 0; set WARNING 0; set INFO 0; set STATUS 0; set UNSET 0
+      set num 0
+      incr stepNum
+      set allowners [lsort [$SQL eval "SELECT name FROM owner WHERE name IS NOT NULL"]]
+      foreach owner $allowners {
+        incr num
+        progressBar $num [llength $allowners] " Generating report \[$stepNum/$totalStepNum\]:     "
+        set ownerid [$SQL eval "SELECT rowid FROM owner WHERE name='$owner'"]
+        set filteredids [$SQL eval "SELECT rowid FROM message WHERE (rowid IN ('[join $reviewerids ',']'))
+                                                                   AND (rowid IN ( SELECT DISTINCT messageid FROM owner_message WHERE ownerid = $ownerid ))  "]
+        set summary [list \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $errorids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $criticalwarningsids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $warningids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $infoids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $statusids ',']')"] ] \
+                        [llength [$SQL eval "SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $unsetids ',']')"] ] \
+                    ]
+        incr ERROR [lindex $summary 0]
+        incr CRITICALWARNING [lindex $summary 1]
+        incr WARNING [lindex $summary 2]
+        incr INFO [lindex $summary 3]
+        incr STATUS [lindex $summary 4]
+        incr UNSET [lindex $summary 5]
+        if {[expr [join $summary {+}]] == 0} {
+          # If the sub-system has no ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>
+          # then do not add it to the table and go to the next sub-system
+          continue
+        }
+  #   puts "<$owner:[$SQL eval "SELECT gid FROM message WHERE rowid IN ( SELECT rowid FROM message WHERE rowid IN ('[join $filteredids ',']') AND rowid IN ('[join $criticalwarningsids ',']') )"]>"
+        if {$owner == {}} { set owner {<UNSET>} }
+        $tbl addrow [concat $owner [expr [join $summary {+}]] $summary ]
+      }
+      $tbl separator
+      $tbl addrow [list TOTAL [expr $ERROR + $CRITICALWARNING + $WARNING + $INFO + $STATUS + $UNSET] $ERROR $CRITICALWARNING $WARNING $INFO $STATUS $UNSET]
+  #     puts [$tbl print]
+  #     set output [concat $output [split [$tbl print] \n] ]
+      switch $format {
+        table {
+          set output [concat $output [split [$tbl print] \n] ]
+        }
+        csv {
+          set output [concat $output [split [$tbl export -format csv] \n] ]
+        }
+        default {
+        }
+      }
+      catch {$tbl destroy}
+    }
+  }
+  
+  puts -nonewline stderr "\r[string repeat { } 120]"
+  
+  if {$reportfilename == {}} {
+    puts [join $output \n]
+  } else {
+    set reportFH [open $reportfilename $filemode]
+    puts $reportFH [format {
+   #
+   # File generated on %s (msgstatus %s)
+   #
+  } [clock format [clock seconds]] $SCRIPT_MSGSTATUS_VERSION ]
+    puts $reportFH [join $output \n]
+    close $reportFH
+    puts "\n File [file normalize $reportfilename] generated"
+  }
+  
+  # #-------------------------------------------------------
+  # # Read all message files and build internal data structure
+  # #-------------------------------------------------------
+  # # set files [lrange $files 0 2]
+  # catch {unset SUBSYSTEMS}
+  # init-db DB
+  # set num 0
+  # foreach file $files {
+  #   incr num
+  # #   progressBar $num [llength $files] " Reading message files ([file rootname [file tail $file]]): "
+  #   progressBar $num [llength $files] { Reading message files: }
+  #   init-db DB
+  #   read-msg DB $file
+  # #   set subsystem $DB(SUBSYSTEM)
+  #   set subsystem [file rootname [file tail $file]]
+  #   # Save each sub-system inside the array SUBSYSTEMS
+  #   set SUBSYSTEMS($subsystem) [array get DB]
+  # }
+  # puts ""
+  # 
+  # #-------------------------------------------------------
+  # # Messages that are not obsolete and that have not been
+  # # reviewed
+  # #-------------------------------------------------------
+  # 
+  # puts [format {
+  #  #######################################################################
+  #  ## Non-obsolete messages that need to be reviewed
+  #  #######################################################################
+  # }]
+  # 
+  # set header {Sub-System ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>}
+  # set tbl [Table::Create]
+  # $tbl header $header
+  # set ERROR 0; set CRITICALWARNING 0; set WARNING 0; set INFO 0; set STATUS 0; set UNSET 0
+  # # set num 0
+  # foreach subsystem [lsort [array names SUBSYSTEMS]] {
+  # #   incr num
+  # #   progressBar $num [llength [array names SUBSYSTEMS]] { Generating report:     }
+  #   init-db DB
+  #   array set DB $SUBSYSTEMS($subsystem)
+  #   filter-db DB {(![regexp {(internal|obsolete|unreachable)} $state] & ![regexp {(internal|obsolete|unreachable)} $tags]) && ($reviewer eq {})} {}
+  #   set summary [summary-db DB -VERBOSE 0 -header $header -coalescence $subsystem -format {list}]
+  # #   puts [summary-db DB -VERBOSE 1 -header $header -coalescence {TOTAL} -format {table}]
+  #   incr ERROR [lindex [lindex $summary end] 1]
+  #   incr CRITICALWARNING [lindex [lindex $summary end] 2]
+  #   incr WARNING [lindex [lindex $summary end] 3]
+  #   incr INFO [lindex [lindex $summary end] 4]
+  #   incr STATUS [lindex [lindex $summary end] 5]
+  #   incr UNSET [lindex [lindex $summary end] 6]
+  #   if {[expr [join [lrange [lindex $summary end] 1 end] {+}]] == 0} {
+  #     # If the sub-system has no ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>
+  #     # then do not add it to the table and go to the next sub-system
+  #     continue
+  #   }
+  #   $tbl addrow [lindex $summary end]
+  # }
+  # $tbl separator
+  # $tbl addrow [list TOTAL $ERROR $CRITICALWARNING $WARNING $INFO $STATUS $UNSET]
+  # puts [$tbl print]
+  # 
+  # #-------------------------------------------------------
+  # # Messages that have already been reviewed
+  # #-------------------------------------------------------
+  # 
+  # puts [format {
+  #  #######################################################################
+  #  ## Messages that have already been reviewed
+  #  #######################################################################
+  # }]
+  # 
+  # set header {Sub-System ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>}
+  # set tbl [Table::Create]
+  # $tbl header $header
+  # set ERROR 0; set CRITICALWARNING 0; set WARNING 0; set INFO 0; set STATUS 0; set UNSET 0
+  # # set num 0
+  # foreach subsystem [lsort [array names SUBSYSTEMS]] {
+  # #   incr num
+  # #   progressBar $num [llength [array names SUBSYSTEMS]] { Generating report:     }
+  #   init-db DB
+  #   array set DB $SUBSYSTEMS($subsystem)
+  #   filter-db DB {($reviewer ne {})} {}
+  #   set summary [summary-db DB -VERBOSE 0 -header $header -coalescence $subsystem -format {list}]
+  # #   puts [summary-db DB -VERBOSE 1 -header $header -coalescence {TOTAL} -format {table}]
+  #   incr ERROR [lindex [lindex $summary end] 1]
+  #   incr CRITICALWARNING [lindex [lindex $summary end] 2]
+  #   incr WARNING [lindex [lindex $summary end] 3]
+  #   incr INFO [lindex [lindex $summary end] 4]
+  #   incr STATUS [lindex [lindex $summary end] 5]
+  #   incr UNSET [lindex [lindex $summary end] 6]
+  #   if {[expr [join [lrange [lindex $summary end] 1 end] {+}]] == 0} {
+  #     # If the sub-system has no ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>
+  #     # then do not add it to the table and go to the next sub-system
+  #     continue
+  #   }
+  #   $tbl addrow [lindex $summary end]
+  # }
+  # $tbl separator
+  # $tbl addrow [list TOTAL $ERROR $CRITICALWARNING $WARNING $INFO $STATUS $UNSET]
+  # puts [$tbl print]
+  
+  #-------------------------------------------------------
+  # Done
+  #-------------------------------------------------------
+  
+  if {$msgDB != {}} {
+    # Closing the SQLite3 database
+    catch { $SQL close }
+    set SQL {}
+  }
+
+  return -code ok
+}
+
+namespace eval ::tb {
+  namespace import ::tb::msgutil::msgstatus
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+# Sourcing 'msgutil'
+source $script
+
+set ::tb::msgutil::QUIET 1
+set ::tb::msgutil::VERBOSE 0
+set ::tb::msgutil::DEBUG 0
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set ::tb::msgutil::QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$::tb::msgutil::QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tb::msgutil::msgstatus
+} else {
+  if {[catch {eval [concat ::tb::msgutil::msgstatus $argv]} errorstring]} {
+    # Closing the SQLite3 database
+    catch {$::tb::msgutil::SQL close}
+    puts $errorstring
+    exit 1
+  }
+  exit 0
+}

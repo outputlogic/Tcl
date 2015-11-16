@@ -1,0 +1,113 @@
+ssh -X xsjdpefour40
+lpwd
+smy
+set_v_head
+# Sandbox
+setenv MYVIVADO /proj/xsjvorpal/myvivado_int
+
+CELL: DSP48E2_inst
+
+
+DSP_A_B_DATA.veamconfig
+DSP_ALU.veamconfig
+DSP_C_DATA.veamconfig
+DSP_M_DATA.veamconfig
+DSP_MULTIPLIER.veamconfig
+DSP_OUTPUT.veamconfig
+DSP_PREADD_DATA.veamconfig
+DSP_PREADD.veamconfig
+
+
+set_v_head
+vivado -mode tcl -log vivado.DSP_A_B_DATA.log -journal vivado.DSP_A_B_DATA.jou
+vivado -mode tcl -log vivado.DSP_ALU.log -journal vivado.DSP_ALU.jou
+vivado -mode tcl -log vivado.DSP_C_DATA.log -journal vivado.DSP_C_DATA.jou
+vivado -mode tcl -log vivado.DSP_M_DATA.log -journal vivado.DSP_M_DATA.jou
+vivado -mode tcl -log vivado.DSP_MULTIPLIER.log -journal vivado.DSP_MULTIPLIER.jou
+vivado -mode tcl -log vivado.DSP_OUTPUT.log -journal vivado.DSP_OUTPUT.jou
+vivado -mode tcl -log vivado.DSP_PREADD_DATA.log -journal vivado.DSP_PREADD_DATA.jou
+vivado -mode tcl -log vivado.DSP_PREADD.log -journal vivado.DSP_PREADD.jou
+
+
+# sel [get_cells DSP48E2_inst]
+# sel [get_cells DSP48E2_inst/*]
+# generate_veam_configs [get_sel]
+
+# enable test arcs
+internal::enable_testarcs
+internal::enable_all_devices
+set_param device.enableTestFeatures true
+set_param arch.enableTestFeatures true
+set SCR {/wrk/hdstaff/dpefour/support/Olympus/dsp/scripts}
+source ${SCR}/report_timing_arcs.tcl
+open_checkpoint dsp48e2_ooc_impl.dcp
+update_timing
+report_timing
+
+source DSP_A_B_DATA.veamconfig
+source DSP_ALU.veamconfig
+source DSP_C_DATA.veamconfig
+source DSP_M_DATA.veamconfig
+source DSP_MULTIPLIER.veamconfig
+source DSP_OUTPUT.veamconfig
+source DSP_PREADD_DATA.veamconfig
+source DSP_PREADD.veamconfig
+
+
+# DSP_A_B_DATA.veamconfig:# Number of configurations for DSP_A_B_DATA: 324
+# DSP_ALU.veamconfig:# Number of configurations for DSP_ALU: 768
+# DSP_C_DATA.veamconfig:# Number of configurations for DSP_C_DATA: 2
+# DSP_M_DATA.veamconfig:# Number of configurations for DSP_M_DATA: 2
+# DSP_MULTIPLIER.veamconfig:# Number of configurations for DSP_MULTIPLIER: 12
+# DSP_OUTPUT.veamconfig:# Number of configurations for DSP_OUTPUT: 768
+# DSP_PREADD_DATA.veamconfig:# Number of configurations for DSP_PREADD_DATA: 192
+# DSP_PREADD.veamconfig:# Number of configurations for DSP_PREADD: 1
+
+
+
+######################################################################################
+
+internal::report_enabled_arcs -cell DSP_A_B_DATA -attrList {A_INPUT DIRECT ACASCREG 0 AREG 0 B_INPUT DIRECT BCASCREG 0 BREG 0} -file veam.tmp -to {BCOUT[13]}
+internal::report_enabled_arcs -cell [get_lib_cells [get_libs]/DSP_A_B_DATA] -attrList {A_INPUT DIRECT ACASCREG 0 AREG 0 B_INPUT DIRECT BCASCREG 0 BREG 0} -file veam.tmp -to {BCOUT[13]}
+internal::report_enabled_arcs -cell [get_lib_cells [get_libs]/DSP_A_B_DATA] -attrList {A_INPUT DIRECT ACASCREG 0 AREG 0 B_INPUT DIRECT BCASCREG 0 BREG 0} -file veam.tmp -to BCOUT[13]
+
+
+
+internal::report_enabled_arcs -cell [get_lib_cells [get_libs]/DSP_C_DATA] \
+                              -attrList {CREG 1} \
+                              -file foo \
+                              -from [get_property -quiet NAME [get_lib_pins DSP_C_DATA/C[5]]] \
+                              -to  [get_property -quiet NAME [get_lib_pins DSP_C_DATA/C_DATA[*]]]
+
+internal::report_enabled_arcs -cell [get_lib_cells [get_libs]/DSP_A_B_DATA] \
+                              -attrList {CREG 1} \
+                              -file foo \
+                              -from C[5] \
+                              -to C_DATA[*] 
+
+
+
+
+     **** ENVIRONMENT DEBUG INFO ****
+              XILINX: "/proj/xbuilds/2014.1_weekly_latest/installs/lin64/Vivado/2014.1/ids_lite/ISE"
+          XILINX_SDK: "/proj/xbuilds/2014.1_daily_latest/installs/lin64/SDK/2014.1"
+            MYVIVADO: "/proj/xsjvorpal/myvivado_int:"
+         RDI_APPROOT: "/proj/xsjvorpal/myvivado_int:/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD"
+         HDI_APPROOT: "/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD"
+        RDI_BASEROOT: "/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado"
+         RDI_DATADIR: "/proj/xsjvorpal/myvivado_int/data:/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/data"
+          RDI_LIBDIR: "/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/lib/lnx64.o"
+          RDI_BINDIR: "/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/bin"
+        RDI_JAVAROOT: "/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/tps/lnx64/jre"
+     LD_LIBRARY_PATH: "/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/lib/lnx64.o:/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/tps/lnx64/jre/lib/amd64:/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/tps/lnx64/jre/lib/amd64/server:/group/xsjfarm/lsf/8.0/linux2.6-glibc2.3-x86_64/lib:/tools/packages/cad/release/common/common/lib:/tools/packages/cad/release/common/common/lib64"
+                PATH: "/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/bin:/proj/xbuilds/2014.1_daily_latest/installs/lin64/SDK/2014.1/bin:/proj/xbuilds/2014.1_weekly_latest/installs/lin64/Vivado/2014.1/ids_lite/ISE/bin/lin64:/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/bin/:/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/bin/:/proj/xbuilds/2013.4_INT_daily_latest/installs/lin64/Vivado/2013.4/bin/:.:/home/dpefour/bin:/home/rsmgr/onespin/tools/latest/bin:/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/bin/:/group/xsjfarm/lsf/8.0/linux2.6-glibc2.3-x86_64/etc:/group/xsjfarm/lsf/8.0/linux2.6-glibc2.3-x86_64/bin:/home/dpefour/bin:/group/icdes/bin:/bin:/usr/bin:/usr/kerberos/bin:/usr/X11R6/bin:/sbin:/usr/sbin:/usr/local/bin:.:/tools/local/bin:/tools/packages/cad/release/common/holistic/setup/bin"
+/proj/xbuilds/HEAD_INT_daily_latest/installs/lin64/Vivado/HEAD/bin/unwrapped/lnx64.o/vivado -mode tcl -log vivado.DSP_A_B_DATA.log -journal vivado.DSP_A_B_DATA.jou
+
+****** Vivado v2014.1.0 (64-bit)
+  **** SW Build 820684 on Wed Jan 29 21:18:47 MST 2014
+  **** IP Build 820535 on Wed Jan 29 17:57:56 MST 2014
+    ** Copyright 1986-2014 Xilinx, Inc. All Rights Reserved.
+
+
+
+

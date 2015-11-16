@@ -1,0 +1,15 @@
+#/bin/csh
+
+set logfile=$1
+
+echo "+--------------------+"
+echo "$logfile"
+echo "+--------------------+"
+echo "link/opt/place/route:"
+grep -P '^(link|opt|place|phys_opt|route)_design' $logfile | grep Time | sed -r 's/^(\S*).*cpu = (\S*) ; elapsed = (\S*) . Memory \(MB\): peak = (\S*) \; gain = (\S*)\s*/\1 \2 \3 \4 \5/g'
+echo ""
+echo "report_timing setup/hold opt/place/route:"
+grep -P "^report_timing" $logfile | grep Time | sed -r "s/^(\S*).*cpu = (\S*) ; elapsed = (\S*) . Memory \(MB\): peak = (\S*) \; gain = (\S*)\s*/\1 \2 \3 \4 \5/g"
+echo ""
+echo "Timing reported by implementation tools:"
+grep -P "^INFO.*Timing Summary" $logfile

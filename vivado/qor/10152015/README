@@ -1,0 +1,32 @@
+
+Recommended flow:
+1) Run install.do to generate the lsf.do and all the ./<DIRECTIVE>/run.tcl run scripts
+   The templates used for the process are lsf.st and run.st
+2) Run lsf.do to start all LSF jobs
+3) Run lsf.check to check status of LSF jobs
+4) Run summary.do to generate summary metrics
+
+Obsolete flow:
+1) Run run.do to generate all the ./<DIRECTIVE>/run.tcl run scripts
+   The template used for the process is run.tmpl
+
+Obsolete files:
+  - lsf.do
+  - run.tmpl
+  - run.do
+
+Note:
+ - To create run.st from run.tmpl:
+   cvt2smtpl -i run.tmpl -o run.st -VERSION=VERSION -PROJECT=PROJECT -EXPERIMENT=EXPERIMENT -RUNDIR=RUNDIR -ROOTDIR=ROOTDIR -CHECKPOINT=CHECKPOINT -PLACE_DIRECTIVE=PLACE_DIRECTIVE
+ - To create lsf.st from lsf.do:
+   cvt2smtpl -i lsf.do -o lsf.st -ROOTDIR=ROOTDIR -12000=MEMORY
+
+The run.st template uses the following variables:
+  CHECKPOINT
+  EXPERIMENT
+  PLACE_DIRECTIVE
+  PROJECT
+  ROOTDIR
+  RUNDIR
+  VERSION
+

@@ -1,0 +1,232 @@
+
+##
+## SCRIPT: check_dsp_arcs.tcl
+##
+
+Usage: 
+  check_in_dsp_arcs <dsp macro cell>
+  check_in_dsp_arcs <dsp macro cell> 1
+  check_out_dsp_arcs <dsp macro cell>
+  check_out_dsp_arcs <dsp macro cell> 1
+  
+Description:
+  check_in_dsp_arcs creates the report check_in_dsp_arcs.rpt that list all the timing
+  arcs found or not found on the input pins of each of the DSP atoms.
+  The verbose mode is enabled by adding '1' as last command line parameter
+
+
+  check_out_dsp_arcs creates the report check_out_dsp_arcs.rpt that list all the timing
+  arcs found or not found on the output pins of each of the DSP atoms.
+  The verbose mode is enabled by adding '1' as last command line parameter
+
+
+
+##
+## SCRIPT: report_dsp_configuration.tcl
+##
+
+Usage: 
+  report_dsp_configuration -d <dsp macro cell>
+  report_dsp_configuration -d <dsp macro cell> -f myreport.rpt
+  report_dsp_configuration -d <dsp macro cell> -f myreport.rpt -a
+  
+Description:
+  Generate a table-formated report of a user-specified DSP configuration. One table
+  per DSP atom. 
+  The purpose is to make it easier to compare the DSP configuration with the 
+  Olympus_PDD_DSP_2.0.docx document.
+
+Example of output report:
+
+    +---------------------------------------------------------------------+
+    | Cell : bfil/multOp/DSP_A_B_DATA_INST                                |
+    | Atom : DSP_A_B_DATA                                                 |
+    +---------+----------+------+---------+----------+------+-------------+
+    | A_INPUT | ACASCREG | AREG | B_INPUT | BCASCREG | BREG | Timing Arcs |
+    +---------+----------+------+---------+----------+------+-------------+
+    | DIRECT  | 0        | 0    | DIRECT  | 0        | 0    | 141         |
+    +---------+----------+------+---------+----------+------+-------------+
+    +----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+    | Cell : bfil/multOp/DSP_ALU_INST                                                                                                                                                                                                                                                                                                                    |
+    | Atom : DSP_ALU                                                                                                                                                                                                                                                                                                                                     |
+    +-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+------------+------------+------------+------------+---------------+---------------+---------------+------------+------------+---------------+------+-----------+------------------+----------+-------------+-------------+-------------+
+    | OPMODE[8] | OPMODE[7] | OPMODE[6] | OPMODE[5] | OPMODE[4] | OPMODE[3] | OPMODE[2] | OPMODE[1] | OPMODE[0] | ALUMODE[3] | ALUMODE[2] | ALUMODE[1] | ALUMODE[0] | CARRYINSEL[2] | CARRYINSEL[1] | CARRYINSEL[0] | ALUMODEREG | CARRYINREG | CARRYINSELREG | MREG | OPMODEREG | RND              | USE_SIMD | USE_WIDEXOR | XORSIMD     | Timing Arcs |
+    +-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+------------+------------+------------+------------+---------------+---------------+---------------+------------+------------+---------------+------+-----------+------------------+----------+-------------+-------------+-------------+
+    | 0         | 0         | 0         | 0         | 0         | 0         | 1         | 0         | 1         | 0          | 0          | 0          | 0          | 0             | 0             | 0             | 0          | 0          | 0             | 0    | 0         | 48'h000000000000 | ONE48    | FALSE       | XOR24_48_96 | 3299        |
+    +-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+-----------+------------+------------+------------+------------+---------------+---------------+---------------+------------+------------+---------------+------+-----------+------------------+----------+-------------+-------------+-------------+
+    +--------------------+
+    | Cell : bfil/multOp/DSP_C_DATA_INST |
+    | Atom : DSP_C_DATA  |
+    +------+-------------+
+    | CREG | Timing Arcs |
+    +------+-------------+
+    | 1    | 0           |
+    +------+-------------+
+    +--------------------+
+    | Cell : bfil/multOp/DSP_M_DATA_INST |
+    | Atom : DSP_M_DATA  |
+    +------+-------------+
+    | MREG | Timing Arcs |
+    +------+-------------+
+    | 0    | 85          |
+    +------+-------------+
+    +----------------------------------------------+
+    | Cell : bfil/multOp/DSP_MULTIPLIER_INST       |
+    | Atom : DSP_MULTIPLIER                        |
+    +----------+----------+----------+-------------+
+    | AMULTSEL | BMULTSEL | USE_MULT | Timing Arcs |
+    +----------+----------+----------+-------------+
+    | AD       | B        | MULTIPLY | 1084        |
+    +----------+----------+----------+-------------+
+    +------------------------------------------------------------------------------------------------------------------------------------------------+
+    | Cell : bfil/multOp/DSP_OUTPUT_INST                                                                                                             |
+    | Atom : DSP_OUTPUT                                                                                                                              |
+    +------------------+--------------------+------------------+------------------+------+----------+-------------+--------------------+-------------+
+    | AUTORESET_PATDET | AUTORESET_PRIORITY | MASK             | PATTERN          | PREG | SEL_MASK | SEL_PATTERN | USE_PATTERN_DETECT | Timing Arcs |
+    +------------------+--------------------+------------------+------------------+------+----------+-------------+--------------------+-------------+
+    | NO_RESET         | RESET              | 48'h3FFFFFFFFFFF | 48'h000000000000 | 0    | MASK     | PATTERN     | NO_PATDET          | 192         |
+    +------------------+--------------------+------------------+------------------+------+----------+-------------+--------------------+-------------+
+    +---------------------------------------------------------------------------------------------------------------------------------------------------+
+    | Cell : bfil/multOp/DSP_PREADD_DATA_INST                                                                                                           |
+    | Atom : DSP_PREADD_DATA                                                                                                                            |
+    +-----------+-----------+-----------+-----------+-----------+-------+----------+----------+------+-----------+-------------+----------+-------------+
+    | INMODE[4] | INMODE[3] | INMODE[2] | INMODE[1] | INMODE[0] | ADREG | AMULTSEL | BMULTSEL | DREG | INMODEREG | PREADDINSEL | USE_MULT | Timing Arcs |
+    +-----------+-----------+-----------+-----------+-----------+-------+----------+----------+------+-----------+-------------+----------+-------------+
+    | 0         | 0         | 1         | 0         | 0         | 0     | AD       | B        | 0    | 0         | A           | MULTIPLY | 0           |
+    +-----------+-----------+-----------+-----------+-----------+-------+----------+----------+------+-----------+-------------+----------+-------------+
+    +-------------+
+    | Cell : bfil/multOp/DSP_PREADD_INST |
+    | Atom : DSP_PREADD |
+    +-------------+
+    | Timing Arcs |
+    +-------------+
+    | 809         |
+    +-------------+
+
+##
+## SCRIPT: report_timing_arcs.tcl
+##
+
+The script report_timing_arcs.tcl includes 2 commands: report_timing_arcs and generate_veam_configs
+
+  #-------------------------------------------------------
+  # report_timing_arcs
+  #-------------------------------------------------------
+
+Usage: 
+      Usage: report_timing_arcs
+                  [-of <list of cell or pin objects>]
+                  [-timer|-veam|-dotlib]
+                  [-file <filename>]
+                  [-append|-a]
+                  [-veamattr <veam attributes list>]
+                  [-veamlog <filename>]
+                  [-db <SQLite database>]
+                  [-verbose|-v]
+                  [-help|-h]
+
+         report_timing_arcs
+         report_timing_arcs -dotlib -timer -of [get_selected_objects] -file myreport.rpt
+         report_timing_arcs -veam -of [get_selected_objects] -veamlog veam.log -veamattr {ADREG 0 AMULTSEL AD BMULTSEL B DREG 0 INMODEREG 0 PREADDINSEL A USE_MULT MULTIPLY} -file myreport.rpt
+         report_timing_arcs -veam -of [get_cells bfil/multOp/DSP_PREADD_DATA_INST] -veamlog veam.log -veamattr {ADREG 0 AMULTSEL AD BMULTSEL B DREG 0 INMODEREG 0 PREADDINSEL A USE_MULT MULTIPLY} -file myreport.rpt
+
+Description:
+  Utility to report timing arcs from either the Dotlib, the timer or the Veam conditions.
+  The command report_timing_arcs reports the timings arcs of the specified pins or cell. The list of pins
+  that is provided to report_timing_arcs must have the same direction (input or output) and must be pins
+  of one of a DSP's atom. Instead of pins, a cell object can be provided (e.g bfil/multOp/DSP_PREADD_DATA_INST).
+  The pins or cell are specified with -of command line option.
+  The timing arcs reported by the command can be:
+    1) from Vivado timer when -timer is used
+    2) the Dotlib libraries when -dotlib is used
+       The information form the Dotlib are actually extracted from a sql database.
+       The sql database should be localy copied and the path specified with -db option instead of
+       pointing to my local database:
+         cp /wrk/hdstaff/dpefour/support/Olympus/dotlib/kintex8.db .
+         report_timing_arcs -db kintex8.db
+    3) from the Veam conditions (internal::report_enabled_arcs) when -veam is used
+       Note: 3) can take a very long time on the DSP
+  Note: -timer, -dotlib and -veam can be used at the same time. In this case, timing arcs
+  from multiple origin are reported
+  The output report file is specified with -file / -append
+
+  When using 3), the veam conditions must be specified with -veamattr <list of veam conditions>
+  When using 1), if the veam conditions are not specified, then the timer use whatever configuration
+  exist on the cell. If -veamattr is used, then the veam conditions are applied to the DSP configuration.
+  Note: the DSP configuration is not restored after report_timing_arcs when -veamattr has been used with 1)
+
+Example of output report:
+
+     -I- cell bfil/multOp/DSP_C_DATA_INST
+     -I- ref_name: DSP_C_DATA
+     -I- veam attributes: CREG 1
+      [DOTLIB] TimingArc CLK -> CEC (hold_rising)
+      [DOTLIB] TimingArc CLK -> CEC (setup_rising)
+      [DOTLIB] TimingArc CLK -> C[0] (hold_rising)
+      [DOTLIB] TimingArc CLK -> C[0] (setup_rising)
+    ...
+      [DOTLIB] TimingArc CLK -> C_DATA[8] (rising_edge, positive_unate)
+      [DOTLIB] TimingArc C[9] -> C_DATA[9] (combinational, positive_unate)
+      [DOTLIB] TimingArc CLK -> C_DATA[9] (rising_edge, positive_unate)
+      [DOTLIB] TimingArc CLK -> RSTC (hold_rising)
+      [DOTLIB] TimingArc CLK -> RSTC (setup_rising)
+     -I- 1 cell(s) processed
+
+     -I- 196 [DOTLIB] timing arc(s) found
+    ...
+     -I- processing pin bfil/multOp/DSP_C_DATA_INST (1/1) [DSP_C_DATA]
+     -I- ref_name: DSP_C_DATA
+     -I- veam attributes: CREG 1
+      [VEAM] TimingArc CLK -> C0 (hold) (isEnabled=true)
+      [VEAM] TimingArc CLK -> C0 (setup) (isEnabled=true)
+      [VEAM] TimingArc CLK -> C_DATA9 (redge_inp) (isEnabled=true)
+    ...
+      [VEAM] TimingArc CLK -> CEC (hold) (isEnabled=true)
+      [VEAM] TimingArc CLK -> CEC (setup) (isEnabled=true)
+      [VEAM] TimingArc CLK -> RSTC (hold) (isEnabled=true)
+      [VEAM] TimingArc CLK -> RSTC (setup) (isEnabled=true)
+     -I- internal::report_enabled_arcs completed in 145 seconds
+
+     -I- 1 cell(s) processed
+     -I- 148 [VEAM] timing arc(s) found
+
+  #-------------------------------------------------------
+  # generate_veam_configs
+  #-------------------------------------------------------
+
+Usage: 
+      Usage: generate_veam_configs <cell(s)>
+
+The generate_veam_configs generates a <libcell>.veamconfig file that the cell(s) passed to the command.
+Each of the <libcell>.veamconfig file is a Tcl script that call report_timing_arcs on each of the Veam
+configuration for the library cell <libcell>.
+
+Example of DSP_C_DATA.veamconfig for DSP (libcell DSP_C_DATA):
+
+----------------------------------------------------------------------------
+# File generated on Tue Oct 29 09:20:42 PDT 2013
+# Number of configurations for DSP_C_DATA: 2
+# Backup Veam attributes: CREG 1
+set backupVeamAttributes [::report_timing_arcs::getVeamAttributes {bfil/multOp/DSP_C_DATA_INST}]
+puts -nonewline { [1/2]}; report_timing_arcs -timer -dotlib -of [get_cells bfil/multOp/DSP_C_DATA_INST] -veamattr {CREG 1} -veamlog DSP_C_DATA.CREG_1.veam -file DSP_C_DATA.CREG_1.arcs
+puts -nonewline { [2/2]}; report_timing_arcs -timer -dotlib -of [get_cells bfil/multOp/DSP_C_DATA_INST] -veamattr {CREG 0} -veamlog DSP_C_DATA.CREG_0.veam -file DSP_C_DATA.CREG_0.arcs
+# Restore Veam attributes
+::report_timing_arcs::setVeamAttributes {bfil/multOp/DSP_C_DATA_INST} $backupVeamAttributes
+# ::report_timing_arcs::setVeamAttributes {bfil/multOp/DSP_C_DATA_INST} [list CREG 1]
+----------------------------------------------------------------------------
+
+The libcell DSP_C_DATA has only 1 property CREG that can take only 2 values: 0 & 1. So there are only 2 configurations for this libcell.
+
+Once the <libcell>.veamconfig script is generated, it can be run with:
+  vivado% source <libcell>.veamconfig
+
+Running the script generates 1 file per Veam configuration. The file name is coded based on the Veam configuration. In this example, 2 files are created:
+  DSP_C_DATA.CREG_0.arcs
+  DSP_C_DATA.CREG_1.arcs
+
+Each of the *.arcs file includes the complete list of timing arcs found in the Dotlib library plus all the timing arcs found by the Vivado timer on those
+particular Veam conditions of <libcell>. The timing arcs are reported using the report_timing_arcs command, so generate_veam_configs is just a way
+to automate the call of report_timing_arcs for all possible combination of Veam attributes.
+
+
+

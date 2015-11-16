@@ -1,0 +1,198 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  error " ERROR - this file is meant to be executed and not sourced.\n"
+}
+
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## debug
+##-----------------------------------------------------------------------
+## Debug proc
+##-----------------------------------------------------------------------
+proc debug { body } {
+  if {$::debug == 1} {
+    if {[catch [list uplevel #0 $body] errorstring]} {
+      puts " -E- $errorstring"
+    }
+  }
+}
+
+###########################################################################
+###########################################################################
+##
+## MAIN
+##
+###########################################################################
+###########################################################################
+
+set xdcfilein {}
+set xdcfileout {}
+set filterfile {}
+set level 1
+set action {comment}
+set error 0
+set debug 0
+set verbose 0
+set show_help 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [lshift argv]
+  switch -exact -- $name {
+    -i -
+    -in -
+    -x -
+    -xdc {
+        set xdcfilein [lshift argv]
+    }
+    -o -
+    -out {
+        set xdcfileout [lshift argv]
+    }
+    -f -
+    -filter {
+        set filterfile [lshift argv]
+    }
+    -l -
+    -level {
+        set level [lshift argv]
+    }
+    -d -
+    -debug {
+        set debug 1
+    }
+    -v -
+    -verbose {
+        set verbose 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          set filterfile $name
+          set xdcfilein [lshift argv]
+          set xdcfileout [lshift argv]
+#           puts " -E- option '$name' is not a valid option."
+#           incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: xdcfilter
+                [<filter_file <XDC_file_in> <XDC_file_out> ]
+                [-in <input_XDC_file>|-i <input_XDC_file>]
+                [-out <output_XDC_file>|-o <output_XDC_file>]
+                [-filter <filter_file>|-f <filter_file>]
+                [-level <num>]
+                [-verbose|-v]
+                [-help|-h]
+                
+    Description: Utility to comment out lines from input XDC to output XDC
+    
+      Use -level to trim each line of the filter file.
+    
+    Example:
+       xdcfilter -f filter.lst -i FIFO_placement.xdc -o FIFO_placement.MOD.xdc
+       xdcfilter -f filter.lst -i FIFO_placement.xdc -o FIFO_placement.MOD.xdc -l 0
+  
+  } ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$xdcfilein == {}} {
+  puts " -E- no input XDC provided (-in)"
+  incr error
+}
+
+if {$xdcfileout == {}} {
+  puts " -E- no output XDC provided (-out)"
+  incr error
+}
+
+if {$filterfile == {}} {
+  puts " -E- no filter file provided (-filter)"
+  incr error
+}
+
+if {$error} {
+  puts "\n Some error(s) occur. Cannot continue.\n"
+  exit -1
+}
+
+set filters [list]
+set FH [open $filterfile {r}]
+foreach line [split [read $FH] \n] {
+  if {[regexp {^\s*$} $line]} {
+    # Skip empty lines
+    continue
+  }
+  if {[regexp {^\s*#} $line]} {
+    # Skip commented out lines
+    continue
+  }
+  # Each line of the filter file is expected to be a hierarchical name.
+  # Remove the last N-levels of each name
+  lappend filters [join [lrange [split $line /] 0 end-$level] /]
+}
+close $FH
+
+# Uniquify the list
+set filters [lsort -unique $filters]
+
+set FHout [open $xdcfileout {w}]
+set FHin [open $xdcfilein {r}]
+foreach line [split [read $FHin] \n] {
+  if {[regexp {^\s*$} $line]} {
+    puts $FHout $line
+    continue
+  }
+  foreach el $filters {
+    # Is '$el' included in '$line'?
+    if {[string first $el $line] != -1} {
+      # Yes, comment out the line
+      set line [format {# %s} $line]
+      break
+    }
+  }
+  puts $FHout $line
+}
+close $FHin
+close $FHout
+
+exit 0

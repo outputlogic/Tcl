@@ -1,0 +1,1346 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    This utility provides to way to convert Vivado Message files from/to CSV
+##
+########################################################################################
+
+########################################################################################
+## 2014.11.06 - Code reorganization under namespace ::tb::msgutil
+##            - Minor improvements
+## 2014.06.06 - Initial release
+########################################################################################
+
+namespace eval ::tb {}
+
+namespace eval ::tb::msgutil {
+  namespace export msgutil
+
+  variable SCRIPT_MSGUTIL_VERSION {11-06-2014}
+  variable VERBOSE 0
+  variable DEBUG 0
+  variable QUIET 0
+
+  # List of parameters to be considered during the merge. For safety reason, not all the parameters
+  # should be merged
+  variable PARAMETERS_TO_MERGE {^(alias|description|format|notes|owner|resolution|review_date|reviewer|tags)$}
+  # set PARAMETERS_TO_MERGE {^(alias|description|format|gid|id|key|modified_format_str|notes|owner|reference_cnt|resolution|review_date|reviewer|severity|state|tags)$}
+  # set PARAMETERS_TO_MERGE {^.*$}
+  
+  # List of all possible parameters for a message
+  variable VALID_PARAMETERS [list alias description format gid id key modified_format_str notes owner reference_cnt resolution review_date reviewer severity state tags]
+
+  variable OWNER_REGEXP {.*}
+  variable SEVERITY_REGEXP {.*}
+  variable UNIQUIFY_OWNER 0
+  variable DB
+}
+
+##-----------------------------------------------------------------------
+## Long help function
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::print_help {} {
+
+set help_message [format {
+#########################################################################
+#########################################################################
+##
+## msgutil
+##
+## Example:
+##    msgutil
+##
+## Description:
+##   Utility to manage Vivado MSG files and convert them from
+##   and to CSV format
+##   
+## Options:
+##   
+##   -read-msg                Vivado MSG file to import
+##   
+##   -read-csv                CSV file to import
+##   
+##   -write-msg               Vivado MSG file to export
+##   
+##   -write-csv               CSV file to export
+##   
+##   -merge full|incr         Defines the merge mode when multiple files
+##                            (Vivado MSG and/or CSV) are read:
+##
+##                            incr: only messages with a GID that exist in
+##                                  the first imported MSG or CSV file are
+##                                  merged and only existing parameters.
+##                                  
+##                            full: all the messages are merges without
+##                                  restriction on the GID and parameter name
+##                                  
+##                            When merging, only the parameters below are merged.
+##                            All the other parameters are preserved from the 
+##                            first imported file:
+##                                  alias description format notes resolution
+##                                  review_date reviewer tags
+##
+##   -owner                   Pipe-separated list of owners. Only messages from
+##                            those owners are kept.
+##                            
+##   -severity                Pipe-separated list of severities. Only messages 
+##                            with those severities are kept.
+##                            
+##   -filter-in               Tcl expression. Only messages that make the expression
+##                            return 1 are kept.
+##                            If -owner and/or -severity options have been used, then
+##                            -filter-in cannot be used. However, -filter-out is still
+##                            evaluated.
+##
+##   -filter-out              Tcl expression. Messages that make the expression
+##                            return 1 are removed.
+##                            
+##   -split-output-by-owner   Generate one output (Vivado MSG or CSV) file per owner
+##                            
+##   -uniquify-owner          When reading a Vivado MSG or CSV file, keep only the first 
+##                            owner of a message. This avoid the same message to be reported
+##                            multiple times when it has multiple owners.
+##                            
+## Example:
+##                            
+##   To export inside foo.csv all the messages from 'soeren' or 'atuls':
+##     msgutil -read-msg messages.msg -write-csv foo.csv -owner 'soeren|atuls'
+##                            
+##   To export inside foo.csv all the messages from 'soeren' or 'atuls' thar are not obsolete:
+##     msgutil -read-msg messages.msg -write-csv foo.csv -owner 'soeren|atuls' -filter-out '[regexp {(internal|obsolete|unreachable)} $state] || [regexp {(internal|obsolete|unreachable)} $tags]'
+##     msgutil -read-msg messages.msg -write-csv foo.csv -filter-in '[regexp {(soeren|atuls)} $owner]' -filter-out '[regexp {(internal|obsolete|unreachable)} $state] || [regexp {(internal|obsolete|unreachable)} $tags]'
+##                            
+##   To export inside foo.csv all the messages from 'soeren' or 'atuls' thar are obsolete:
+##     msgutil -read-msg messages.msg -write-csv foo.csv -owner 'soeren|atuls' -filter-out '\![regexp {(internal|obsolete|unreachable)} $state] && \![regexp {(internal|obsolete|unreachable)} $tags]'
+##     msgutil -read-msg messages.msg -write-csv foo.csv -filter-in '[regexp {(soeren|atuls)} $owner]' -filter-out '\![regexp {(internal|obsolete|unreachable)} $state] && \![regexp {(internal|obsolete|unreachable)} $tags]'
+##     msgutil -read-msg messages.msg -write-csv foo.csv -filter-in '[regexp {(soeren|atuls)} $owner] && ([regexp {(internal|obsolete|unreachable)} $state] || [regexp {(internal|obsolete|unreachable)} $tags])'
+##                            
+##   To export inside foo.csv all the messages that are of severity ERROR or CRITICALWARNING:
+##     msgutil -read-msg messages.msg -write-csv foo.csv -severity 'ERROR|CRITICALWARNING'
+##                            
+##   To merge foo.csv inside messages.msg. Note that messages.msg is read first:
+##     msgutil -read-msg messages.msg -read-csv foo.csv -write-msg messages_update.msg -merge incr
+##
+##   Note: the 'incr' merge mode is used in the above example so that no additional parameter is added
+##         to the original messages.
+##                            
+##   To export inside foo.csv all the messages that have no severity defined:
+##     msgutil -read-msg messages.msg -write-csv foo.csv -filter-in '$severity eq {}'
+##
+##   To export inside foo.csv all the messages that have no severity defined and that are not obsolete:
+##     msgutil -read-msg messages.msg -write-csv foo.csv -filter-in '$severity eq {}' -filter-out '[regexp {(internal|obsolete|unreachable)} $state] || [regexp {(internal|obsolete|unreachable)} $tags]'
+##     msgutil -read-msg messages.msg -write-csv foo.csv -filter-in '($severity eq {}) && (\![regexp {(internal|obsolete|unreachable)} $state] && \![regexp {(internal|obsolete|unreachable)} $tags])'
+##                            
+#########################################################################
+#########################################################################
+} ]
+
+  foreach line [split $help_message "\n"] {
+    regsub {##} $line {  } line
+    puts $line
+  }
+
+}
+
+###########################################################################
+##
+## Simple package to handle printing of tables
+##
+## %> set tbl [Table::Create]
+## %> $tbl header [list "name" "#Pins" "case_value" "user_case_value"]
+## %> $tbl addrow [list A/B/C/D/E/F 12 - -]
+## %> $tbl addrow [list A/B/C/D/E/F 24 1 -]
+## %> $tbl separator
+## %> $tbl addrow [list A/B/C/D/E/F 48 0 1]
+## %> $tbl indent 0
+## %> $tbl print
+## +-------------+-------+------------+-----------------+
+## | name        | #Pins | case_value | user_case_value |
+## +-------------+-------+------------+-----------------+
+## | A/B/C/D/E/F | 12    | -          | -               |
+## | A/B/C/D/E/F | 24    | 1          | -               |
+## +-------------+-------+------------+-----------------+
+## | A/B/C/D/E/F | 48    | 0          | 1               |
+## +-------------+-------+------------+-----------------+
+## %> $tbl indent 2
+## %> $tbl print
+##   +-------------+-------+------------+-----------------+
+##   | name        | #Pins | case_value | user_case_value |
+##   +-------------+-------+------------+-----------------+
+##   | A/B/C/D/E/F | 12    | -          | -               |
+##   | A/B/C/D/E/F | 24    | 1          | -               |
+##   +-------------+-------+------------+-----------------+
+##   | A/B/C/D/E/F | 48    | 0          | 1               |
+##   +-------------+-------+------------+-----------------+
+##
+###########################################################################
+
+namespace eval ::tb::msgutil::Table { set n 0 }
+
+proc ::tb::msgutil::Table::Create {} { #-- constructor
+  variable n
+  set instance [namespace current]::[incr n]
+  namespace eval $instance { variable tbl [list {}]; variable indent 0 }
+  interp alias {} $instance {} ::Table::do $instance
+  set instance
+}
+
+proc ::tb::msgutil::Table::do {self method args} { #-- Dispatcher with methods
+  upvar #0 ${self}::tbl tbl
+  switch -- $method {
+      header {
+        eval lset tbl 0 $args
+        return 0
+      }
+      addrow {
+        eval lappend tbl $args
+        return 0
+      }
+      separator {
+        eval lappend tbl {%%SEPARATOR%%}
+        return 0
+      }
+      indent {
+        set ${self}::indent $args
+        return 0
+      }
+      deserialize {
+        # Return the table content without the seperators
+        set l [list]
+        foreach row [lrange [subst $${self}::tbl] 0 end] {
+          if {$row != {%%SEPARATOR%%}} { lappend l $row }
+        }
+        return $l
+#         return [subst $${self}::tbl]
+      }
+      print  {
+        eval ::tb::msgutil::Table::print $self
+      }
+      reset  {
+        set ${self}::tbl [list {}]
+        set ${self}::indent 0
+        return 0
+      }
+      default {error "unknown method $method"}
+  }
+}
+
+proc ::tb::msgutil::Table::print {self} {
+   upvar #0 ${self}::tbl table
+   upvar #0 ${self}::indent indent
+   set maxs {}
+   foreach item [lindex $table 0] {
+       lappend maxs [string length $item]
+   }
+   set numCols [llength [lindex $table 0]]
+   foreach row [lrange $table 1 end] {
+       if {$row eq {%%SEPARATOR%%}} { continue }
+       for {set j 0} {$j<$numCols} {incr j} {
+            set item [lindex $row $j]
+            set max [lindex $maxs $j]
+            if {[string length $item]>$max} {
+               lset maxs $j [string length $item]
+           }
+       }
+   }
+   set head " [string repeat " " [expr $indent * 4]]+"
+   foreach max $maxs {append head -[string repeat - $max]-+}
+   set res $head\n
+   set first 1
+   foreach row $table {
+       if {$row eq {%%SEPARATOR%%}} { 
+         append res $head\n
+         continue 
+       }
+       append res " [string repeat " " [expr $indent * 4]]|"
+       foreach item $row max $maxs {append res [format " %-${max}s |" $item]}
+       append res \n
+       if {$first} {
+         append res $head\n
+         set first 0
+       }
+   }
+   append res $head
+   set res
+}
+
+##-----------------------------------------------------------------------
+## parray
+##-----------------------------------------------------------------------
+## Dump an array to stdout
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::parray {array {pattern *}} {
+   upvar $array a
+   if { ![array exists a] } { error "\"$array\" isn't an array" }
+   set lines [list]
+   set max 0
+   foreach name [array names a $pattern] {
+     set len [string length $name]
+     if { $len > $max } { set max $len }
+   }
+   set max [expr {$max + [string length $array] + 2}]
+   foreach name [array names a $pattern] {
+     set line [format %s(%s) $array $name]
+     lappend lines [format "%-*s = %s" $max $line $a($name)]
+   }
+   puts [join [lsort $lines] \n]
+}
+ 
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::msgutil::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## join-csv
+##-----------------------------------------------------------------------
+## Convert a Tcl list to a CSV-friedly string
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::join-csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+##-----------------------------------------------------------------------
+## split-csv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::split-csv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## get_owners
+##-----------------------------------------------------------------------
+## Return a Tcl list of the owners from the messages saved inside the
+## data structure
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::get_owners { db } {
+  upvar 1 $db DB
+  set owners [list]
+  foreach gid $DB(GID) {
+    catch {unset message}
+    # Just to be safe, initialize the owner and severity parameters
+    array set message [list owner {} severity {}]
+    array set message $DB($gid)
+    # The 'owner' parameter can have multiple comma-seperated tags, so 
+    # process the tags one by one
+    if {$message(owner) == {}} {
+      set owners [lsort -unique [concat $owners {<UNSET>}]]
+      continue
+    }
+    foreach owner [split [regsub -all { } $message(owner) {}] ,] {
+      set owners [lsort -unique [concat $owners $owner]]
+    }
+  }
+  return $owners
+}
+
+##-----------------------------------------------------------------------
+## init-db
+##-----------------------------------------------------------------------
+## Initialize the data structure
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::init-db { db } {
+  upvar 1 $db DB
+  catch {unset DB}
+  set DB(PARAMS) [list]
+  set DB(SUBSYSTEM) {}
+  set DB(VERSION) {}
+  set DB(GID) [list]
+  set DB(FILE) {}
+}
+
+##-----------------------------------------------------------------------
+## merge-db
+##-----------------------------------------------------------------------
+## Merge two data structure. The second data structure is merged in the
+## first one based on a merge mode
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::merge-db { db1 db2 { merge override } } {
+  variable PARAMETERS_TO_MERGE
+  variable VERBOSE
+  variable DEBUG
+  upvar 1 $db1 DB1
+  upvar 1 $db2 DB2
+  if {$VERBOSE} { puts " INFO - merging databases in mode: $merge" }
+  foreach gid $DB2(GID) {
+    catch {unset source}
+    catch {unset message}
+    
+    switch $merge {
+      override {
+        # The entire message is added to the first database
+        # If a message with same GID already exists, it 
+        # is completly overridden by the new one (no merge)
+        set DB1($gid) $DB2($gid)
+        if {[lsearch $DB1(GID) $gid] == -1} { 
+          lappend DB1(GID) $gid
+        }
+      }
+      incr {
+        # Only messages with existing GID in the first database 
+        # are merged and only the existing parameters are merged
+        if {[info exists DB1($gid)]} {
+          array set source $DB1($gid)
+          array set message $DB2($gid)
+          # Only search for parameters that already exist in the database
+          foreach key [array names source] {
+            # Check that the parameter can be merged
+            if {![regexp $PARAMETERS_TO_MERGE $key]} {
+              if {$DEBUG} { puts " DEBUG - parameter '$key' not merged for message GID $gid" }
+              continue
+            }
+            if {[info exists message($key)]} {
+              set source($key) $message($key)
+            } else {
+              if {$VERBOSE} { puts " WARN - parameter '$key' for message GID $gid does not exist in the source database. Parameter not merged" }
+            }
+          }
+          set DB1($gid) [array get source]
+        } else {
+          if {$VERBOSE} { puts " WARN - message GID $gid does not exist in the source database. Message not merged" }
+        }
+      }
+      full {
+        # All messages are merged in the first database
+        # All the parameters are merged
+        if {[info exists DB1($gid)]} {
+          array set source $DB1($gid)
+          # Augment 'source' with the message from the second database
+#           array set source $DB2($gid)
+          array set message $DB2($gid)
+          foreach key [array names message] {
+            # Check that the parameter can be merged
+            if {![regexp $PARAMETERS_TO_MERGE $key]} {
+              if {$DEBUG} { puts " DEBUG - parameter '$key' not merged for message GID $gid" }
+              continue
+            }
+            set source($key) $message($key)
+          }
+          set DB1($gid) [array get source]
+        } else {
+          set DB1($gid) $DB2($gid)
+          lappend DB1(GID) $gid
+        }
+      }
+      default {
+      }
+    }
+  }
+  
+  switch $merge {
+    override {
+      set DB1(PARAMS) [lsort -unique [concat $DB1(PARAMS) $DB2(PARAMS)]]
+      set DB1(SUBSYSTEM) $DB2(SUBSYSTEM)
+      set DB1(VERSION) $DB2(VERSION)
+    }
+    incr {
+    }
+    full {
+      set DB1(PARAMS) [lsort -unique [concat $DB1(PARAMS) $DB2(PARAMS)]]
+    }
+    default {
+    }
+  }
+
+}
+
+##-----------------------------------------------------------------------
+## filter-db
+##-----------------------------------------------------------------------
+## Filter a data structure by removing messages that match or don't match
+## some Tcl expressions
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::filter-db { db keepExp delExp } {
+  variable VALID_PARAMETERS
+  variable OWNER_REGEXP
+  variable SEVERITY_REGEXP
+  variable QUIET
+  variable VERBOSE
+  variable DEBUG
+  upvar 1 $db DB
+  if {!$QUIET} { puts " INFO - filtering database"  }
+  if {$VERBOSE} { 
+    if {$OWNER_REGEXP ne {.*}} {
+      puts " INFO - Filtering expression for owner: $OWNER_REGEXP" 
+    }
+    if {$SEVERITY_REGEXP ne {.*}} {
+      puts " INFO - Filtering expression for severity: $SEVERITY_REGEXP" 
+    }
+    if {$keepExp ne {}} {
+      puts " INFO - FILTER-IN expression: $keepExp" 
+    }
+    if {$delExp ne {}} {
+      puts " INFO - FILTER-OUT expression: $delExp" 
+    }
+  }
+  set gidToRemove [list]
+  foreach item $DB(GID) {
+    foreach param $VALID_PARAMETERS {
+      # Create a Tcl variable for each of the parameter. The variable is set
+      # by default to an empty string. This is necessary so that the expression
+      # can be evaluated even if the parameter is missing from the message
+      eval [list set $param {}]
+    }
+    catch {unset message}
+    array set message $DB($item)
+    foreach key [array names message] {
+      # The Tcl variable for each parameter is overriden here by its
+      # value inside the message
+      eval [list set $key $message($key)]
+    }
+    # By default, the message is not kept
+    set keep 0
+    if {($OWNER_REGEXP ne {.*}) || ($SEVERITY_REGEXP ne {.*})} {
+      # The 'owner' parameter can have multiple comma-seperated tags, so 
+      # process the tags one by one
+      if {$message(owner) == {}} {
+        # Trick so that even if no owner is specify for the message, the 'foreach' loop
+        # still executes and checks for the severity
+        set owners {<UNSET>}
+      } else {
+        set owners [split [regsub -all { } $message(owner) {}] ,]
+      }
+      foreach owner $owners {
+        # The 'severity' parameter can have multiple comma-seperated tags, so 
+        # process the tags one by one
+        foreach severity [split [regsub -all { } $message(severity) {}] ,] {
+          if {([regexp [format {^(%s)$} $OWNER_REGEXP] $owner]) && ([regexp [format {^(%s)$} $SEVERITY_REGEXP] $severity])} {
+            if {$DEBUG} { puts " DEBUG - message GID $gid matches the owner ($message(owner)) and/or severity level ($message(severity)). Message preserved" }
+            set keep 1
+          }
+        }
+      }
+      # Since a filter has already been executed based on the owner and/or severity,
+      # do not execute the FILTER-IN expression, otherwise it might add messages
+      # that do not respect the owner and/or severity
+      set keepExp {}
+    }
+    if {$keepExp ne {}} {
+      if {[catch {
+        if {[expr $keepExp]} {
+          # Keep message
+          if {$DEBUG} { puts " DEBUG - message GID $gid matches the FILTER-IN expression. Message preserved" }
+          set keep 1
+        } else {
+          # Remove message
+          if {$DEBUG} { puts " DEBUG - message GID $gid does not match the FILTER-IN expression. Message removed" }
+          set keep 0
+        }
+      } errorstring]} {
+        puts " ERROR - $errorstring"
+        set keep 1
+      }
+    } else {
+      # If no FILTER-IN expression has been provided then ...
+      if {($OWNER_REGEXP eq {.*}) && ($SEVERITY_REGEXP eq {.*})} {
+        # If no -owner/-severity option has been specified then keep the message by default.
+        # The FILTER-OUT expression will still get the chance to filter out the message
+        set keep 1
+      }
+#       set keep 1
+    }
+    # No need to verify the FILTER-OUT expression if the message has been
+    # marked to deletion
+    if {$delExp ne {} && ($keep)} {
+      if {[catch {
+        if {[expr $delExp]} {
+          # Remove message
+          if {$DEBUG} { puts " DEBUG - message GID $gid matches the FILTER-OUT expression. Message removed" }
+          set keep 0
+        } else {
+          # Keep message
+#           if {$DEBUG} { puts " DEBUG - message GID $gid does not match the FILTER-OUT expression" }
+#           set keep 1
+        }
+      } errorstring]} {
+        puts " ERROR - $errorstring"
+#         set keep 1
+      }
+    }
+    if {$keep} {
+      # The message should be kept
+    } else {
+      # The message should be removed
+      lappend gidToRemove $gid
+    }
+  }
+  
+  foreach gid $gidToRemove {
+    if {$VERBOSE} { puts " INFO - removing message GID $gid" }
+    unset DB($gid)
+    set pos [lsearch -exact $DB(GID) $gid]
+    set DB(GID) [lreplace $DB(GID) $pos $pos]    
+  }
+
+  if {!$QUIET} { puts " INFO - [llength $gidToRemove] message(s) have been removed" }
+}
+
+##-----------------------------------------------------------------------
+## summary-db
+##-----------------------------------------------------------------------
+## Return a short summary of the data structure. The return string
+## needs to be printed out.
+## For example:
+##    +--------+-------+-----------------+---------+------+--------+---------+
+##    | Owner  | ERROR | CRITICALWARNING | WARNING | INFO | STATUS | <UNSET> |
+##    +--------+-------+-----------------+---------+------+--------+---------+
+##    | atuls  | 1     | 0               | 0       | 0    | 0      | 0       |
+##    | nadirr | 0     | 3               | 4       | 0    | 0      | 0       |
+##    | nickm  | 2     | 2               | 1       | 2    | 0      | 0       |
+##    | soeren | 7     | 0               | 9       | 7    | 0      | 1       |
+##    | wam    | 0     | 0               | 0       | 2    | 0      | 0       |
+##    +--------+-------+-----------------+---------+------+--------+---------+
+##    | TOTAL  | 10    | 5               | 14      | 11   | 0      | 1       |
+##    +--------+-------+-----------------+---------+------+--------+---------+
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::summary-db { db args } {
+  upvar 1 $db DB
+  # First assign default values...
+  array set options {-verbose 1 -header {Owner ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>} -coalescence {TOTAL} -format {table}}
+  # ...then possibly override them with user choices
+  array set options $args
+  set owners [list]
+  catch {unset summary}
+  foreach item [list ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>] { set summary($item) 0 }
+  foreach gid $DB(GID) {
+    catch {unset message}
+    # Just to be safe, initialize the owner and severity parameters
+    array set message [list owner {} severity {}]
+    array set message $DB($gid)
+    # The 'owner' parameter can have multiple comma-seperated tags, so 
+    # process the tags one by one
+    if {$message(owner) == {}} {
+        # If no owner is defined, then set it to <UNSET> to track the message in the table
+        set message(owner) {<UNSET>}
+    }
+    foreach owner [split [regsub -all { } $message(owner) {}] ,] {
+      set owners [lsort -unique [concat $owners $owner]]
+      # The 'severity' parameter can have multiple comma-seperated tags, so 
+      # process the tags one by one
+      if {$message(severity) == {}} {
+        # If no severity is defined, then set it to <UNSET> to track the message in the table
+        set message(severity) {<UNSET>}
+      }
+      foreach severity [split [regsub -all { } $message(severity) {}] ,] {
+        if {![info exist summary(${owner}:${severity})]} {
+          set summary(${owner}:${severity}) 1
+        } else {
+          incr summary(${owner}:${severity})
+        }
+        # The next line is made safe just in case the severity would be unknown
+        catch { incr summary(${severity}) }
+      }
+    }
+  }
+  set tbl [Table::Create]
+#   $tbl header [concat Owner [list ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>]]
+  $tbl header $options(-header)
+  foreach owner $owners {
+    set row [list $owner]
+    foreach severity [list ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>] {
+      if {[info exists summary(${owner}:${severity})]} {
+        lappend row $summary(${owner}:${severity})
+      } else {
+        lappend row 0
+      }
+    }
+    if {$options(-verbose)} {
+      $tbl addrow $row
+    }
+  }
+  # Generate the TOTAL's row
+  if {$options(-verbose)} {
+    $tbl separator
+  }
+#   set row {TOTAL}
+  set row $options(-coalescence)
+  foreach severity [list ERROR CRITICALWARNING WARNING INFO STATUS <UNSET>] {
+    lappend row $summary(${severity})
+  }
+  $tbl addrow $row
+  $tbl indent 0
+  switch $options(-format) {
+    table {
+      return [$tbl print]
+    }
+    list {
+      return [$tbl deserialize]
+    }
+    default {
+      error " -E- unknown format '$options(-format)'"
+    }
+  }
+}
+
+##-----------------------------------------------------------------------
+## read-msg
+##-----------------------------------------------------------------------
+## Read Vivado MSG file and populate the data structure
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::read-msg { db filename } {
+  variable UNIQUIFY_OWNER
+  variable QUIET
+  variable VERBOSE
+  variable DEBUG
+  upvar 1 $db DB
+  if {![file exists $filename]} {
+    error " ERROR - file '$filename' does not exist"
+#     exit -1
+  }
+  if {!$QUIET} { puts " INFO - reading Vivado MSG file '$filename'" }
+  set FH [open $filename]
+  set SM init
+  set subsystem {}
+  set version {}
+  set params $DB(PARAMS)
+  catch {unset message}
+  while {![eof $FH]} {
+    gets $FH line
+    switch $SM {
+      init {
+        if {[regexp {^messages =} $line]} {
+          set SM message
+          catch {unset message}
+        } elseif {[regexp {^subsystem_alias = "(.+)";} $line - subsystem]} {
+        } elseif {[regexp {^version = "(.+)";} $line - version]} {
+        } else {
+        }
+      }
+      message {
+        if {[regexp {^\s*\);} $line]} {
+          set SM init
+        } elseif {[regexp {^\s*\},?\s*$} $line]} {
+          # End of current message
+          set params [lsort -unique [concat $params [array names message]]]
+          if {$UNIQUIFY_OWNER} {
+            if {[info exist message(owner)]} {
+              # If the message has multiple owners, keep the first owner only
+              set message(owner) [lindex [split [regsub -all { } $message(owner) {}] ,] 0]
+            }
+          }
+          if {[info exists message(gid)]} {
+            set gid $message(gid)
+            set DB($gid) [array get message]
+            if {[lsearch $DB(GID) $gid] == -1} { 
+              lappend DB(GID) $gid
+            } else {
+              if {!$QUIET} { puts " WARN - found duplicate GID $gid" }
+            }
+          }
+          catch {unset message}
+        } elseif {[regexp {^\s*(\w+)\s*=\s*"(.*)";} $line - name value]} {
+          set message($name) $value
+        } else {
+        }
+      }
+      default {
+      }
+    }
+  }
+  close $FH
+  set DB(PARAMS) $params
+  set DB(SUBSYSTEM) $subsystem
+  set DB(VERSION) $version
+  set DB(FILE) $filename
+}
+
+##-----------------------------------------------------------------------
+## write-msg
+##-----------------------------------------------------------------------
+## Write data structure to Vivado MSG file
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::write-msg { db filename { header {} } } {
+  variable QUIET
+  variable VERBOSE
+  variable DEBUG
+  upvar 1 $db DB
+  if {!$QUIET} { puts " INFO - writing file '$filename'" }
+  set MSG [open $filename w]
+  puts $MSG [format {# Created on %s} [clock format [clock seconds]] ]
+  foreach line [split $header \n] {
+    puts $MSG [format {# %s} $line]
+  }
+  puts $MSG [format {# GID: %s} [lsort -dictionary $DB(GID)] ]
+  puts $MSG "messages ="
+  puts $MSG "("
+  set first 1
+  set count 0
+  foreach id $DB(GID) {
+    incr count
+    if {!$first} {
+      puts $MSG "  \},"
+    }
+    puts $MSG "  \{"
+    catch {unset message}
+    array set message $DB($id)
+    foreach key [lsort [array names message]] {
+      # For 'state' and 'alias' parameters, only non-empty values should be exported
+      if {[lsearch [list state alias] $key] != -1} {
+        if {$message($key) eq {}} {
+          # Do no export this parameter if it has empty value
+          continue
+        }
+      }
+      puts $MSG [format {    %s = "%s";} $key $message($key)]
+    }
+    set first 0
+  }
+  puts $MSG "  \}"
+  puts $MSG ");"
+  puts $MSG [format {subsystem_alias = "%s";} $DB(SUBSYSTEM)]
+  puts $MSG [format {version = "%s";} $DB(VERSION)]
+  
+  close $MSG
+  if {!$QUIET} { 
+    puts " INFO - $count message(s) have been exported"
+    puts "\n Vivado MSG file '$filename' has been created"
+  }
+}
+
+##-----------------------------------------------------------------------
+## read-csv
+##-----------------------------------------------------------------------
+## Read CSV file and populate the data structure
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::read-csv { db filename } {
+  variable UNIQUIFY_OWNER
+  variable QUIET
+  variable VERBOSE
+  variable DEBUG
+  upvar 1 $db DB
+  if {![file exists $filename]} {
+    error " ERROR - file '$filename' does not exist"
+#     exit -1
+  }
+  if {!$QUIET} { puts " INFO - reading CSV file '$filename'" }
+  set FH [open $filename]
+  set SM init
+  set subsystem {}
+  set version {}
+  set params $DB(PARAMS)
+  set header [list]
+  catch {unset message}
+  while {![eof $FH]} {
+    gets $FH line
+    if {[regexp {^\s*#} $line]} {
+      continue
+    }
+    if {[regexp {^\s*$} $line]} {
+      continue
+    }
+    set elements [split-csv $line ,]
+    switch [string tolower [lindex $elements 0]] {
+      subsystem_alias {
+        set subsystem [lindex $elements 1]
+      }
+      version {
+        set version [lindex $elements 1]
+      }
+      header {
+        set header [lrange $elements 1 end]
+      }
+      messages {
+      }
+      default {
+        if {[lindex $elements 0] != {}} {
+          puts " ERROR - unknown keyword '[lindex $elements 0]'"
+          continue
+        }
+        catch {unset message}
+        for {set i 0} {$i < [expr [llength $elements] -1]} {incr i} {
+          set key [lindex $header $i]
+          set value [lindex $elements [expr $i +1]]
+          set message($key) $value
+        }
+        if {$UNIQUIFY_OWNER} {
+          if {[info exist message(owner)]} {
+            # If the message has multiple owners, keep the first owner only
+            set message(owner) [lindex [split [regsub -all { } $message(owner) {}] ,] 0]
+          }
+        }
+        if {[info exists message(gid)]} {
+          set gid $message(gid)
+          set DB($gid) [array get message]
+          if {[lsearch $DB(GID) $gid] == -1} { 
+            lappend DB(GID) $gid
+          } else {
+            if {!$QUIET} { puts " WARN - found duplicate GID $gid" }
+          }
+        }
+      }
+    }
+  }
+  close $FH
+  set DB(PARAMS) $header
+  set DB(SUBSYSTEM) $subsystem
+  set DB(VERSION) $version
+  set DB(FILE) $filename
+}
+
+##-----------------------------------------------------------------------
+## write-csv
+##-----------------------------------------------------------------------
+## Write data structure to CSV file
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::write-csv { db filename { header {} } } {
+  variable QUIET
+  variable VERBOSE
+  variable DEBUG
+  upvar 1 $db DB
+  if {!$QUIET} { puts " INFO - writing file '$filename'" }
+  set CSV [open $filename w]
+  puts $CSV [format {# Created on %s} [clock format [clock seconds]] ]
+  foreach line [split $header \n] {
+    puts $CSV [format {# %s} $line]
+  }
+  puts $CSV [format {# GID: %s} [lsort -dictionary $DB(GID)] ]
+  puts $CSV [format {subsystem_alias,%s} $DB(SUBSYSTEM)]
+  puts $CSV [format {version,%s} $DB(VERSION)]
+  puts $CSV [format {messages,%s} [llength $DB(GID)]]
+  puts $CSV [format {header,%s} [join-csv $DB(PARAMS) ,]]
+  set count 0
+  foreach id $DB(GID) {
+    incr count
+    catch {unset message}
+    array set message $DB($id)
+    set elements [list]
+    foreach key $DB(PARAMS) {
+      if {[info exists message($key)]} {
+        lappend elements $message($key)
+      } else {
+        lappend elements {}
+      }
+    }
+    puts $CSV [format {,%s} [join-csv $elements ,]]
+  }
+  
+  close $CSV
+  if {!$QUIET} { 
+    puts " INFO - $count message(s) have been exported"
+    puts "\n CSV file '$filename' has been created"
+  }
+}
+
+##-----------------------------------------------------------------------
+## msgutil
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::msgutil::msgutil {args} {
+
+  variable SCRIPT_MSGUTIL_VERSION
+  variable PARAMETERS_TO_MERGE
+  variable VALID_PARAMETERS
+  
+  variable QUIET 
+  variable VERBOSE 
+  variable DEBUG 
+
+  variable DB
+  variable OWNER_REGEXP 
+  variable SEVERITY_REGEXP
+  variable UNIQUIFY_OWNER
+  
+  set read_files [list]
+  set write_files [list]
+  set merge_type {override}
+  set filter_in {}
+  set filter_out {}
+  set split_output_by_owner 0
+  set reorder_gid 0
+
+  set show_help 0
+  set show_long_help 0
+  set error 0
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -read-msg -
+      --read-msg {
+        lappend read_files [list msg [lshift args]]
+      }
+      -read-csv -
+      --read-csv {
+        lappend read_files [list csv [lshift args]]
+      }
+      -write-msg -
+      --write-msg {
+        lappend write_files [list msg [lshift args]]
+      }
+      -write-csv -
+      --write-csv {
+        lappend write_files [list csv [lshift args]]
+      }
+      -filter-in -
+      --filter-in {
+        set filter_in [lshift args]
+      }
+      -filter-out -
+      --filter-out {
+        set filter_out [lshift args]
+      }
+      -owner -
+      --owner {
+        set OWNER_REGEXP [lshift args]
+      }
+      -severity -
+      --severity {
+        set SEVERITY_REGEXP [lshift args]
+      }
+      -merge -
+      --merge {
+        set merge_type [lshift args]
+        switch $merge_type {
+          full -
+          incr {
+          }
+          "" {
+            puts " -E- no merge type specified. Valid values are: full | incr"
+            set merge_type {override}
+            incr error
+          }
+          default {
+            puts " -E- merge type '$merge_type' is not valid. Valid values are: full | incr"
+            set merge_type {override}
+            incr error
+          }
+        }
+      }
+      -split -
+      -split-output-by-owner {
+          set split_output_by_owner 1
+      }
+      -uniquify -
+      -uniquify-owner {
+          set UNIQUIFY_OWNER 1
+      }
+      -reorder -
+      -reorder-gid {
+          set reorder_gid 1
+      }
+      -quiet {
+          set QUIET 1
+      }
+      -v -
+      -verbose {
+          set VERBOSE 1
+      }
+      -d -
+      -debug {
+          set DEBUG 1
+          set VERBOSE 1
+      }
+      -h -
+      -help {
+          incr show_help
+      }
+      -longhelp {
+          incr show_help
+          incr show_long_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          }
+      }
+    }
+  }
+  
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: msgutil
+                  [-read-msg <filename>]
+                  [-read-csv <filename>]
+                  [-write-msg <filename>]
+                  [-write-csv <filename>]
+                  [-filter-in <expression>]
+                  [-filter-out <expression>]
+                  [-owner <pipe-seperated-list-of-owners>]
+                  [-severity <pipe-seperated-list-of-severities>]
+                  [-uniquify-owner|-uniquify]
+                  [-split-output-by-owner|-split]
+                  [-merge <full|incr>]
+                  [-reorder-gid|-reorder]
+                  [-verbose|-v]
+                  [-quiet]
+                  [-help|-h]
+                  [-longhelp]
+                  
+      Description: Utility to manage Vivado MSG files and convert them from
+                   and to CSV format
+  
+      Version: %s
+  
+      Example:
+         msgutil -read-msg timing.msg -write-csv timing.csv
+         msgutil -read-csv timing.csv -write-msg timing.msg
+         msgutil -read-csv timing.csv -write-msg timing.msg -owner 'felix|nickm|soeren' -severity 'ERROR|CRITICALWARNING' 
+         msgutil -read-csv timing.csv -write-msg timing.msg -owner 'felix|nickm|soeren' -filter-out '$state == {obsolete}'
+         msgutil -read-csv timing.csv -write-msg timing.msg -filter-out '[regexp {(internal|obsolete|unreachable)} $state]'
+         msgutil -read-csv timing.csv -write-msg timing.msg -filter-out '\![regexp {(internal|obsolete|unreachable)} $state]'
+         msgutil -read-msg timing.msg -read-csv update1.csv -read-msg update2.msg -merge incr -write-csv timing.csv
+         msgutil -read-msg timing.msg -read-csv update1.csv -read-msg update2.msg -merge full -write-csv timing.csv
+    
+    } $SCRIPT_MSGUTIL_VERSION ]
+    # HELP -->
+  
+    if {$show_long_help} { print_help }
+  
+    return -code ok
+  }
+  
+  switch [llength $read_files] {
+    0 {
+      puts " -E- no input file provided"
+      incr error
+    }
+    1 {
+    }
+    default {
+      if {$merge_type == {override}} {
+        puts " -E- too many input files provided. Multiple input files are only valid when using -merge option"
+        incr error
+      }
+    }
+  }
+  
+  switch [llength $write_files] {
+    0 -
+    1 {
+    }
+    default {
+      puts " -E- too many output files provided"
+      incr error
+    }
+  }
+  
+  if {($OWNER_REGEXP ne {.*}) && ($filter_in ne {})} {
+    puts " -E- cannot use -owner and -filter-in at the same time"
+    incr error
+  }
+  
+  if {($SEVERITY_REGEXP ne {.*}) && ($filter_in ne {})} {
+    puts " -E- cannot use -severity and -filter-in at the same time"
+    incr error
+  }
+  
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+  
+  # catch {unset DB}
+  init-db DB
+  
+  set first 1
+  foreach item $read_files {
+    foreach {format filename} $item { break }
+  #   catch {unset DB_TEMP}
+    init-db DB_TEMP
+    switch $format {
+      csv {
+        read-csv DB_TEMP $filename  
+        if {$VERBOSE} { puts [summary-db DB_TEMP] }
+        if {$first} {
+          merge-db DB DB_TEMP override
+        } else {
+          merge-db DB DB_TEMP $merge_type
+        }
+      }
+      msg {
+        read-msg DB_TEMP $filename  
+        if {$VERBOSE} { puts [summary-db DB_TEMP] }
+        if {$first} {
+          merge-db DB DB_TEMP override
+        } else {
+          merge-db DB DB_TEMP $merge_type
+        }
+      }
+      default {
+        if {!$QUIET} { puts " -E- unknow format '$format'" }
+      }
+    }
+    set first 0
+  }
+  
+  if {!$QUIET} { puts " INFO - [llength $DB(GID)] message(s) have been imported" }
+  
+  # Filter the database if an expression has been specified
+  if {($filter_in ne {}) || ($filter_out ne {}) || ($OWNER_REGEXP ne {.*}) || ($SEVERITY_REGEXP ne {.*})} {
+    filter-db DB $filter_in $filter_out
+    if {!$QUIET} { puts " INFO - [llength $DB(GID)] message(s) remain after filtering" }
+  }
+  
+  # Quick summary of the data structure after filtering
+  set summary [summary-db DB]
+  
+  # Sort the messages by GID
+  if {$reorder_gid} {
+    set DB(GID) [lsort -dictionary $DB(GID)]
+  }
+  
+  if {$write_files != [list]} {
+    foreach {format filename} [lindex $write_files 0] { break }
+    switch $format {
+      csv {
+        if {$split_output_by_owner} {
+          foreach owner [get_owners DB] {
+            if {$owner == {<UNSET>}} {
+              # To export messages with empty owner, process differently
+              init-db DB_TEMP
+              merge-db DB_TEMP DB override
+              set OWNER_REGEXP {.*}
+              set SEVERITY_REGEXP {.*}
+              filter-db DB_TEMP {} {$owner ne {}}
+              write-csv DB_TEMP [file rootname $filename].${owner}[file extension $filename] [summary-db DB_TEMP]
+            } else {
+              init-db DB_TEMP
+              merge-db DB_TEMP DB override
+              set OWNER_REGEXP $owner
+              set SEVERITY_REGEXP {.*}
+              filter-db DB_TEMP {} {}
+              write-csv DB_TEMP [file rootname $filename].${owner}[file extension $filename] [summary-db DB_TEMP]
+            }
+          }
+        } else {
+          write-csv DB $filename $summary
+        }
+      }
+      msg {
+        if {$split_output_by_owner} {
+          foreach owner [get_owners DB] {
+            if {$owner == {<UNSET>}} {
+              # To export messages with empty owner, process differently
+              init-db DB_TEMP
+              merge-db DB_TEMP DB override
+              set OWNER_REGEXP {.*}
+              set SEVERITY_REGEXP {.*}
+              filter-db DB_TEMP {} {$owner ne {}}
+              write-msg DB_TEMP [file rootname $filename].${owner}[file extension $filename] [summary-db DB_TEMP]
+            } else {
+              init-db DB_TEMP
+              merge-db DB_TEMP DB override
+              set OWNER_REGEXP $owner
+              set SEVERITY_REGEXP {.*}
+              filter-db DB_TEMP {} {}
+              write-msg DB_TEMP [file rootname $filename].${owner}[file extension $filename] [summary-db DB_TEMP]
+            }
+          }
+        } else {
+          write-msg DB $filename $summary
+        }
+      }
+      default {
+        puts " -E- unknow format '$format'"
+      }
+    }
+  }
+  
+  puts "\n$summary\n"
+  puts " List of owners: [get_owners DB]\n"
+  
+  return -code ok
+}
+
+namespace eval ::tb {
+  namespace import ::tb::msgutil::msgutil
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::tb::msgutil::QUIET 0
+set ::tb::msgutil::VERBOSE 0
+set ::tb::msgutil::DEBUG 0
+# Regular expressions to filter by owner and/or severity
+set ::tb::msgutil::OWNER_REGEXP {.*}
+set ::tb::msgutil::SEVERITY_REGEXP {.*}
+set ::tb::msgutil::UNIQUIFY_OWNER 0
+# Database
+array set DB [list]
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set ::tb::msgutil::QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$::tb::msgutil::QUIET} { puts " INFO - sourcing [info script]" }
+#   msgutil
+} else {
+  if {[catch {eval [concat ::tb::msgutil::msgutil $argv]} errorstring]} {
+    puts $errorstring
+    exit 1
+  }
+  exit 0
+}

@@ -1,0 +1,497 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+# Dotlib library report based on Tcl fragment files.
+
+set SCRIPT_VERSION {04-23-2014}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+
+proc lskim { L key } {
+  set res [list]
+  foreach elm $L {
+    catch {unset ar}
+    array set ar $elm
+    if {[info exists ar($key)]} { lappend res $ar($key) }
+  }
+  set res
+}
+
+# Fragment files to process
+set files [lsort -dictionary [glob -nocomplain ./output/*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./kintex7/*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./kintex8/*.ftcl]]
+# set files [lsort -dictionary [glob -nocomplain ./output/*MMCM*2*.ftcl]]
+set files [list]
+
+# Output report
+set filename {reportDotLib.rpt}
+
+# Collapse bus names?
+set collapseNames 1
+
+
+# All the combinations of the <timing type>|<timing sense> found in Kintex7/Kintex8
+array set TimingTypeSense {
+  clear|negative_unate 0
+  combinational| 0
+  combinational|negative_unate 0
+  combinational|positive_unate 0
+  falling_edge| 0
+  falling_edge|positive_unate 0
+  hold_falling| 0
+  hold_rising| 0
+  min_pulse_width| 0
+  minimum_period| 0
+  preset|positive_unate 0
+  recovery_falling| 0
+  recovery_rising| 0
+  removal_falling| 0
+  removal_rising| 0
+  rising_edge| 0
+  rising_edge|negative_unate 0
+  rising_edge|positive_unate 0
+  setup_falling| 0
+  setup_rising| 0
+  skew_falling| 0
+  skew_rising| 0
+  three_state_disable|positive_unate 0
+  three_state_enable|negative_unate 0
+}
+
+set error 0
+set show_help 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -ftcl -
+    --ftcl {
+      set files [concat $files [glob -nocomplain [::tb::lshift argv]]]
+    }
+    -file -
+    --file -
+    -filename -
+    --filename {
+      set filename [::tb::lshift argv]
+    }
+    -no-collapse -
+    --no-collapse {
+      set collapseNames 0
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: reportDotLib
+                [-ftcl <filename or file pattern>]
+                [-file <output report name>]
+                [-no-collapse]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to dump Dotlib library information based on Tcl fragment files
+
+    Version: %s
+
+    Example:
+       reportDotLib
+       reportDotLib -ftcl './kintex7/*.ftcl' -file kintex7_reportDotLib.rpt
+       reportDotLib -ftcl './kintex7/*.ftcl' -file kintex7_reportDotLib.rpt -no-collapse
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+# Loading all fragment files first
+catch {unset data}
+foreach file [lsort -dictionary $files] {
+  puts " Importing fragment $file"
+  array set data [source $file]
+}
+puts " [llength [array names data]] cell(s) have been imported in [llength $files] file(s)\n"
+
+# Analyse the data structure
+catch {unset DB}
+set DB(_) [list]
+
+foreach cell [lsort -dictionary [array names data]] {
+#   puts " Processing $cell"
+  lappend DB(_) $cell
+  foreach elm $data($cell) {
+    # Each $elm is a pin information
+    catch {unset pininfo}
+    array set pininfo $elm
+    set allPins [list]
+    if {[info exists pininfo(pin)]} {
+      set allPins $pininfo(pin)
+    } elseif {[info exists pininfo(bus)]} {
+      # Expand all the bits of the bus if the current pin is a bus
+      if {[regexp {bus_([0-9]+)_([0-9]+)$} $pininfo(bus_type) - n1 n2]} {
+        if {$n1 >= $n2} {
+          for {set i $n1} {$i >= $n2} {incr i -1} {
+            lappend allPins [format {%s[%s]} $pininfo(bus) $i]
+          }
+        } else {
+          for {set i $n1} {$i <= $n2} {incr i 1} {
+            lappend allPins [format {%s[%s]} $pininfo(bus) $i]
+          }
+        }
+      } else {
+        # Should never go there unless the original dotlib is missing some serious information
+        puts "   error - incorrect bus_type information [parray pininfo]"
+        exit
+      }
+    } else {
+      # Should never go there unless the original dotlib is missing some serious information
+      puts "   error - pin and bus not defined [parray pininfo]"
+      exit
+    }
+    # Merge the pininfo array inside the DB array
+    foreach key [array names pininfo] {
+      # But do it for all the pins of the bus when the current pin is a bus
+      foreach pin $allPins {
+        # Default values: no timing arc and no related arc
+        if {![info exists DB(${cell}:${pin}:timing)]} { set DB(${cell}:${pin}:timing) [list] }
+        if {![info exists DB(${cell}:${pin}:related_arc)]} { set DB(${cell}:${pin}:related_arc) [list] }
+        # Override default values and set other parameters
+        set DB(${cell}:${pin}:${key}) $pininfo($key)
+      }
+    }
+
+    # Update TimingTypeSense array
+    if {[info exists pininfo(timing)]} {
+      # Process each timing arc of the current pin/bus
+      foreach timing $pininfo(timing) {
+        catch {unset timinginfo}
+        array set timinginfo $timing
+        set timing_type $timinginfo(timing_type)
+        set timing_sense $timinginfo(timing_sense)
+        if {![info exists TimingTypeSense(${timing_type}|${timing_sense})]} {
+          puts " -W- Found new combination ${timing_type}|${timing_sense} of timing type & timing sense"
+          set TimingTypeSense(${timing_type}|${timing_sense}) 0
+        }
+        incr TimingTypeSense(${timing_type}|${timing_sense})
+      }
+    }
+
+    # Annotate the related arcs
+    if {[info exists pininfo(timing)]} {
+      # Process each timing arc of the current pin/bus
+      foreach timing $pininfo(timing) {
+        catch {unset timinginfo}
+        array set timinginfo $timing
+        # E.g: related_pin : "CI CYINIT";
+        set related_pins [list]
+        catch { set related_pins $timinginfo(related_pin) }
+        # E.g: related_bus_pins : "DI[0:1] S[0:2]";
+        set related_bus_pins [list]
+        catch { set related_bus_pins $timinginfo(related_bus_pins) }
+        set all_related_pins $related_pins
+        # Expand the bus into bitwise if the related pin is a bus
+        foreach bus $related_bus_pins {
+          if {![regexp {^(.+)\[([0-9]+):([0-9]+)\]$} $bus - busPinName n1 n2]} {
+            puts " error - cannot match bus pattern for '$bus'"
+            parray pininfo
+            parray timinginfo
+            exit
+          }
+          if {$n1 >= $n2} {
+            for {set i $n1} {$i >= $n2} {incr i -1} {
+              lappend all_related_pins [format {%s[%s]} $busPinName $i]
+            }
+          } else {
+            for {set i $n1} {$i <= $n2} {incr i 1} {
+              lappend all_related_pins [format {%s[%s]} $busPinName $i]
+            }
+          }
+
+        }
+        catch {unset timinginfo(related_bus_pins) }
+        catch {unset timinginfo(related_pin) }
+        # Loop through all the related pins of the timing arc
+        foreach related_pin $all_related_pins {
+          foreach pin $allPins {
+            set timinginfo(pin) $pin
+            if {![info exists DB(${cell}:${related_pin}:related_arc)]} {
+              set DB(${cell}:${related_pin}:related_arc) [list]
+            }
+            lappend DB(${cell}:${related_pin}:related_arc) [array get timinginfo]
+          }
+        }
+      }
+    }
+
+  }
+
+  # Now that all the pins of a particular cell have been processed, let's post-process the DB array
+  # to add few more information
+
+  # Build the list of pins for that particular cell
+  set allPins [list]
+  foreach key [array names DB ${cell}:*] {
+    if {[regexp [format {^%s:(.+):.+$} $cell] $key - pin]} {
+      lappend allPins $pin
+    } else {
+      puts " error - pattern not found"
+      exit
+    }
+  }
+  set allPins [lsort -dictionary -unique $allPins]
+  set DB(${cell}:_) $allPins
+}
+
+
+########################################################################################
+##
+## Report a summary table of the internal database
+##
+########################################################################################
+
+set tbl [::tb::prettyTable "Summary Table"]
+$tbl header [concat \
+               [list {Cell Name} {Pin Name} {IN} {OUT} {ARC} {RELATED PIN} {HAS FCT} {FCT} {TIMING TYPE} {TIMING SENSE} {FPGA ARC CONDITION}] \
+               [lsort -dictionary [array names TimingTypeSense]] \
+            ]
+# $tbl header [list {Pin Name} {IN} {OUT} {ARC} {RELATED PIN} {HAS FCT} {FCT} {TIMING TYPE} {TIMING SENSE} {FPGA ARC CONDITION}]
+
+foreach cell [lsort -dictionary $DB(_)] {
+  set pins [list]
+  set previousrowtail [list]
+  set previousrowhead {}
+  set rowheads {}
+  foreach pin [lsort -dictionary $DB(${cell}:_)] {
+    set rowtail [list]
+    set rowhead "$cell/$pin"
+    foreach var {IN OUT ARC RELATED_PIN HAS_FCT FCT TIMING_TYPE TIMING_SENSE FPGA_ARC_CONDITION} {eval [subst {set $var {}} ] }
+    if {![info exists DB(${cell}:${pin}:direction)]} {
+      puts " error - pin '$pin' does not exist but might have been referenced as a related pin in a timing arc. Pin skipped."
+      continue
+    }
+    switch $DB(${cell}:${pin}:direction) {
+      input   { set IN {Y} }
+      output  { set OUT {Y} }
+      default { set IN {?}; set OUT {?} }
+    }
+    set arcs [list]
+    if {[info exists DB(${cell}:${pin}:timing)]} {
+      set arcs $DB(${cell}:${pin}:timing)
+    }
+    set related_arcs [list]
+    if {[info exists DB(${cell}:${pin}:related_arc)]} {
+      set related_arcs $DB(${cell}:${pin}:related_arc)
+    }
+    set ARC [llength $arcs]
+    set RELATED_PIN [llength $related_arcs]
+    set FCT {}
+    set HAS_FCT {}
+    if {[info exists DB(${cell}:${pin}:function)]} {
+      set FCT $DB(${cell}:${pin}:function)
+      set HAS_FCT {Y}
+    }
+    set TIMING_TYPE [lsort -dictionary -unique [lskim $DB(${cell}:${pin}:timing) timing_type]]
+    # Remove empty value
+    ::tb::lremove TIMING_TYPE {}
+    set TIMING_SENSE [lsort -dictionary -unique [lskim $DB(${cell}:${pin}:timing) timing_sense]]
+    # Remove empty value
+    ::tb::lremove TIMING_SENSE {}
+    set FPGA_ARC_CONDITION [lsort -dictionary -unique [lskim $DB(${cell}:${pin}:timing) fpga_arc_condition]]
+    # Remove empty value
+    ::tb::lremove FPGA_ARC_CONDITION {}
+    if {$FPGA_ARC_CONDITION != {}} { set FPGA_ARC_CONDITION [llength $FPGA_ARC_CONDITION] }
+    set rowtail [list $IN $OUT $ARC $RELATED_PIN $HAS_FCT $FCT $TIMING_TYPE $TIMING_SENSE $FPGA_ARC_CONDITION]
+    
+    # Add the columns for each pair of <timing_type> & <timing_sense>
+    foreach key [array names TimingTypeSense] {
+      # Reset the number for each existing pair of <timing_type> & <timing_sense>
+      set TimingTypeSense($key) 0
+    }
+    if {[info exists DB(${cell}:${pin}:timing)]} {
+      foreach timing $DB(${cell}:${pin}:timing) {
+        catch {unset timinginfo}
+        array set timinginfo $timing
+        set timing_type $timinginfo(timing_type)
+        set timing_sense $timinginfo(timing_sense)
+        incr TimingTypeSense(${timing_type}|${timing_sense})
+      }
+    }
+    foreach key [lsort -dictionary [array names TimingTypeSense]] {
+      if {$TimingTypeSense($key) == 0} {
+#         lappend rowtail 0
+        lappend rowtail {}
+      } else {
+        lappend rowtail $TimingTypeSense($key)
+      }
+    }
+
+    if {$rowheads == {}} {
+      # Record row information and process next pin
+      set rowheads $rowhead
+      set previousrowhead $rowhead
+      set previousrowtail $rowtail
+      continue
+    }
+
+    if {([llength [::tb::collapseBusNames [list $rowhead $previousrowhead]]] == 1) && [::tb::lequal $rowtail $previousrowtail] && $collapseNames} {
+      set previousrowtail $rowtail
+      set previousrowhead $rowhead
+      lappend rowheads $rowhead
+      continue
+    } else {
+      catch {unset cellname}
+      catch {unset pinname}
+      foreach {cellname pinname} [split [lindex [::tb::collapseBusNames $rowheads] 0] / ] { break }
+      if {[info exists cellname] && [info exists pinname]} {
+        $tbl addrow [concat [list $cellname] [list $pinname] $previousrowtail]
+#         $tbl addrow [concat [::tb::collapseBusNames $rowheads] $previousrowtail]
+      } else {
+        puts " -W- Cannot extract cell name or pin name from cell=$cell / pin=$pin"
+      }
+        $tbl addrow [concat [list $cellname] [list $pinname] $previousrowtail]
+#         $tbl addrow [concat [::tb::collapseBusNames $rowheads] $previousrowtail]
+      set rowheads $rowhead
+      set previousrowhead $rowhead
+      set previousrowtail $rowtail
+    }
+  }
+
+  # Save last element that was not saved before
+  catch {unset cellname}
+  catch {unset pinname}
+  foreach {cellname pinname} [split [lindex [::tb::collapseBusNames $rowheads] 0] / ] { break }
+  if {[info exists cellname] && [info exists pinname]} {
+        $tbl addrow [concat [list $cellname] [list $pinname] $previousrowtail]
+#     $tbl addrow [concat [::tb::collapseBusNames $rowheads] $previousrowtail]
+  } else {
+    puts " -W- Cannot extract cell name or pin name from cell=$cell"
+  }
+
+}
+
+# Generate report and CSV files
+set RPTFile {}
+set CSVFile {}
+if {[file extension $filename] == {}} {
+  set RPTFile $filename
+  set CSVFile ${filename}.csv
+} else {
+  set RPTFile $filename
+  set CSVFile [file rootname $filename].csv
+}
+puts " File [file normalize $RPTFile] has been generated"
+$tbl print -file $RPTFile
+puts " File [file normalize $CSVFile] has been generated"
+$tbl export -format csv -file $CSVFile
+catch {$tbl destroy}
+puts ""
+
+# Example of structure for DB array
+
+# DB(FIFO18E2:_)                       = {CASDIN[0]} {CASDIN[1]} {CASDIN[2]} {CASDIN[3]} {CASDIN[4]} {CASDIN[5]} {CASDIN[6]} {CASDIN[7]} {CASDIN[8]} {CASDIN[9]} {CASDIN[10]} {CASDIN[11]} {CASDIN[12]} {CASDIN[13]} {CASDIN[14]} {CASDIN[15]} {CASDIN[16]} {CASDIN[17]} {CASDIN[18]} {CASDIN[19]} {CASDIN[20]} {CASDIN[21]} {CASDIN[22]} {CASDIN[23]} {CASDIN[24]} {CASDIN[25]} {CASDIN[26]} {CASDIN[27]} {CASDIN[28]} {CASDIN[29]} {CASDIN[30]} {CASDIN[31]} {CASDINP[0]} {CASDINP[1]} {CASDINP[2]} {CASDINP[3]} CASDOMUX CASDOMUXEN {CASDOUT[0]} {CASDOUT[1]} {CASDOUT[2]} {CASDOUT[3]} {CASDOUT[4]} {CASDOUT[5]} {CASDOUT[6]} {CASDOUT[7]} {CASDOUT[8]} {CASDOUT[9]} {CASDOUT[10]} {CASDOUT[11]} {CASDOUT[12]} {CASDOUT[13]} {CASDOUT[14]} {CASDOUT[15]} {CASDOUT[16]} {CASDOUT[17]} {CASDOUT[18]} {CASDOUT[19]} {CASDOUT[20]} {CASDOUT[21]} {CASDOUT[22]} {CASDOUT[23]} {CASDOUT[24]} {CASDOUT[25]} {CASDOUT[26]} {CASDOUT[27]} {CASDOUT[28]} {CASDOUT[29]} {CASDOUT[30]} {CASDOUT[31]} {CASDOUTP[0]} {CASDOUTP[1]} {CASDOUTP[2]} {CASDOUTP[3]} CASNXTEMPTY CASNXTRDEN CASOREGIMUX CASOREGIMUXEN CASPRVEMPTY CASPRVRDEN {DIN[0]} {DIN[1]} {DIN[2]} {DIN[3]} {DIN[4]} {DIN[5]} {DIN[6]} {DIN[7]} {DIN[8]} {DIN[9]} {DIN[10]} {DIN[11]} {DIN[12]} {DIN[13]} {DIN[14]} {DIN[15]} {DIN[16]} {DIN[17]} {DIN[18]} {DIN[19]} {DIN[20]} {DIN[21]} {DIN[22]} {DIN[23]} {DIN[24]} {DIN[25]} {DIN[26]} {DIN[27]} {DIN[28]} {DIN[29]} {DIN[30]} {DIN[31]} {DINP[0]} {DINP[1]} {DINP[2]} {DINP[3]} {DOUT[0]} {DOUT[1]} {DOUT[2]} {DOUT[3]} {DOUT[4]} {DOUT[5]} {DOUT[6]} {DOUT[7]} {DOUT[8]} {DOUT[9]} {DOUT[10]} {DOUT[11]} {DOUT[12]} {DOUT[13]} {DOUT[14]} {DOUT[15]} {DOUT[16]} {DOUT[17]} {DOUT[18]} {DOUT[19]} {DOUT[20]} {DOUT[21]} {DOUT[22]} {DOUT[23]} {DOUT[24]} {DOUT[25]} {DOUT[26]} {DOUT[27]} {DOUT[28]} {DOUT[29]} {DOUT[30]} {DOUT[31]} {DOUTP[0]} {DOUTP[1]} {DOUTP[2]} {DOUTP[3]} EMPTY FULL PROGEMPTY PROGFULL RDCLK {RDCOUNT[0]} {RDCOUNT[1]} {RDCOUNT[2]} {RDCOUNT[3]} {RDCOUNT[4]} {RDCOUNT[5]} {RDCOUNT[6]} {RDCOUNT[7]} {RDCOUNT[8]} {RDCOUNT[9]} {RDCOUNT[10]} {RDCOUNT[11]} {RDCOUNT[12]} RDEN RDERR RDRSTBUSY REGCE RST RSTREG SLEEP WRCLK {WRCOUNT[0]} {WRCOUNT[1]} {WRCOUNT[2]} {WRCOUNT[3]} {WRCOUNT[4]} {WRCOUNT[5]} {WRCOUNT[6]} {WRCOUNT[7]} {WRCOUNT[8]} {WRCOUNT[9]} {WRCOUNT[10]} {WRCOUNT[11]} {WRCOUNT[12]} WREN WRERR WRRSTBUSY
+# DB(_)                                = FIFO18E2
+# DB(FIFO18E2:CASDINP[0]:bus)          = CASDINP
+# DB(FIFO18E2:CASDINP[0]:bus_type)     = bus_3_0
+# DB(FIFO18E2:CASDINP[0]:direction)    = input
+# DB(FIFO18E2:CASDINP[0]:related_arc)  = {timing_sense positive_unate timing_type combinational pin {CASDOUTP[0]}} {timing_sense positive_unate timing_type combinational pin {DOUTP[0]}}
+# DB(FIFO18E2:CASDINP[0]:timing)       = {timing_type hold_rising timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}} {timing_type setup_rising timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}}
+# DB(FIFO18E2:CASDINP[1]:bus)          = CASDINP
+# DB(FIFO18E2:CASDINP[1]:bus_type)     = bus_3_0
+# DB(FIFO18E2:CASDINP[1]:direction)    = input
+# DB(FIFO18E2:CASDINP[1]:related_arc)  = {timing_sense positive_unate timing_type combinational pin {CASDOUTP[1]}} {timing_sense positive_unate timing_type combinational pin {DOUTP[1]}}
+# DB(FIFO18E2:CASDINP[1]:timing)       = {timing_type hold_rising timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}} {timing_type setup_rising timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}}
+# ...
+# DB(FIFO18E2:CASDOMUX:direction)      = input
+# DB(FIFO18E2:CASDOMUX:pin)            = CASDOMUX
+# DB(FIFO18E2:CASDOMUX:timing)         = {timing_type hold_rising timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}} {timing_type setup_rising timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}}
+# DB(FIFO18E2:CASDOMUXEN:direction)    = input
+# DB(FIFO18E2:CASDOMUXEN:pin)          = CASDOMUXEN
+# DB(FIFO18E2:CASDOMUXEN:timing)       = {timing_type hold_rising timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}} {timing_type setup_rising timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}}
+# DB(FIFO18E2:CASDOUTP[0]:direction)   = output
+# DB(FIFO18E2:CASDOUTP[0]:pin)         = CASDOUTP[0]
+# DB(FIFO18E2:CASDOUTP[0]:timing)      = {timing_type combinational timing_sense positive_unate related_pin {CASDINP[0]} related_bus_pins {}} {timing_type rising_edge timing_sense {} related_pin RDCLK related_bus_pins {}}
+# DB(FIFO18E2:CASDOUTP[1]:direction)   = output
+# DB(FIFO18E2:CASDOUTP[1]:pin)         = CASDOUTP[1]
+# DB(FIFO18E2:CASDOUTP[1]:timing)      = {timing_type combinational timing_sense positive_unate related_pin {CASDINP[1]} related_bus_pins {}} {timing_type rising_edge timing_sense {} related_pin RDCLK related_bus_pins {}}
+# DB(FIFO18E2:CASDOUTP[2]:direction)   = output
+# DB(FIFO18E2:CASDOUTP[2]:pin)         = CASDOUTP[2]
+# DB(FIFO18E2:CASDOUTP[2]:timing)      = {timing_type combinational timing_sense positive_unate related_pin {CASDINP[2]} related_bus_pins {}} {timing_type rising_edge timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}}
+# DB(FIFO18E2:CASDOUTP[3]:direction)   = output
+# DB(FIFO18E2:CASDOUTP[3]:pin)         = CASDOUTP[3]
+# DB(FIFO18E2:CASDOUTP[3]:timing)      = {timing_type combinational timing_sense positive_unate related_pin {CASDINP[3]} related_bus_pins {}} {timing_type rising_edge timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}}
+# DB(FIFO18E2:WRCLK:direction)         = input
+# DB(FIFO18E2:WRCLK:pin)               = WRCLK
+# DB(FIFO18E2:WRCLK:related_arc)       = {timing_sense {} timing_type hold_rising pin {CASDINP[3]}} {timing_sense {} timing_type hold_rising pin {CASDINP[2]}} {timing_sense {} timing_type hold_rising pin {CASDINP[1]}} {timing_sense {} timing_type hold_rising pin {CASDINP[0]}} {timing_sense {} timing_type setup_rising pin {CASDINP[3]}} {timing_sense {} timing_type setup_rising pin {CASDINP[2]}} {timing_sense {} timing_type setup_rising pin {CASDINP[1]}} {timing_sense {} timing_type setup_rising pin {CASDINP[0]}} {timing_sense {} timing_type hold_rising pin {CASDIN[31]}} {timing_sense {} timing_type hold_rising pin {CASDIN[30]}} {timing_sense {} timing_type hold_rising pin {CASDIN[29]}} {timing_sense {} timing_type hold_rising pin {CASDIN[28]}} {timing_sense {} timing_type hold_rising pin {CASDIN[27]}} {timing_sense {} timing_type hold_rising pin {CASDIN[26]}} {timing_sense {} timing_type hold_rising pin {CASDIN[25]}} {timing_sense {} timing_type hold_rising pin {CASDIN[24]}} {timing_sense {} timing_type hold_rising pin {CASDIN[23]}} {timing_sense {} timing_type hold_rising pin {CASDIN[22]}} {timing_sense {} timing_type hold_rising pin {CASDIN[21]}} {timing_sense {} timing_type hold_rising pin {CASDIN[20]}} {timing_sense {} timing_type hold_rising pin {CASDIN[19]}} {timing_sense {} timing_type hold_rising pin {CASDIN[18]}} {timing_sense {} timing_type hold_rising pin {CASDIN[17]}} {timing_sense {} timing_type hold_rising pin {CASDIN[16]}} {timing_sense {} timing_type hold_rising pin {CASDIN[15]}} {timing_sense {} timing_type hold_rising pin {CASDIN[14]}} {timing_sense {} timing_type hold_rising pin {CASDIN[13]}} {timing_sense {} timing_type hold_rising pin {CASDIN[12]}} {timing_sense {} timing_type hold_rising pin {CASDIN[11]}} {timing_sense {} timing_type hold_rising pin {CASDIN[10]}} {timing_sense {} timing_type hold_rising pin {CASDIN[9]}} {timing_sense {} timing_type hold_rising pin {CASDIN[8]}} {timing_sense {} timing_type hold_rising pin {CASDIN[7]}} {timing_sense {} timing_type hold_rising pin {CASDIN[6]}} {timing_sense {} timing_type hold_rising pin {CASDIN[5]}} {timing_sense {} timing_type hold_rising pin {CASDIN[4]}} {timing_sense {} timing_type hold_rising pin {CASDIN[3]}} {timing_sense {} timing_type hold_rising pin {CASDIN[2]}} {timing_sense {} timing_type hold_rising pin {CASDIN[1]}} {timing_sense {} timing_type hold_rising pin {CASDIN[0]}} {timing_sense {} timing_type setup_rising pin {CASDIN[31]}} {timing_sense {} timing_type setup_rising pin {CASDIN[30]}} {timing_sense {} timing_type setup_rising pin {CASDIN[29]}} {timing_sense {} timing_type setup_rising pin {CASDIN[28]}} {timing_sense {} timing_type setup_rising pin {CASDIN[27]}} {timing_sense {} timing_type setup_rising pin {CASDIN[26]}} {timing_sense {} timing_type setup_rising pin {CASDIN[25]}} {timing_sense {} timing_type setup_rising pin {CASDIN[24]}} {timing_sense {} timing_type setup_rising pin {CASDIN[23]}} {timing_sense {} timing_type setup_rising pin {CASDIN[22]}} {timing_sense {} timing_type setup_rising pin {CASDIN[21]}} {timing_sense {} timing_type setup_rising pin {CASDIN[20]}} {timing_sense {} timing_type setup_rising pin {CASDIN[19]}} {timing_sense {} timing_type setup_rising pin {CASDIN[18]}} {timing_sense {} timing_type setup_rising pin {CASDIN[17]}} {timing_sense {} timing_type setup_rising pin {CASDIN[16]}} {timing_sense {} timing_type setup_rising pin {CASDIN[15]}} {timing_sense {} timing_type setup_rising pin {CASDIN[14]}} {timing_sense {} timing_type setup_rising pin {CASDIN[13]}} {timing_sense {} timing_type setup_rising pin {CASDIN[12]}} {timing_sense {} timing_type setup_rising pin {CASDIN[11]}} {timing_sense {} timing_type setup_rising pin {CASDIN[10]}} {timing_sense {} timing_type setup_rising pin {CASDIN[9]}} {timing_sense {} timing_type setup_rising pin {CASDIN[8]}} {timing_sense {} timing_type setup_rising pin {CASDIN[7]}} {timing_sense {} timing_type setup_rising pin {CASDIN[6]}} {timing_sense {} timing_type setup_rising pin {CASDIN[5]}} {timing_sense {} timing_type setup_rising pin {CASDIN[4]}} {timing_sense {} timing_type # setup_rising pin {CASDIN[3]}} {timing_sense {} timing_type setup_rising pin {CASDIN[2]}} {timing_sense {} timing_type setup_rising pin {CASDIN[1]}} {timing_sense {} timing_type setup_rising pin {CASDIN[0]}} {timing_sense {} timing_type hold_rising pin CASDOMUX} {timing_sense {} timing_type setup_rising pin CASDOMUX} {timing_sense {} timing_type hold_rising pin CASDOMUXEN} {timing_sense {} timing_type setup_rising pin CASDOMUXEN} {timing_sense {} timing_type rising_edge pin {CASDOUTP[2]}} {timing_sense {} timing_type rising_edge pin {CASDOUTP[3]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[16]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[17]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[18]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[19]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[20]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[21]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[22]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[23]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[24]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[25]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[26]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[27]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[28]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[29]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[30]}} {timing_sense {} timing_type rising_edge pin {CASDOUT[31]}} {timing_sense {} timing_type setup_rising pin CASNXTRDEN} {timing_sense {} timing_type hold_rising pin CASNXTRDEN} {timing_sense {} timing_type hold_rising pin CASPRVEMPTY} {timing_sense {} timing_type setup_rising pin CASPRVEMPTY} {timing_sense {} timing_type rising_edge pin CASPRVRDEN} {timing_sense {} timing_type hold_rising pin {DINP[0]}} {timing_sense {} timing_type setup_rising pin {DINP[0]}} {timing_sense {} timing_type hold_rising pin {DINP[1]}} {timing_sense {} timing_type setup_rising pin {DINP[1]}} {timing_sense {} timing_type hold_rising pin {DINP[2]}} {timing_sense {} timing_type setup_rising pin {DINP[2]}} {timing_sense {} timing_type hold_rising pin {DINP[3]}} {timing_sense {} timing_type setup_rising pin {DINP[3]}} {timing_sense {} timing_type hold_rising pin {DIN[0]}} {timing_sense {} timing_type setup_rising pin {DIN[0]}} {timing_sense {} timing_type hold_rising pin {DIN[1]}} {timing_sense {} timing_type setup_rising pin {DIN[1]}} {timing_sense {} timing_type hold_rising pin {DIN[2]}} {timing_sense {} timing_type setup_rising pin {DIN[2]}} {timing_sense {} timing_type hold_rising pin {DIN[3]}} {timing_sense {} timing_type setup_rising pin {DIN[3]}} {timing_sense {} timing_type hold_rising pin {DIN[4]}} {timing_sense {} timing_type setup_rising pin {DIN[4]}} {timing_sense {} timing_type hold_rising pin {DIN[5]}} {timing_sense {} timing_type setup_rising pin {DIN[5]}} {timing_sense {} timing_type hold_rising pin {DIN[6]}} {timing_sense {} timing_type setup_rising pin {DIN[6]}} {timing_sense {} timing_type hold_rising pin {DIN[7]}} {timing_sense {} timing_type setup_rising pin {DIN[7]}} {timing_sense {} timing_type hold_rising pin {DIN[8]}} {timing_sense {} timing_type setup_rising pin {DIN[8]}} {timing_sense {} timing_type hold_rising pin {DIN[9]}} {timing_sense {} timing_type setup_rising pin {DIN[9]}} {timing_sense {} timing_type hold_rising pin {DIN[10]}} {timing_sense {} timing_type setup_rising pin {DIN[10]}} {timing_sense {} timing_type hold_rising pin {DIN[11]}} {timing_sense {} timing_type setup_rising pin {DIN[11]}} {timing_sense {} timing_type hold_rising pin {DIN[12]}} {timing_sense {} timing_type setup_rising pin {DIN[12]}} {timing_sense {} timing_type hold_rising pin {DIN[13]}} {timing_sense {} timing_type setup_rising pin {DIN[13]}} {timing_sense {} timing_type hold_rising pin {DIN[14]}} {timing_sense {} timing_type setup_rising pin {DIN[14]}} {timing_sense {} timing_type setup_rising pin {DIN[15]}} {timing_sense {} timing_type hold_rising pin {DIN[15]}} {timing_sense {} timing_type hold_rising pin {DIN[16]}# } {timing_sense {} timing_type setup_rising pin {DIN[16]}} {timing_sense {} timing_type hold_rising pin {DIN[17]}} {timing_sense {} timing_type setup_rising pin {DIN[17]}} {timing_sense {} timing_type hold_rising pin {DIN[18]}} {timing_sense {} timing_type setup_rising pin {DIN[18]}} {timing_sense {} timing_type hold_rising pin {DIN[19]}} {timing_sense {} timing_type setup_rising pin {DIN[19]}} {timing_sense {} timing_type hold_rising pin {DIN[20]}} {timing_sense {} timing_type setup_rising pin {DIN[20]}} {timing_sense {} timing_type hold_rising pin {DIN[21]}} {timing_sense {} timing_type setup_rising pin {DIN[21]}} {timing_sense {} timing_type hold_rising pin {DIN[22]}} {timing_sense {} timing_type setup_rising pin {DIN[22]}} {timing_sense {} timing_type hold_rising pin {DIN[23]}} {timing_sense {} timing_type setup_rising pin {DIN[23]}} {timing_sense {} timing_type hold_rising pin {DIN[24]}} {timing_sense {} timing_type setup_rising pin {DIN[24]}} {timing_sense {} timing_type hold_rising pin {DIN[25]}} {timing_sense {} timing_type setup_rising pin {DIN[25]}} {timing_sense {} timing_type hold_rising pin {DIN[26]}} {timing_sense {} timing_type setup_rising pin {DIN[26]}} {timing_sense {} timing_type hold_rising pin {DIN[27]}} {timing_sense {} timing_type setup_rising pin {DIN[27]}} {timing_sense {} timing_type hold_rising pin {DIN[28]}} {timing_sense {} timing_type setup_rising pin {DIN[28]}} {timing_sense {} timing_type hold_rising pin {DIN[29]}} {timing_sense {} timing_type setup_rising pin {DIN[29]}} {timing_sense {} timing_type hold_rising pin {DIN[30]}} {timing_sense {} timing_type setup_rising pin {DIN[30]}} {timing_sense {} timing_type setup_rising pin {DIN[31]}} {timing_sense {} timing_type hold_rising pin {DIN[31]}} {timing_sense {} timing_type rising_edge pin {DOUTP[2]}} {timing_sense {} timing_type rising_edge pin {DOUTP[3]}} {timing_sense {} timing_type rising_edge pin {DOUT[16]}} {timing_sense {} timing_type rising_edge pin {DOUT[17]}} {timing_sense {} timing_type rising_edge pin {DOUT[18]}} {timing_sense {} timing_type rising_edge pin {DOUT[19]}} {timing_sense {} timing_type rising_edge pin {DOUT[20]}} {timing_sense {} timing_type rising_edge pin {DOUT[21]}} {timing_sense {} timing_type rising_edge pin {DOUT[22]}} {timing_sense {} timing_type rising_edge pin {DOUT[23]}} {timing_sense {} timing_type rising_edge pin {DOUT[24]}} {timing_sense {} timing_type rising_edge pin {DOUT[25]}} {timing_sense {} timing_type rising_edge pin {DOUT[26]}} {timing_sense {} timing_type rising_edge pin {DOUT[27]}} {timing_sense {} timing_type rising_edge pin {DOUT[28]}} {timing_sense {} timing_type rising_edge pin {DOUT[29]}} {timing_sense {} timing_type rising_edge pin {DOUT[30]}} {timing_sense {} timing_type rising_edge pin {DOUT[31]}} {timing_sense {} timing_type rising_edge pin FULL} {timing_sense {} timing_type rising_edge pin PROGFULL} {timing_sense {} timing_type rising_edge pin {RDCOUNT[12]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[11]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[10]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[9]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[8]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[7]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[6]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[5]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[4]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[3]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[2]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[1]}} {timing_sense {} timing_type rising_edge pin {RDCOUNT[0]}} {timing_sense {} timing_type setup_rising pin RDEN} {timing_sense {} timing_type hold_rising pin RDEN} {timing_sense {} timing_type rising_edge pin RDRSTBUSY} {timing_sense {} timing_type hold_rising pin RST} {timing_sense {} timing_type setup_rising pin RST} {timing_sense {} timing_type rising_edge pin {WRCOUNT[12]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[11]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[10]}} # {timing_sense {} timing_type rising_edge pin {WRCOUNT[9]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[8]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[7]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[6]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[5]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[4]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[3]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[2]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[1]}} {timing_sense {} timing_type rising_edge pin {WRCOUNT[0]}} {timing_sense {} timing_type setup_rising pin WREN} {timing_sense {} timing_type hold_rising pin WREN} {timing_sense {} timing_type rising_edge pin WRERR} {timing_sense {} timing_type rising_edge pin WRRSTBUSY}
+# DB(FIFO18E2:WREN:direction)          = input
+# DB(FIFO18E2:WREN:pin)                = WREN
+# DB(FIFO18E2:WREN:timing)             = {timing_type setup_rising timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}} {timing_type hold_rising timing_sense {} related_pin {RDCLK WRCLK} related_bus_pins {}}
+# DB(FIFO18E2:WRERR:direction)         = output
+# DB(FIFO18E2:WRERR:pin)               = WRERR
+# DB(FIFO18E2:WRERR:timing)            = {timing_type rising_edge timing_sense {} related_pin WRCLK related_bus_pins {}}
+# DB(FIFO18E2:WRRSTBUSY:direction)     = output
+# DB(FIFO18E2:WRRSTBUSY:pin)           = WRRSTBUSY
+# DB(FIFO18E2:WRRSTBUSY:timing)        = {timing_type rising_edge timing_sense {} related_pin WRCLK related_bus_pins {}}
+
+
+# Combination of timing_type & timing_sense
+#  {clear negative_unate}
+#  {combinational negative_unate}
+#  {combinational positive_unate}
+#  {combinational {}}
+#  {falling_edge positive_unate}
+#  {falling_edge {}}
+#  {hold_falling {}}
+#  {hold_rising {}}
+#  {min_pulse_width {}}
+#  {minimum_period {}}
+#  {preset positive_unate}
+#  {recovery_falling {}}
+#  {recovery_rising {}}
+#  {removal_falling {}}
+#  {removal_rising {}}
+#  {rising_edge negative_unate}
+#  {rising_edge positive_unate}
+#  {rising_edge {}}
+#  {setup_falling {}}
+#  {setup_rising {}}
+#  {skew_rising {}}
+#  {three_state_disable positive_unate}
+

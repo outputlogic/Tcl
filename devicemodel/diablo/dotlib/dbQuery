@@ -1,0 +1,700 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+########################################################################################
+## 05-12-2015 - Added new pin attribute columns to report clock pins and internal
+##              pins for from/to pins
+## 02-26-2015 - Added option to tag pins with clock attribute: <pin> (*)
+## 04-30-2014 - Initial release
+########################################################################################
+
+# Check for missing timing arcs inside Dotlib files.
+# The flow is to generate fragment files from Dotlib first with dotlib2tcl
+# Once this is done, this script can be run.
+
+set SCRIPT_VERSION {05-12-2015}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+lappend auto_path /wrk/hdstaff/dpefour/support/Olympus/assets/sqlite3.8.0.2
+package require sqlite3
+
+# Execute the SQL command. When failed, retry until the database is unlocked
+proc wait_db_ready { &SQL {cmd {pragma integrity_check} } } {
+  upvar &SQL SQL
+  # Wait for the database to be unlocked
+  while {[catch { SQL eval $cmd } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      puts "SQL database locked ..."
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      puts "SQL database read-only ..."
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+  return 0
+}
+
+# SQLite3 database
+set sqlitefilename {}
+set cellpattern {%}
+# set cellpattern {}
+set pinpattern  {}
+set timingsensepattern  {%}
+set timingtypepattern  {%}
+set fpgaconditionpattern  {}
+set veamconditionpattern  {}
+set table {arc}
+set frompinpattern {}
+set topinpattern {}
+set reportArcs {all}; # all|matching|mismatching
+set limit 999999999
+set showclockpins 0
+set showinternalpins 0
+
+set reportfilename {}
+set filemode {w}
+set format {table}
+
+set error 0
+set show_help 0
+set VERBOSE 0
+set DEBUG 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -db -
+    --db {
+      set sqlitefilename [::tb::lshift argv]
+    }
+    -c -
+    -cell -
+    -cells {
+      set cellpattern [::tb::lshift argv]
+    }
+    -p -
+    -pin -
+    -pins {
+      set pinpattern [::tb::lshift argv]
+    }
+    -f -
+    -from {
+      set frompinpattern [::tb::lshift argv]
+    }
+    -t -
+    -to {
+      set topinpattern [::tb::lshift argv]
+    }
+    -tt -
+    -timing_type {
+      set timingtypepattern [::tb::lshift argv]
+    }
+    -ts -
+    -timing_sense {
+      set timingsensepattern [::tb::lshift argv]
+    }
+    -fc -
+    -fpgacond {
+      set fpgaconditionpattern [::tb::lshift argv]
+    }
+    -vc -
+    -veamcond {
+      set veamconditionpattern [::tb::lshift argv]
+    }
+    -l -
+    -limit {
+      set limit [::tb::lshift argv]
+    }
+    -m -
+    -matching_dotlib {
+      set reportArcs {matching}
+    }
+    -M -
+    -mismatching_dotlib {
+      set reportArcs {mismatching}
+    }
+    -file {
+      set reportfilename [::tb::lshift argv]
+    }
+    -a -
+    -append {
+      set filemode {a}
+    }
+    -table {
+      set format {table}
+    }
+    -csv {
+      set format {csv}
+    }
+    -list {
+      set format {list}
+    }
+    -dotlib {
+      set table {arc}
+    }
+    -timer {
+      set table {timer_arc}
+    }
+    -veam {
+      set table {veam_arc}
+    }
+    -clock {
+      set showclockpins 1
+    }
+    -internal {
+      set showinternalpins 1
+    }
+    -attr -
+    -attribute -
+    -attributes {
+      set showclockpins 1
+      set showinternalpins 1
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          set sqlitefilename $name
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: dbQuery
+                [<sqlite3 database>|-db <sqlite3 database>]
+                [-c|-cell <pattern>]
+                [-p|-pin <pattern>]
+                [-f|-from <pattern>]
+                [-t|-to <pattern>]
+                [-tt|-timing_type <pattern>]
+                [-ts|-timing_sense <pattern>]
+                [-fc|-fpgacond <pattern>]
+                [-vc|-veamcond <pattern>]
+                [-dotlib|-timer|-veam]
+                [-m|-matching_dotlib]
+                [-M|-mismatching_dotlib]
+                [-l|-limit <interger>]
+                [-attr|-attribute][-clock][-internal]
+                [-file <filename>]
+                [-a|-append]
+                [-table|-csv|-list]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to query SQLite3 database
+      The wildcard character for the patterns is %%
+      
+      The -pin and -from/-to command options are exclusive.
+
+      The -dotlib|-timer|-veam select the database table to search into.
+      The default is -dotlib, i.e arcs table from the Dotlib.
+      The -timer search for timing arcs extracted by Vivado timer.
+      The -veam search for timing arcs extraced by internal::report_enabled_arcs .
+
+      The -vc/-veamcond only applies to -timer/-veam options.
+
+      The -fc/-fpgacond only applies to -dotlib option.
+
+      The -matching_dotlib/-mismatching_dotlib only applies to -timer/-veam options.
+      -matching_dotlib only reports arcs that exist in Dotlib. -mismatching_dotlib only
+      reports arcs that to not match any Dotlib arc. By default, all timing arcs are reported.
+
+      The first 'U' colunm with -timer/-veam indicates whether the timing arc
+      has been found inside the Dotlib. A '*' in this column indicates that no
+      matching timing arc is found inside Dotlib.
+      
+      The -clock reports pins with 'clock : true' inside Dotlib
+      The -internal reports internal pins
+      The -attribute reports both clock and internal pins (-clock and -internal)
+
+      The -table|-csv|-list select the output format. The default is -table that
+      generates a tabular format. The -csv generates a CSV format. The -list generates
+      a list format.
+
+    Version: %s
+
+    Example:
+       dbQuery './kintex7.db' -cell 'BITSLICE%%' -pin '%%NCLK%%' -tt '%%pulse%%' -fc "%%AREG%%"
+       dbQuery './kintex7.db' -cell 'BITSLICE%%' -from "CLK%%" -tt '%%pulse%%' -timer
+       dbQuery './kintex7.db' -cell 'BITSLICE%%' -pin '%%NCLK%%' -tt '%%pulse%%' -timer -vc "%%AREG_0%%"
+       dbQuery -db './kintex7.db' -cell 'BITSLICE%%' -pin '%%NCLK%%' -file myreport.rpt
+       dbQuery -db './kintex7.db' -cell 'BITSLICE%%' -pin '%%NCLK%%' -file myreport.csv -csv
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$cellpattern == {}} {
+  puts " -E- no cell pattern provided"
+  incr error
+}
+
+if {($pinpattern == {}) && ($frompinpattern == {}) && ($topinpattern == {})} {
+  set pinpattern {%}
+} elseif {($pinpattern != {}) && (($frompinpattern != {}) || ($topinpattern != {}))} {
+  puts " -E- cannot use -pin and -from/-to at the same time"
+  incr error
+} elseif {$pinpattern == {}} {
+  if {$frompinpattern == {}} { set frompinpattern {%} }
+  if {$topinpattern == {}} { set topinpattern {%} }
+}
+
+if {($fpgaconditionpattern != {}) && ($table != {arc})} {
+  puts " -E- -fc is only valid with -dotlib (default mode)"
+  incr error
+}
+
+if {($veamconditionpattern != {}) && ($table == {arc})} {
+  puts " -E- -vc is only valid with -timer/-veam"
+  incr error
+}
+
+# SQLite3 database
+if {![file exists $sqlitefilename]} {
+  puts " -E- file '$sqlitefilename' does not exist"
+  incr error
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+# Open SQLite3 database
+sqlite3 SQL $sqlitefilename -readonly true
+wait_db_ready SQL
+set dbVersion [SQL eval { SELECT value FROM param WHERE property='version'; } ]
+
+if {($dbVersion <= 1.5) && $showclockpins} {
+  incr error
+  puts " -E- Database version ($dbVersion) is not compatible with -clock"
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  # Closing the SQLite3 database
+  SQL close
+  exit 1
+}
+
+set tbl [::tb::prettyTable "Timing Arcs Summary\nDatabase: [file normalize $sqlitefilename]"]
+switch $table {
+  arc {
+    if {$VERBOSE} {
+      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {FPGA Condition} {Cell ID} {From ID} {To ID} {Timing ID} {FPGA Condition ID} {Arc ID}]
+    } else {
+      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {FPGA Condition}]
+    }
+  }
+  timer_arc -
+  veam_arc {
+    if {$VERBOSE} {
+      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {VEAM Config} {Cell ID} {From ID} {To ID} {Timing ID} {VEAM Config ID} {Arc ID}]
+    } else {
+      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {VEAM Config}]
+    }
+  }
+  default {
+  }
+}
+
+set cellids [SQL eval "SELECT id FROM cell WHERE (COALESCE(alias,name) LIKE '$cellpattern') OR (name LIKE '$cellpattern')"]
+if {[llength $cellids] == 0} {
+  puts " error - no cell match pattern '$cellpattern'\n"
+  SQL close
+  exit 1
+}
+# puts "<cellids:$cellids>"
+
+set relatedpinid [list]
+set pinids [list]
+set arcids [list]
+set error 0
+if {$pinpattern != {}} {
+  set pinids [SQL eval "SELECT id FROM pin WHERE ( (COALESCE(alias,name) LIKE '$pinpattern' )
+                                                   OR (name LIKE '$pinpattern' )
+                                                   OR (belname LIKE '$pinpattern' )
+                                                 ) AND cellid IN ('[join $cellids ',']')"]
+  set relatedpinid $pinids
+  if {[llength $pinids] == 0} {
+    puts " error - no pin match pattern '$pinpattern'"
+    incr error
+  }
+  # puts "<pinids:$pinids>"
+#   set arcids [concat [SQL eval "SELECT id FROM $table WHERE relatedpinid IN ('[join $relatedpinid ',']') "] \
+#                      [SQL eval "SELECT id FROM $table WHERE pinid IN ('[join $pinids ',']')"] \
+#              ]
+  set arcids [SQL eval "SELECT id FROM $table WHERE (relatedpinid IN ('[join $relatedpinid ',']') ) OR (pinid IN ('[join $pinids ',']') )"]
+  # puts "<arcids:$arcids>"
+  if {[llength $arcids] == 0} {
+    puts " error - no timing arc found for cell pattern '$cellpattern' and pin pattern '$pinpattern'"
+    incr error
+  }
+} else {
+  set relatedpinid [SQL eval "SELECT id FROM pin WHERE ( (COALESCE(alias,name) LIKE '$frompinpattern')
+                                                         OR (name LIKE '$frompinpattern' )
+                                                         OR (belname LIKE '$frompinpattern' )
+                                                       ) AND cellid IN ('[join $cellids ',']')"]
+  set pinids [SQL eval "SELECT id FROM pin WHERE ( (COALESCE(alias,name) LIKE '$topinpattern')
+                                                         OR (name LIKE '$topinpattern' )
+                                                         OR (belname LIKE '$topinpattern' )
+                                                       ) AND cellid IN ('[join $cellids ',']')"]
+  if {[llength $relatedpinid] == 0} {
+    puts " error - no From pin match patterns '$frompinpattern'"
+    incr error
+  }
+  if {[llength $pinids] == 0} {
+    puts " error - no To pin match patterns '$topinpattern'"
+    incr error
+  }
+  # puts "<pinids:$pinids>"
+  set arcids [SQL eval "SELECT id FROM $table WHERE (relatedpinid IN ('[join $relatedpinid ',']') ) AND (pinid IN ('[join $pinids ',']') )"]
+  # puts "<arcids:$arcids>"
+  if {[llength $arcids] == 0} {
+    puts " error - no timing arc found for cell pattern '$cellpattern' with From pin pattern '$frompinpattern' and To pin pattern '$topinpattern'"
+    incr error
+  }
+}
+
+if {$error} {
+  puts ""
+  SQL close
+  exit 1
+}
+
+set num 1
+if {[catch {
+  switch $table {
+    arc {
+      set fpgacondcmd {}
+      if {$fpgaconditionpattern != {}} {
+        set fpgacondcmd "
+                AND (${table}.fpga_arc_condition_id IS NOT NULL
+                     AND
+                     (SELECT name FROM fpga_condition WHERE fpga_condition.id=${table}.fpga_arc_condition_id) LIKE '$fpgaconditionpattern'
+                    )
+        "
+      }
+      set CMD "SELECT arc.id AS arcID,
+                 (SELECT name FROM cell WHERE cell.id=arc.cellid) AS cellName,
+                 arc.cellid AS cellID,
+                 (SELECT name FROM pin WHERE pin.id=arc.pinid) AS pinName,
+                 arc.pinid AS pinID,
+                 (SELECT name FROM pin WHERE pin.id=arc.relatedpinid) AS relatedpinName,
+                 arc.relatedpinid AS relatedpinID,
+                 (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
+                 (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense,
+                 arc.timingid AS timingID,
+                 (SELECT name FROM fpga_condition WHERE fpga_condition.id=timing.fpga_arc_condition_id) AS fpga_condition,
+          "
+      if {$dbVersion >= 1.6} {
+        append CMD "
+                 (SELECT clock FROM pin WHERE pin.id=arc.pinid) AS pinClock,
+                 (SELECT clock FROM pin WHERE pin.id=arc.relatedpinid) AS relatedpinClock,
+                 (SELECT direction FROM pin WHERE pin.id=arc.pinid) AS pinDir,
+                 (SELECT direction FROM pin WHERE pin.id=arc.relatedpinid) AS relatedpinDir,
+          "
+      }
+      append CMD "
+                 timing.fpga_arc_condition_id AS fpga_conditionID
+          FROM arc
+               JOIN pin pinTo ON pinTo.id=arc.pinid
+               JOIN pin pinFrom ON pinFrom.id=arc.relatedpinid
+               JOIN timing ON timing.id=arc.timingid
+          WHERE arc.id IN ('[join $arcids ',']')
+                AND timing.timing_type LIKE '$timingtypepattern'
+                AND timing.timing_sense LIKE '$timingsensepattern'
+                ${fpgacondcmd}
+          ORDER BY cellName ASC,
+                   relatedpinName ASC,
+                   pinName ASC,
+                   timing_type ASC,
+                   timing_sense ASC
+          LIMIT ${limit}
+          ;
+         "
+
+      set mismatchArcs 0
+      set totalArcs 0
+      SQL eval $CMD values {
+        incr totalArcs
+        foreach elm {cellID relatedpinID pinID timingID fpga_conditionID arcID} { if {![info exists values($elm)]} { set values($elm) {} } }
+        if {$values(timingID) == {}} {
+          # If no reference to a timing section from the Dotlib has been found, mark the column with a '*'
+          incr mismatchArcs
+          set status {*}
+        } else {
+          set status {}
+        }
+        set relatedpinName $values(relatedpinName)
+        set pinName $values(pinName)
+        set fromAttr {}
+        set toAttr {}
+        if {$showclockpins} {
+          # Reformat pins with 'clock : true' inside Dotlib as: <pin> (c)
+#           if {$values(relatedpinClock) != {}} { set relatedpinName [format {%s (c)} $relatedpinName] }
+#           if {$values(pinClock) != {}} { set pinName [format {%s (c)} $pinName] }
+          if {$values(relatedpinClock) != {}} { append fromAttr {c} }
+          if {$values(pinClock) != {}} { append toAttr {c} }
+        }
+        if {$showinternalpins} {
+          # Reformat internal pins inside Dotlib as: <pin> (i)
+#           if {[string tolower $values(relatedpinDir)] == {internal}} { set relatedpinName [format {%s (i)} $relatedpinName] }
+#           if {[string tolower $values(pinDir)] == {internal}} { set pinName [format {%s (i)} $pinName] }
+          if {[string tolower $values(relatedpinDir)] == {internal}} { append fromAttr {i} }
+          if {[string tolower $values(pinDir)] == {internal}} { append toAttr {i} }
+        }
+        if {$VERBOSE} {
+          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(fpga_condition) $values(cellID) $values(relatedpinID) $values(pinID) $values(timingID) $values(fpga_conditionID) $values(arcID) ]
+        } else {
+          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(fpga_condition) ]
+        }
+        incr num
+      }
+    }
+    timer_arc -
+    veam_arc {
+      set veamcondcmd {}
+      if {$veamconditionpattern != {}} {
+        set veamcondcmd "
+                AND (${table}.veam_config_id IS NOT NULL
+                     AND
+                     (SELECT name FROM veam_config WHERE veam_config.id=${table}.veam_config_id) LIKE '$veamconditionpattern'
+                    )
+        "
+      }
+# puts "<cellids:$cellids>"
+# puts "<pinids:$pinids>"
+# puts "<arcids:$arcids>"
+# puts "<timingtypepattern:$timingtypepattern>"
+# puts "<timingsensepattern:$timingsensepattern>"
+      set CMD "SELECT ${table}.id AS arcID,
+                 (SELECT name FROM cell WHERE cell.id=${table}.cellid) AS cellName,
+                 ${table}.cellid AS cellID,
+                 (SELECT name FROM pin WHERE pin.id=${table}.pinid) AS pinName,
+                 ${table}.pinid AS pinID,
+                 (SELECT name FROM pin WHERE pin.id=${table}.relatedpinid) AS relatedpinName,
+                 ${table}.relatedpinid AS relatedpinID,
+                 ${table}.timing_type,
+                 ${table}.timing_sense,
+                 ${table}.arcid AS timingID,
+                 (SELECT name FROM veam_config WHERE veam_config.id=${table}.veam_config_id) AS veam_config,
+          "
+      if {$dbVersion >= 1.6} {
+        append CMD "
+                 (SELECT clock FROM pin WHERE pin.id=${table}.pinid) AS pinClock,
+                 (SELECT clock FROM pin WHERE pin.id=${table}.relatedpinid) AS relatedpinClock,
+                 (SELECT direction FROM pin WHERE pin.id=arc.pinid) AS pinDir,
+                 (SELECT direction FROM pin WHERE pin.id=arc.relatedpinid) AS relatedpinDir,
+          "
+      }
+      append CMD "
+                 ${table}.veam_config_id AS veam_configID
+          FROM ${table}
+               JOIN pin pinTo ON pinTo.id=${table}.pinid
+               JOIN pin pinFrom ON pinFrom.id=${table}.relatedpinid
+          WHERE ( ${table}.id IN ('[join $arcids ',']')
+                  OR
+                  ( (${table}.arcid IS NULL)
+                    AND (${table}.cellid IN ('[join $cellids ',']') )
+                    AND (${table}.relatedpinid IN ('[join $relatedpinid ',']') )
+                    AND (${table}.pinid IN ('[join $pinids ',']') )
+                  )
+                )
+                AND ${table}.timing_type LIKE '$timingtypepattern'
+                AND ${table}.timing_sense LIKE '$timingsensepattern'
+                ${veamcondcmd}
+          ORDER BY cellName ASC,
+                   relatedpinName ASC,
+                   pinName ASC,
+                   timing_type ASC,
+                   timing_sense ASC
+          LIMIT ${limit}
+          ;
+         "
+
+# puts "<CMD:\n$CMD>"
+
+      set mismatchArcs 0
+      set totalArcs 0
+      SQL eval $CMD values {
+        incr totalArcs
+        foreach elm {cellID relatedpinID pinID timingID veam_configID arcID} { if {![info exists values($elm)]} { set values($elm) {} } }
+        if {$values(timingID) == {}} {
+          # If no reference to a timing section from the Dotlib has been found, mark the column with a '*'
+          incr mismatchArcs
+          set status {*}
+          if {$reportArcs == {matching} } {
+            # Skip this timing arc if the user requested to only report timing arcs that are matching the Dotlib
+            continue
+          }
+        } else {
+          set status {}
+          if {$reportArcs == {mismatching} } {
+            # Skip this timing arc if the user requested to only report timing arcs that are matching the Dotlib
+            continue
+          }
+        }
+        set relatedpinName $values(relatedpinName)
+        set pinName $values(pinName)
+        set fromAttr {}
+        set toAttr {}
+        if {$showclockpins} {
+          # Reformat pins with 'clock : true' inside Dotlib as: <pin> (c)
+#           if {$values(relatedpinClock) != {}} { set relatedpinName [format {%s (c)} $relatedpinName] }
+#           if {$values(pinClock) != {}} { set pinName [format {%s (c)} $pinName] }
+          if {$values(relatedpinClock) != {}} { append fromAttr {c} }
+          if {$values(pinClock) != {}} { append toAttr {c} }
+        }
+        if {$showinternalpins} {
+          # Reformat internal pins inside Dotlib as: <pin> (i)
+#           if {[string tolower $values(relatedpinDir)] == {internal}} { set relatedpinName [format {%s (i)} $relatedpinName] }
+#           if {[string tolower $values(pinDir)] == {internal}} { set pinName [format {%s (i)} $pinName] }
+          if {[string tolower $values(relatedpinDir)] == {internal}} { append fromAttr {i} }
+          if {[string tolower $values(pinDir)] == {internal}} { append toAttr {i} }
+        }
+        if {$VERBOSE} {
+          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(veam_config) $values(cellID) $values(relatedpinID) $values(pinID) $values(timingID) $values(veam_configID) $values(arcID) ]
+        } else {
+          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(veam_config) ]
+        }
+        incr num
+      }
+    }
+    default {
+    }
+  }
+} errorstring]} {
+  puts " error - $errorstring"
+  puts "\n Too many cell(s)/pin(s)/timing arc(s) selected"
+  puts "    # cells: [llength $cellids]"
+  puts "    # pins : [llength $pinids]"
+  puts "    # arcs : [llength $arcids]"
+  puts ""
+  SQL close
+  exit 1
+}
+
+if {1} {
+  # SQL does sort well bus names (e.g a[0] a[10] .. a[19] a[1] ...)
+  $tbl sort -dictionary +2 +3 +5 +7 +8 +9
+  # Because the table is sorted post-SQL, hide the first column since it does
+  # not make sense anymore
+#   set columns [list 2 3 4 5 6 7 8 9 10 11 12 13 14 15]
+  set columns [list 2 3 5 7 8 9 10 11 12 13 14 15]
+  if {$showinternalpins || $showclockpins} {
+    # Showing the pin attribute columns
+    set columns [concat $columns [list 4 6] ]
+  }
+  switch $table {
+    arc {
+      $tbl config -display_columns $columns -indent 2
+    }
+    timer_arc -
+    veam_arc {
+      lappend columns {1}
+      $tbl config -display_columns $columns -indent 2
+    }
+    default {
+    }
+  }
+  switch $reportArcs {
+    all {
+      if {$pinpattern != {}} {
+        set pininfo "Pin pattern: $pinpattern"
+      } else {
+        set pininfo "From Pin pattern: $frompinpattern\nTo Pin pattern: $topinpattern"
+      }
+      $tbl config -title "Timing Arcs Summary\nDatabase: [file normalize $sqlitefilename]\nDatabase version: $dbVersion\nDatabase table: $table\nCell pattern: $cellpattern\n$pininfo\nTiming type pattern: $timingtypepattern\nTiming sense pattern: $timingsensepattern\nFound arc(s): [$tbl numrows]\nNumber of arc(s) not matching Dotlib: $mismatchArcs"
+    }
+    mismatching -
+    matching {
+      if {$pinpattern != {}} {
+        set pininfo "Pin pattern: $pinpattern"
+      } else {
+        set pininfo "From Pin pattern: $frompinpattern\nTo Pin pattern: $topinpattern"
+      }
+      $tbl config -title "Timing Arcs Summary\nDatabase: [file normalize $sqlitefilename]\nDatabase version: $dbVersion\nDatabase table: $table\nCell pattern: $cellpattern\n$pininfo\nTiming type pattern: $timingtypepattern\nTiming sense pattern: $timingsensepattern\nFound arc(s): [$tbl numrows]"
+    }
+    default {
+    }
+  }
+#   $tbl config -title "Timing Arcs Summary\nDatabase: [file normalize $sqlitefilename]\nDatabase version: $dbVersion\nDatabase table: $table\nCell pattern: $cellpattern\nPin pattern: $pinpattern\nTiming type pattern: $timingtypepattern\nTiming sense pattern: $timingsensepattern\nFound arc(s): [$tbl numrows]\nNumber of arc(s) not matching Dotlib: $mismatchArcs"
+}
+
+if {$reportfilename == {}} {
+  switch $format {
+    table {
+      puts [$tbl print]
+    }
+    csv {
+      puts [$tbl export -format csv]
+    }
+    list {
+      puts [$tbl export -format list]
+    }
+    default {
+    }
+  }
+} else {
+  set reportFH [open $reportfilename $filemode]
+  switch $format {
+    table {
+      puts $reportFH [$tbl print]
+    }
+    csv {
+      puts $reportFH [$tbl export -format csv]
+    }
+    list {
+      puts $reportFH [$tbl export -format list]
+    }
+    default {
+    }
+  }
+  close $reportFH
+  puts " File [file normalize $reportfilename] generated"
+}
+
+if {$showinternalpins || $showclockpins} {
+  puts "  Pin attributes: c=clock i=internal"
+}
+puts "  Found [$tbl numrows] arc(s)"
+if {($reportArcs == {all}) && ($mismatchArcs > 0)} {
+  puts "  Number of arc(s) not matching Dotlib: $mismatchArcs"
+}
+
+catch {$tbl destroy}
+
+# Closing the SQLite3 database
+SQL close
+
+exit 0

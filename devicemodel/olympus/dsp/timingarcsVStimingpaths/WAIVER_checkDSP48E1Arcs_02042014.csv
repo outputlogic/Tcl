@@ -1,0 +1,9 @@
+From,To,Timing Type,Timing Sense,Waiver,Waiver Note,FPGA Condition
+#
+# First set of waivers from 12/18/2013
+#
+ACIN[27],P[0],combinational,,1,Internal Structure,dsp48e1.ADREG_0_AREG_0_A_INPUT_CASCADE_MREG_0_PREG_0_USE_DPORT_TRUE_USE_MULT_DYNAMIC
+ACIN[27],P[1],combinational,,1,Internal Structure,dsp48e1.ADREG_0_AREG_0_A_INPUT_CASCADE_MREG_0_PREG_0_USE_DPORT_TRUE_USE_MULT_DYNAMIC
+ACIN[27],P[2],combinational,,1,Internal Structure,dsp48e1.ADREG_0_AREG_0_A_INPUT_CASCADE_MREG_0_PREG_0_USE_DPORT_TRUE_USE_MULT_DYNAMIC
+ACIN[27],P[3],combinational,,1,Internal Structure,dsp48e1.ADREG_0_AREG_0_A_INPUT_CASCADE_MREG_0_PREG_0_USE_DPORT_TRUE_USE_MULT_DYNAMIC
+ACIN[27],P[4],combinational,,1,Internal Structure,dsp48e1.ADREG_0_AREG_0_A_INPUT_CASCADE_MREG_0_PREG_0_USE_DPORT_TRUE_USE_MULT_DYNAMIC

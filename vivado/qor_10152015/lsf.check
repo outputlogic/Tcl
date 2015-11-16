@@ -1,0 +1,53 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+if {![file exists ./lsf.pid]} {
+  puts " -I- file ./lsf.pid does not exists"
+  exit 0
+}
+
+set FH [open ./lsf.pid {r}]
+set content [read $FH]
+close $FH
+
+# 9035861 dpefour RUN   long       xsjdpefour40 teapot9     vivado ... May  1 17:18
+# 9035861 dpefour RUN   long       xsjdpefour40 teapot9     vivado -mode batch -source /wrk/hdstaff/dpefour/bugcases/856770/ubm/856770_ps8/rtl5_4_clean_clock_try1/qor_2015_1.opt_design.keep_muxfx/ExtraNetDelay_low/run.tcl -log /wrk/hdstaff/dpefour/bugcases/856770/ubm/856770_ps8/rtl5_4_clean_clock_try1/qor_2015_1.opt_design.keep_muxfx/ExtraNetDelay_low/run.log -jou /wrk/hdstaff/dpefour/bugcases/856770/ubm/856770_ps8/rtl5_4_clean_clock_try1/qor_2015_1.opt_design.keep_muxfx/ExtraNetDelay_low/run.jou May  1 17:18
+
+foreach line [split $content \n] {
+  # E.g:
+  #    5887558 dpefour RUN   long       xsjdpefour4 xsjl24538   *w/run.jou Apr  7 14:35
+  if {[regexp {^([0-9]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+} $line -- jobid]} {
+    # Try to extract the directive being run:
+    #   9035861 dpefour RUN   long       xsjdpefour40 teapot9     vivado -mode batch -source /wrk/hdstaff/dpefour/bugcases/856770/ubm/856770_ps8/rtl5_4_clean_clock_try1/qor_2015_1.opt_design.keep_muxfx/ExtraNetDelay_low/run.tcl -log /wrk/hdstaff/dpefour/bugcases/856770/ubm/856770_ps8/rtl5_4_clean_clock_try1/qor_2015_1.opt_design.keep_muxfx/ExtraNetDelay_low/run.log -jou /wrk/hdstaff/dpefour/bugcases/856770/ubm/856770_ps8/rtl5_4_clean_clock_try1/qor_2015_1.opt_design.keep_muxfx/ExtraNetDelay_low/run.jou May  1 17:18
+    set directive {}
+    regexp {\/([^\/]+)\/run\.tcl} $line -- directive
+    if {[catch { exec bjobs $jobid } errorstring]} {
+      # Job <6149992> is not found
+      puts " LSF job $jobid is not running \t(DIR=$directive)"
+    } else {
+      # errorstring is formated as below (2 lines):
+      #   JOBID   USER    STAT  QUEUE      FROM_HOST   EXEC_HOST   JOB_NAME   SUBMIT_TIME
+      #   6236161 dpefour RUN   long       xsjdpefour4 teapot5     *m/run.jou Apr  9 11:21
+      # Only the 2nd line is of interest
+      set line [lindex [split $errorstring \n] 1]
+      if {[regexp -nocase {\s(DONE|EXIT)\s} $line]} {
+        # 6149986 dpefour EXIT  long       xsjdpefour4 xsjl24046   *h/run.jou Apr  8 17:23
+        # 6149986 dpefour DONE  long       xsjdpefour4 xsjl24046   *h/run.jou Apr  8 17:23
+        puts " LSF job $jobid is not running \t(DIR=$directive)"
+      } elseif {[regexp -nocase {\sRUN\s} $line]} {
+        # 5609838 dpefour RUN   long       xsjdpefour4 xsjl24537   xterm      Apr  6 14:26
+        puts " LSF job $jobid is running \t(DIR=$directive)"
+      } elseif {[regexp -nocase {\sPEND\s} $line]} {
+        # 5609838 dpefour PEND   long       xsjdpefour4 xsjl24537   xterm      Apr  6 14:26
+        puts " LSF job $jobid is pending \t(DIR=$directive)"
+      } else {
+        set status "<UNKNOWN>"
+        regexp {^\s*[0-9]+\s+[^\s]+\s+([^\s]+)\s+} $line - status
+        puts " LSF job $jobid status is unknown ($status) \t(DIR=$directive)"
+      }
+    }
+  }
+}
+
+exit 0

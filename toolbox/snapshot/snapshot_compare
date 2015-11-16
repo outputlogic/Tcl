@@ -1,0 +1,742 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2015.04.21
+## Description:    Example script to compare multiple snapshots from snapshot database
+##
+########################################################################################
+
+########################################################################################
+## 2015.04.21 - Added support for report_clock_interaction
+## 2015.03.12 - Initial release
+########################################################################################
+
+# Sample report:
+# % snapshot_compare metrics.db
+
+package require toolbox
+
+proc execSQL {&SQL {cmd {pragma integrity_check} } } {
+
+  variable VERBOSE
+  variable DEBUG
+  if {$DEBUG} {
+    puts " DEBUG - SQL command: $cmd"
+  }
+
+  # Wait for the database to be unlocked
+#   while {[catch { uplevel [list ${&SQL} eval $cmd] } errorstring]} {}
+  while {[catch { set res [uplevel [list ${&SQL} eval $cmd]] } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database locked ..." }
+      exec sleep 1
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database read-only ..." }
+      exec sleep 1
+    } else {
+      error $errorstring
+    }
+  }
+#   return 0
+  return $res
+}
+
+proc progressBar {cur tot {indent {}}} {
+  # http://wiki.tcl.tk/16939
+  # if you don't want to redraw all the time, uncomment and change ferquency
+  #if {$cur % ($tot/300)} { return }
+  # set to total width of progress bar
+  set total 76
+
+  # Do not show the progress bar in GUI and Batch modes
+  catch { if {$rdi::mode != {tcl}} { return } }
+
+  set half [expr {$total/2}]
+  set percent [expr {100.*$cur/$tot}]
+  set val (\ [format "%6.2f%%" $percent]\ )
+  set str "|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
+  set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
+  puts -nonewline stderr "\r${indent}${str}"
+}
+
+# Convert duration string such as '1 hr 7 mins 47 secs' to seconds
+proc duration2seconds { string } {
+  set seconds 0
+  # If the input string is already formated as an integer, then return the number as-is
+  if {[regexp {^[0-9]+$} $string]} { return $string }
+  if {$string == {}} { return {} }
+  foreach mult {86400 3600 60 1} name {day hr min sec} {
+    if {[regexp [format {([0-9]+)\s*%s} $name] $string - t]} {
+      set seconds [expr $seconds + $mult * $t]
+    }
+  }
+  return $seconds
+}
+
+# Generate a list of integers
+proc iota {from to} {
+  set out [list]
+  if {$from <= $to} {
+    for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
+  } else {
+    for {set i $from} {$i >= $to} {incr i -1} {lappend out $i}
+  }
+  return $out
+}
+
+proc format_list { list { format default } { reference 0 } } {
+  if {$format == {default}} { return $list }
+  if {($reference <0) || ($reference >= [llength $list])} {
+    set reference 0
+#     return $list
+  }
+  set l [list]
+  if {[llength $list] < 2} { return $list }
+  foreach el $list {
+    if {![string is double $el]} { return $list }
+    if {$el == {}} { return $list }
+  }
+  set ref [lindex $list $reference]
+  for {set i 0} {$i < [llength $list]} {incr i} {
+    set el [lindex $list $i]
+    if {$i == $reference} {
+      lappend l $el
+      continue
+    }
+    switch $format {
+      percent {
+        # Percent of the reference column
+        if {[catch {lappend l [format {%.2f%%} [expr $el / double($ref) * 100] ]} errorstring]} {
+#           lappend l {N/A}
+          lappend l "($el)"
+        }
+      }
+      diff {
+        # Difference with the reference column
+        set diff [expr $el - $ref]
+        if {$el == $ref} {
+          lappend l [format {+%s} $diff]
+        } elseif {$el > $ref} {
+          lappend l [format {+%s} $diff]
+        } else {
+          lappend l $diff
+        }
+      }
+      diffpercent {
+        # Percent of the difference with the reference column
+        set diff [expr $el - $ref]
+        if {[catch {set diffperc [format {%.2f%%} [expr $diff / double(abs($ref)) * 100] ]} errorstring]} {
+#           set diffperc {N/A}
+          set diffperc "($el)"
+          lappend l $diffperc
+          continue
+        }
+        if {$el == $ref} {
+          set diffperc {0%}
+          lappend l [format {+%s} $diffperc]
+        } elseif {$el > $ref} {
+#           lappend l [format {+%s} "$diffperc ($diff)($el)"]
+          lappend l [format {+%s} $diffperc]
+        } else {
+#           lappend l "$diffperc ($diff)($el)"
+          lappend l $diffperc
+        }
+      }
+      default {
+      }
+    }
+  }
+  return $l
+}
+
+proc lintersect {a b} {
+  foreach e $a {
+    set x($e) {}
+  }
+  set result {}
+  foreach e $b {
+    if {[info exists x($e)]} {
+      lappend result $e
+    }
+  }
+  return $result
+}
+
+proc presort_list {l1 l2} {
+  set l [list]
+  foreach el $l1 {
+    if {[lsearch $l2 $el] != -1} {
+      lappend l $el
+    }
+  }
+  foreach el $l2 {
+    if {[lsearch $l $el] == -1} {
+      lappend l $el
+    }
+  }
+  return $l
+}
+
+# Order snapshot IDs based on project/version/release/experiment/step
+proc order_snapshots { snapshotids } {
+  set orderedids [list]
+  set projects [lsort [::tb::get_projects -ids $snapshotids]]
+  foreach project $projects {
+# puts "<project:$project>"
+    set projectids [lintersect $snapshotids [::tb::get_snapshot_ids -project $project] ]
+    set versions [lsort [::tb::get_versions -ids $projectids]]
+# puts "<projectids:$projectids>"
+# puts "<versions:$versions>"
+    foreach version $versions {
+# puts "<version:$version>"
+      set versionids [lintersect $snapshotids [::tb::get_snapshot_ids -project $project -version $version] ]
+      set releases [lsort [::tb::get_releases -ids $versionids]]
+      foreach release $releases {
+# puts "<release:$release>"
+        set releaseids [lintersect $snapshotids [::tb::get_snapshot_ids -project $project -version $version -release $release] ]
+        set experiments [lsort [::tb::get_experiments -ids $releaseids]]
+# puts "<experiments:$experiments>"
+        foreach experiment $experiments {
+# puts "<experiment:$experiment>"
+          set experimentids [lintersect $snapshotids [::tb::get_snapshot_ids -project $project -version $version -release $release -experiment $experiment] ]
+          set steps [lsort [::tb::get_steps -ids $experimentids]]
+          foreach step $steps {
+# puts "<step:$step>"
+            lappend orderedids [::tb::get_snapshot_ids -project $project -version $version -release $release -experiment $experiment -step $step]
+          }
+        }
+      }
+    }
+
+  }
+  return $orderedids
+}
+
+proc get_timing_metrics {id} {
+  catch {unset metrics}
+  set metrics(wns) [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.wns}]]
+  set metrics(tns) [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.tns}]]
+  set metrics(tnsFailing) [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.tns.failing}]]
+  set metrics(whs) [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.whs}]]
+  set metrics(ths) [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.ths}]]
+  set metrics(thsFailing) [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.ths.failing}]]
+  return [array get metrics]
+}
+
+proc get_routing_metrics {id} {
+  catch {unset metrics}
+  set metrics(overlaps) [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.route_status.errors}]]
+  return [array get metrics]
+}
+
+proc get_runtime_metrics {id} {
+  catch {unset metrics}
+  set duration [lindex [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {duration}]] 0]
+  if {$duration == {}} { set duration 0 }
+  set metrics(duration) $duration
+  return [array get metrics]
+}
+
+proc get_utilization_metrics {id} {
+  catch {unset metrics}
+#   # Example of extra metrics being extracted:
+#   # +----------------------------+--------+-------+-----------+-------+
+#   # |          Site Type         |  Used  | Fixed | Available | Util% |
+#   # +----------------------------+--------+-------+-----------+-------+
+#   # | CLB LUTs                   | 291167 |     0 |    537600 | 54.16 |
+#   # |   LUT as Logic             | 259342 |     0 |    537600 | 48.24 |
+#   # |   LUT as Memory            |  31825 |     0 |     76800 | 41.43 |
+#   # |     LUT as Distributed RAM |  24458 |     0 |           |       |
+#   # |     LUT as Shift Register  |   7367 |     0 |           |       |
+#   # | CLB Registers              | 433322 |     0 |   1075200 | 40.30 |
+#   # |   Register as Flip Flop    | 433322 |     0 |   1075200 | 40.30 |
+#   # |   Register as Latch        |      0 |     0 |   1075200 |  0.00 |
+#   # | CARRY8                     |   2833 |     0 |     67200 |  4.21 |
+#   # | F7 Muxes                   |   7776 |     0 |    268800 |  2.89 |
+#   # | F8 Muxes                   |    111 |     0 |    134400 |  0.08 |
+#   # | F9 Muxes                   |      0 |     0 |     67200 |  0.00 |
+#   # +----------------------------+--------+-------+-----------+-------+
+  set report_utilization [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.utilization}]]
+  # Extract values from report_utilization
+  regexp -nocase -- {CLB LUTs[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(clb_luts)
+  regexp -nocase -- {LUT as Logic[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_logic)
+  regexp -nocase -- {LUT as Memory[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_memory)
+  regexp -nocase -- {LUT as Distributed RAM[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_distributed_ram)
+  regexp -nocase -- {LUT as Shift Register[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_shift_register)
+  regexp -nocase -- {CLB Registers[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(clb_registers)
+  regexp -nocase -- {Register as Flip Flop[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_flip_flop)
+  regexp -nocase -- {Register as Latch[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_latch)
+  regexp -nocase -- {CARRY8[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(carry8)
+  regexp -nocase -- {F7 Muxes[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(f7_muxes)
+  regexp -nocase -- {F8 Muxes[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(f8_muxes)
+  regexp -nocase -- {F9 Muxes[^\|]*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(f9_muxes)
+  return [array get metrics]
+}
+
+proc get_clock_interaction {id} {
+  catch {unset metrics}
+  # The returned value from ::tb::get_metric_values is a list of a single element. Use lindex to get the value
+  # out of the list
+  set metrics(report) [lindex [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.clock_interaction}]] 0]
+  return [array get metrics]
+}
+
+
+
+set files {}
+set projectPattern {%}
+# set runPattern {%}
+set versionPattern {%}
+set experimentPattern {%}
+set stepPattern {%}
+set releasePattern {%}
+set format {default}
+set refColumn 0
+set verbose 0
+set help 0
+set error 0
+if {[llength $::argv] == 0} {
+  set help 1
+}
+while {[llength $::argv]} {
+  set name [::tb::lshift ::argv]
+#     {^-r$} -
+#     {^-run$} -
+#     {^-r(un?)?$} {
+#       set run [lshift ::argv]
+#     }
+  switch -regexp -- $name {
+    {^-db$} {
+       set files [concat $files [glob -nocomplain [lshift ::argv]]]
+    }
+    {^-project$} -
+    {^-p$} -
+    {^-pr(o(j(e(ct?)?)?)?)?$} {
+      set projectPattern [lshift ::argv]
+    }
+    {^-ver$} -
+    {^-version$} -
+    {^-vers(i(on?)?)?$} {
+      set versionPattern [lshift ::argv]
+    }
+    {^-e$} -
+    {^-experiment$} -
+    {^-e(x(p(e(r(i(m(e(nt?)?)?)?)?)?)?)?)?$} {
+      set experimentPattern [lshift ::argv]
+    }
+    {^-s$} -
+    {^-step$} -
+    {^-s(t(ep?)?)?$} {
+      set stepPattern [lshift ::argv]
+    }
+    {^-rel$} -
+    {^-release$} -
+    {^-vivado$} -
+    {^-r(e(l(e(a(se?)?)?)?)?)?$} {
+         set releasePattern [lshift ::argv]
+    }
+    {^-f$} -
+    {^-format$} -
+    {^-f(o(r(m(a(t?)?)?)?)?)?$} {
+      set format [string tolower [lshift ::argv]]
+    }
+    {^-c$} -
+    {^-column$} -
+    {^-c(o(l(u(mn?)?)?)?)?$} {
+      set refColumn [lshift ::argv]
+    }
+    {^-verbose$} -
+    {^-verb(o(se?)?)?$} {
+      set verbose 1
+    }
+    {^-h$} -
+    {^-help$} -
+    {^-h(e(lp?)?)?$} {
+         set help 1
+    }
+    default {
+          if {[string match "-*" $name]} {
+            puts " -E option '$name' is not a valid option."
+            incr error
+          } else {
+            set files [concat $files [glob -nocomplain $name]]
+          }
+    }
+  }
+}
+
+if {$help} {
+#             [-run <string>]
+  puts [format {
+Usage: snapshot_compare
+            [-db <filename(s)>]
+            [-project <string>]
+            [-release <string>]
+            [-version <string>]
+            [-experiment <string>]
+            [-step <string>]
+            [-format <default|diff|percent|diffpercent>]
+            [-column <num>]
+            [-verbose|-v]
+            [-help|-h]
+
+Description: Compare snapshots from snapshot database(s)
+
+  Use -db to specify a list of files or a file pattern
+
+  Use -column to select the reference column. To be used with -format
+
+Example:
+   snapshot_compare -db metrics.db
+   snapshot_compare -db */metrics.db
+   snapshot_compare -db '*/metrics.db'
+} ]
+  # HELP -->
+
+  puts ""
+  exit 0
+}
+
+if {$files == {}} {
+  puts " -E- no snapshot db provided (-db)"
+  incr error
+}
+
+if {[lsearch [list default diff percent diffpercent] $format] == -1} {
+  puts " -E- invalid format '$format'. Expected values: default diff percent diffpercent"
+  incr error
+}
+
+if {![regexp {^[0-9]+$} $refColumn]} {
+  puts " -E- invalid -column '$refColumn'"
+  incr error
+}
+
+if {$error} {
+  puts " -E- some error(s) happened. Cannot continue.\n"
+  exit 1
+}
+
+# set tbl [::tb::prettyTable]
+set snapshotHeader [list]
+
+# set metrics [list]
+# lappend metrics [list {Project} {       } {       } {       } {          } {    } {Timing} {   } {   } {          } {   } {   } {          } {        } {        } ]
+# # lappend metrics [list {       } {project} {version} {release} {experiment} {step} {      } {wns} {tns} {tnsFailing} {whs} {ths} {thsFailing} {overlaps} {duration} ]
+# lappend metrics [list - {} - {project} - {version} - {release} - {experiment} - {step} - {      } - {wns} - {tns} - {tnsFailing} - {whs} - {ths} - {thsFailing} - {overlaps} - {duration} ]
+# lappend snapshotHeader {Category} {Metrics}
+
+catch {unset categories}
+catch {unset metrics}
+# foreach key {snapshot timing routing runtime utilization} { set categories($key) [list] }
+set num 0
+foreach filename $files {
+# puts "<filename:$filename>"
+# puts "<-project $projectPattern -release $releasePattern -version $versionPattern -experiment $experimentPattern -step $stepPattern>"
+  incr num
+  # Open the database in memory (-memory)
+  set SQL [::tb::open_snapshot_db -db $filename -memory]
+  set dbVersion [$SQL eval { SELECT value FROM param WHERE property='version' LIMIT 1; } ]
+  if {$dbVersion < 1.5} {
+    puts " -W- snapshot database $dbVersion is not supported. Skipped"
+    continue
+  }
+
+  set allsnapshotids [::tb::get_snapshot_ids -project $projectPattern -release $releasePattern -version $versionPattern -experiment $experimentPattern -step $stepPattern]
+# puts "<allsnapshotids:[llength $allsnapshotids]:$allsnapshotids>"
+  set allsnapshotids [order_snapshots $allsnapshotids]
+# puts "<allsnapshotids:[llength $allsnapshotids]:$allsnapshotids>"
+#   set allsnapshotids [::tb::get_snapshot_ids]
+  set count 0
+  foreach snapshotid $allsnapshotids {
+    set project [::tb::get_projects -ids $snapshotid]
+    set version [::tb::get_versions -ids $snapshotid]
+    set release [::tb::get_releases -ids $snapshotid]
+    set experiment [::tb::get_experiments -ids $snapshotid]
+    set step [::tb::get_steps -ids $snapshotid]
+    set run [::tb::get_runs -ids $snapshotid]
+# puts "<snapshotid:$snapshotid><project:$project release:$release version:$version experiment:$experiment step:$step>"
+    if {[llength $files] > 1} {
+      if {$verbose} {
+        progressBar $count [llength $allsnapshotids] [format { Processing [%s/%s] (%s)} $num [llength $files] [file normalize $filename] ]
+      } else {
+        progressBar $count [llength $allsnapshotids] [format { Processing [%s/%s] } $num [llength $files]]
+      }
+    } else {
+      progressBar $count [llength $allsnapshotids]
+    }
+# #     lappend metrics [concat [list {} $project $version $release $experiment $step] [list {}] [get_snapshot_metrics $project $version $release $experiment $step] ]
+#     lappend metrics [concat [list id $snapshotid project $project version $version release $release experiment $experiment step $step] [list {} {}] [get_timing_metrics $snapshotid] ]
+    lappend categories(id) [list id $snapshotid]
+    lappend categories(snapshot) [list id $snapshotid project $project version $version release $release experiment $experiment step $step]
+    lappend categories(timing) [get_timing_metrics $snapshotid]
+    lappend categories(routing) [get_routing_metrics $snapshotid]
+    lappend categories(runtime) [get_runtime_metrics $snapshotid]
+    lappend categories(utilization) [get_utilization_metrics $snapshotid]
+    lappend categories(clock_interaction) [get_clock_interaction $snapshotid]
+# puts "<[lindex $categories(timing) end]>"
+    lappend snapshotHeader "Snapshot ($snapshotid)"
+    incr count
+  }
+  ::tb::close_snapshot_db
+}
+
+# Clear progress bar
+if {$verbose} {
+  puts "\r[string repeat { } 220]"
+} else {
+  puts "\r[string repeat { } 100]"
+}
+
+# Build the table
+# puts "<snapshotHeader:$snapshotHeader>"
+# $tbl header $snapshotHeader
+# foreach el $metrics {
+#   $tbl addrow $el
+# }
+# Number of columns
+
+# parray categories
+
+# foreach el $metrics {
+#   puts "<$el>"
+# }
+
+catch {unset metrics}
+foreach category [array names categories] {
+#   set numrows [llength $categories($category)]
+#   for {set i 0} {$i < $numrows} {incr i} {}
+  foreach entry $categories($category) {
+#     catch {unset data}
+#     array set data [lindex $categories($category) $i]
+# parray metrics
+#     foreach {metric value} [array get data] {
+#       lappend metrics($category:$metric) $value
+#     }
+    foreach {metric value} $entry {
+      lappend metrics($category:$metric) $value
+    }
+  }
+}
+# parray metrics
+
+##########################################################################################
+##
+## Standard Metrics
+##
+##########################################################################################
+
+# Build the table
+set tbl [::tb::prettyTable]
+$tbl header [concat {Category} {Metrics} $snapshotHeader]
+
+# Prevent the snapshot id from being reported in the 'snapshot' category
+# by removing the entry from the data structure
+unset metrics(snapshot:id)
+foreach category [presort_list [list id snapshot runtime] [array names categories]] {
+  switch $category {
+    clock_interaction {
+      # Clock interaction metric is processed separately
+      continue
+    }
+  }
+  $tbl separator
+  foreach key [lsort [array names metrics $category:*]] {
+    regsub "$category:" $key {} metric
+    switch $key {
+      id:id -
+      snapshot:release {
+        $tbl addrow [concat $category $metric $metrics($key) ]
+      }
+      default {
+        $tbl addrow [concat $category $metric [format_list $metrics($key) $format $refColumn] ]
+      }
+    }
+  }
+}
+
+##########################################################################################
+##
+## Clock Report Interaction
+##
+##########################################################################################
+
+catch {unset allClockInteractionReports}
+
+# Build the unique list of clock pairs across all the clock interaction reports (i.e from all snapshots)
+set clockPairs [list]
+set count -1
+foreach elm $categories(clock_interaction) {
+  incr count
+  foreach {- report} $elm { break }
+  set clock_interaction_table [::tb::snapshot::parse::report_clock_interaction $report]
+# puts "<report:$report>"
+# puts "<clock_interaction_table:$clock_interaction_table>"
+  set colFromClock -1
+  set colToClock -1
+  set colCommonPrimaryClock -1
+  set colInterClockConstraints -1
+  set colTNSFailingEndpoints -1
+  set colTNSTotalEndpoints -1
+  set colWNSClockEdges -1
+  set colWNS -1
+  set colTNS -1
+  set colWNSPathRequirement -1
+  if {$clock_interaction_table != {}} {
+    set header [lindex $clock_interaction_table 0]
+    for {set i 0} {$i < [llength $header]} {incr i} {
+      # Header from report_clock_interaction:
+      #   {From Clock} {To Clock} {WNS Clock Edges} WNS(ns) TNS(ns) {TNS Failing Endpoints} {TNS Total Endpoints} {WNS Path Requirement(ns)} {Common Primary Clock} {Inter-Clock Constraints}
+      switch -regexp -- [lindex $header $i] {
+        "From Clock" {
+          set colFromClock $i
+        }
+        "To Clock" {
+          set colToClock $i
+        }
+        "Common Primary Clock" {
+          set colCommonPrimaryClock $i
+        }
+        "Inter-Clock Constraints" {
+          set colInterClockConstraints $i
+        }
+        "TNS Failing Endpoints" {
+          set colTNSFailingEndpoints $i
+        }
+        "TNS Total Endpoints" {
+          set colTNSTotalEndpoints $i
+        }
+        "WNS Clock Edges" {
+          set colWNSClockEdges $i
+        }
+        "WNS\\\(ns\\\)" {
+          set colWNS $i
+        }
+        "TNS\\\(ns\\\)" {
+          set colTNS $i
+        }
+        "WNS Path Requirement" {
+          set colWNSPathRequirement $i
+        }
+        default {
+        }
+      }
+    }
+  }
+
+  set n 0
+  foreach row [lrange $clock_interaction_table 1 end] {
+    incr n
+    set fromClock [lindex $row $colFromClock]
+    set toClock [lindex $row $colToClock]
+    set failingEndpoints [lindex $row $colTNSFailingEndpoints]
+    set totalEndpoints [lindex $row $colTNSTotalEndpoints]
+    set commonPrimaryClock [lindex $row $colCommonPrimaryClock]
+    set interClockConstraints [lindex $row $colInterClockConstraints]
+    set wnsClockEdges [lindex $row $colWNSClockEdges]
+    set wns [lindex $row $colWNS]
+    set tns [lindex $row $colTNS]
+    set wnsPathRequirement [lindex $row $colWNSPathRequirement]
+#     set clockInteraction(${fromClock}:${toClock}) $interClockConstraints
+    # Save the clock pair
+    lappend clockPairs [list $fromClock $toClock]
+    puts "Processing \[$n/[expr [llength $clock_interaction_table] -1]\]: $fromClock -> $toClock"
+    # Save current interaction report inside array
+    set allClockInteractionReports(${count}:${fromClock}:${toClock}:failingEndpoints) $failingEndpoints
+    set allClockInteractionReports(${count}:${fromClock}:${toClock}:totalEndpoints) $totalEndpoints
+    set allClockInteractionReports(${count}:${fromClock}:${toClock}:commonPrimaryClock) $commonPrimaryClock
+    set allClockInteractionReports(${count}:${fromClock}:${toClock}:interClockConstraints) $interClockConstraints
+    set allClockInteractionReports(${count}:${fromClock}:${toClock}:wnsClockEdges) $wnsClockEdges
+    set allClockInteractionReports(${count}:${fromClock}:${toClock}:wns) $wns
+    set allClockInteractionReports(${count}:${fromClock}:${toClock}:tns) $tns
+    set allClockInteractionReports(${count}:${fromClock}:${toClock}:wnsPathRequirement) $wnsPathRequirement
+  }
+
+}
+
+# puts "<clockPairs:[llength $clockPairs]:$clockPairs><[llength [lsort -unique $clockPairs]]:[lsort -unique $clockPairs]>"
+# Uniquify the list of clock pairs and order the clock pairs by source clock
+set clockPairs [lsort -unique [lsort -index 0 [lsort -index 1 $clockPairs]]]
+# puts "<clockPairs:[llength $clockPairs]:$clockPairs>"
+
+set allTables [list]
+foreach metric [list wns tns wnsPathRequirement wnsClockEdges failingEndpoints totalEndpoints commonPrimaryClock interClockConstraints] {
+  # Build the table
+  set tbl2 [::tb::prettyTable]
+  $tbl2 header [concat {Category} {Metrics} {{From Clock}} {{To Clock}} $snapshotHeader]
+
+    foreach c $clockPairs {
+  #   puts $c
+    foreach {fromClock toClock} $c { break }
+# puts "<fromClock:$fromClock><toClock:$toClock>"
+#     set row [list {clock_interaction} $metric $fromClock $toClock]
+    set row [list]
+    for {set n 0} {$n <= $count} {incr n} {
+      if {[info exists allClockInteractionReports(${n}:${fromClock}:${toClock}:${metric})]} {
+        lappend row $allClockInteractionReports(${n}:${fromClock}:${toClock}:${metric})
+      } else {
+        lappend row {N/A}
+      }
+    }
+#     $tbl2 addrow $row
+    $tbl2 addrow [concat {clock_interaction} $metric $fromClock $toClock [format_list $row $format $refColumn] ]
+#     $tbl2 addrow [concat {clock_interaction} $metric $fromClock $toClock $row ]
+  }
+lappend allTables $tbl2
+#   puts [$tbl2 print]
+
+#   catch {$tbl2 destroy}
+}
+
+#  foreach key [lsort [array names metrics clock_interaction:*]] {
+#    regsub "$category:" $key {} metric
+#    puts "key:$key"
+#  }
+
+
+
+##########################################################################################
+##
+## End
+##
+##########################################################################################
+
+# Print summary table
+# puts [$tbl print]
+
+if {[llength $files] == 1} {
+  # Only 1 snapshot database has been specified
+  set prefix [file normalize [file rootname $files]]
+} else {
+  # Multiple snapshot databases have been specified
+  # In this case, the results are saved in current working directory
+  set prefix [file join [file normalize [pwd]] metrics]
+}
+$tbl export -format csv -file ${prefix}_cmp.csv
+$tbl export -file ${prefix}_cmp.rpt
+catch {$tbl destroy}
+
+foreach tbl $allTables {
+  $tbl export -format csv -file ${prefix}_cmp.csv -append
+  $tbl export -file ${prefix}_cmp.rpt -append
+  catch {$tbl destroy}
+}
+
+puts " File ${prefix}_cmp.csv has been generated"
+puts " File ${prefix}_cmp.rpt has been generated"
+
+exit 0

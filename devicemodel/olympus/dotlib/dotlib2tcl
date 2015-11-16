@@ -1,0 +1,402 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+# Convert Synopsys Liberty files into fragment of Tcl code that can be used to re-create the data structure of the Dotlib
+#      array set myarray [source <fragment>]
+# Below is an example on how to go over the data structure
+#        unset -nocomplain all
+#        array set all [source kintex8_pt_DSP_C_DATA.ftcl]
+#        foreach cell [lsort -dictionary [array names all]] {
+#          puts "CELL=$cell"
+#          puts "++++++++++++++++"
+#          foreach elm $all($cell) {
+#            array set foo $elm
+#            puts "\n[parray foo]"
+#            unset -nocomplain foo
+#          }
+#        }
+
+set SCRIPT_VERSION {10-03-2014}
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+
+# Output directory to save the fragment files
+set output {./output}
+# set output {./kintex8}
+# set output {./kintex7}
+
+# Files to process
+# set files [glob -nocomplain /proj/xbuilds/2013.3_UB3_INT_daily_latest/installs/lin64/Vivado/2013.3_UB3/data/parts/xilinx/kintex8/kintex*lib]
+# set files [glob -nocomplain /proj/xbuilds/2013.3_UB3_INT_daily_latest/installs/lin64/Vivado/2013.3_UB3/data/parts/xilinx/kintex7/kintex*lib]
+# set files [glob -nocomplain ./kintex8/*.lib]
+# set files [glob -nocomplain ./kintex7/*.lib]
+# set files [glob -nocomplain ./output/*.lib]
+# set files [glob -nocomplain ./output/*MMCM*2*BASE*.lib]
+# set files [glob -nocomplain ./output/*kintex7*.lib]
+set files [list]
+
+set error 0
+set show_help 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [::tb::lshift argv]
+  switch -exact -- $name {
+    -dotlib -
+    --dotlib {
+      set files [concat $files [glob -nocomplain [::tb::lshift argv]]]
+    }
+    -output -
+    --output {
+      set output [::tb::lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: dotlib2tcl
+                [-dotlib <filename or file pattern>]
+                [-output <output directory>]
+                [-verbose|-v]
+                [-help|-h]
+                
+    Description: Utility to convert DotLib libraries into Tcl fragment files
+
+    Version: %s
+
+    Example:
+       dotlib2tcl -dotlib ./kintex.lib
+       dotlib2tcl -dotlib './kintex7/*.lib' -output ./kintex7
+  
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+
+if {![file exists $output]} {
+  file mkdir $output
+} elseif {![file isdirectory $output]} {
+  error " error - $output exist and is not a directory"
+}
+
+proc reset {args} {
+  foreach arg $args {
+    eval "set ::$arg {}"
+  }
+}
+
+proc library {name body} {
+  set ::LIBRARY $name
+  uplevel 1 $body
+}
+
+proc cell {name body} {
+  set ::cellinfo [list]
+  catch {unset ::pininfo}
+  reset FPGA_CONDITION FPGA_CONDITION_VALUE FPGA_ARC_CONDITION MODE_VALUE
+  # Convert the cell name to uppercase
+#   set ::CELL $name
+  set ::CELL [string toupper $name]
+  uplevel 1 $body
+  if {![info exists ::dotlib($::CELL)]} {
+    set ::dotlib($::CELL) [list]
+  }
+  foreach el $::cellinfo {
+    lappend ::dotlib($::CELL) $el
+  }
+}
+
+proc bus {name body} {
+  catch {unset ::pininfo}
+  reset BUS_TYPE DIRECTION CLOCK
+  set ::BUS $name
+  set ::pininfo(bus) $name
+  uplevel 1 $body
+  lappend ::cellinfo [array get ::pininfo]
+}
+
+proc pin {name body} {
+  catch {unset ::pininfo}
+  set ::PIN $name
+  set ::IS_PIN_SECTION 1
+  reset BUS_TYPE DIRECTION CLOCK
+  set ::pininfo(pin) $name
+  uplevel 1 $body
+  lappend ::cellinfo [array get ::pininfo]
+  set ::IS_PIN_SECTION 0
+}
+
+proc timing {body} {
+  reset TIMING_TYPE TIMING_SENSE RELATED_PIN RELATED_BUS_PINS FPGA_ARC_CONDITION
+  uplevel 1 $body
+  if {![info exists ::pininfo(timing)]} { set ::pininfo(timing) [list] }
+  # The MODE_VALUE overrides the FPGA_ARC_CONDITION. That's ok because MODE_VALUE and FPGA_ARC_CONDITION
+  # are not set at the same time. They come from different Dotlib format so they don't collide.
+  if {[info exists ::MODE_VALUE]} { 
+    if {$::MODE_VALUE != {}} {
+      set ::FPGA_ARC_CONDITION $::MODE_VALUE 
+    }
+  }
+  lappend ::pininfo(timing) [list timing_type $::TIMING_TYPE timing_sense $::TIMING_SENSE related_pin $::RELATED_PIN related_bus_pins $::RELATED_BUS_PINS fpga_arc_condition $::FPGA_ARC_CONDITION ]
+}
+
+proc bus_type {name} {
+  set ::BUS_TYPE $name
+  set ::pininfo(bus_type) $name
+}
+
+proc direction {name} {
+  set ::DIRECTION $name
+  set ::pininfo(direction) $name
+}
+
+proc clock {name} {
+  set ::CLOCK $name
+  set ::pininfo(clock) $name
+}
+
+proc timing_type {name} {
+  set ::TIMING_TYPE $name
+}
+
+proc timing_sense {name} {
+  set ::TIMING_SENSE $name
+}
+
+proc related_pin {name} {
+  set ::RELATED_PIN $name
+}
+
+proc related_bus_pins {name} {
+  set ::RELATED_BUS_PINS $name
+}
+proc function {name} {
+  set ::pininfo(function) $name
+}
+
+proc three_state {name} {
+  set ::pininfo(three_state) $name
+}
+
+# The abstract below is part of a cell section but after the pin definition
+#   fpga_condition(pcie_2_1) {
+#     fpga_condition_value(USER_CLK_FREQ_0) {
+#       fpga_arc_condition : "USER_CLK_FREQ == '0'"
+#     }
+#     fpga_condition_value(USER_CLK_FREQ_1) {
+#       fpga_arc_condition : "USER_CLK_FREQ == '1'"
+#     }
+#     fpga_condition_value(USER_CLK_FREQ_2) {
+#       fpga_arc_condition : "USER_CLK_FREQ == '2'"
+#     }
+#     fpga_condition_value(USER_CLK_FREQ_3) {
+#       fpga_arc_condition : "USER_CLK_FREQ == '3'"
+#     }
+#     fpga_condition_value(USER_CLK_FREQ_4) {
+#       fpga_arc_condition : "USER_CLK_FREQ == '4'"
+#     }
+#   }
+
+
+proc fpga_condition {name body} {
+  reset FPGA_CONDITION_VALUE FPGA_ARC_CONDITION
+  set ::FPGA_CONDITION $name
+  uplevel 1 $body
+}
+
+proc fpga_condition_value {name body} {
+  reset FPGA_ARC_CONDITION
+  set ::FPGA_CONDITION_VALUE $name
+  uplevel 1 $body
+  set key [format {%s.%s} ${::FPGA_CONDITION} ${::FPGA_CONDITION_VALUE}]
+  if {[info exists ::fpga_condition($key)]} {
+    puts " -W- overriding fpga condition '$key'"
+  }
+  set ::fpga_condition($key) ${::FPGA_ARC_CONDITION}
+}
+
+proc fpga_arc_condition {name} {
+  set ::FPGA_ARC_CONDITION $name
+}
+
+proc technology {name} {}
+proc default_intrinsic_fall {name} {}
+proc default_intrinsic_rise {name} {}
+proc type {name body} { uplevel 1 $body }
+proc base_type {name} {}
+proc data_type {name} {}
+proc bit_width {name} {}
+proc bit_from {name} {}
+proc bit_to {name} {}
+proc intrinsic_rise {name} {}
+proc intrinsic_fall {name} {}
+proc ff {args} {}
+proc latch {args} {}
+
+# 
+# The following additonal procs are to support slightly different Dotlib format from COE
+#
+
+proc generated_clock {args} {}
+# The abstract below is part of a cell section just before any pin definition
+# 	mode_definition ( etm_modes ) {
+#		mode_value( vorpal_configuration_3 ) {
+#		 when : "mc_ififo_enable & !mc_rx_data_width[0] & mc_rx_data_width[1] & ghigh_b & test_div4_clk_sel_b & en_glob & mc_component_mode & mc_gsc & scan_rst_b & !mc_ififo_sync_mode & !cfg_reset & scan_mode_b & !grestore & !ctl2bs_fifo_bypass & test_div2_clk_sel_b & !mc_rx_iddr & !mc_rx_ddr_dis_dqs & !mc_ififo_auto_read & scan_set_b";
+#		 sdf_cond : "mc_ififo_enable & !mc_rx_data_width[0] & mc_rx_data_width[1] & ghigh_b & test_div4_clk_sel_b & en_glob & mc_component_mode & mc_gsc & scan_rst_b & !mc_ififo_sync_mode & !cfg_reset & scan_mode_b & !grestore & !ctl2bs_fifo_bypass & test_div2_clk_sel_b & !mc_rx_iddr & !mc_rx_ddr_dis_dqs & !mc_ififo_auto_read & scan_set_b";
+#		}
+#	}
+proc mode_definition {name body} {
+  uplevel 1 $body
+}
+proc mode_value {name body} {
+  reset MODE_VALUE
+  reset FPGA_CONDITION
+  reset FPGA_CONDITION_VALUE
+  reset FPGA_ARC_CONDITION
+  set ::FPGA_CONDITION $name
+  uplevel 1 $body
+}
+proc when {args} {
+  set ::FPGA_ARC_CONDITION [join $args { } ]
+  set key [format {%s.%s} ${::CELL} ${::FPGA_CONDITION}]
+  if {[info exists ::fpga_condition($key)]} {
+    puts " -W- overriding 'when' condition '$key'"
+  }
+#   set FPGA_ARC_CONDITION [regsub -all { } $::FPGA_ARC_CONDITION {_}]
+  set ::fpga_condition($key) ${::FPGA_ARC_CONDITION}
+  # Set the MODE_VALUE global variable
+#   set ::MODE_VALUE $::FPGA_ARC_CONDITION
+  set ::MODE_VALUE $key
+}
+proc pg_pin {args} {}
+proc sdf_cond {args} {}
+proc mode {args} {}
+proc area {args} {}
+proc dont_use {args} {}
+proc dont_touch {args} {}
+proc interface_timing {args} {}
+proc timing_model_type {args} {}
+proc is_macro_cell {args} {}
+proc min_delay_flag {args} {}
+proc max_transition {args} {}
+proc min_transition {args} {}
+proc max_capacitance {args} {}
+proc min_capacitance {args} {}
+proc capacitance {args} {}
+proc original_pin {args} {}
+proc rise_constraint {args} {}
+proc fall_constraint {args} {}
+proc cell_rise {args} {}
+proc rise_transition {args} {}
+proc cell_fall {args} {}
+proc fall_transition {args} {}
+proc related_output_pin {args} {}
+proc clock_gating_flag {args} {}
+
+
+reset LIBRARY CELL PIN BUS BUS_TYPE DIRECTION TIMING_TYPE TIMING_SENSE RELATED_PIN RELATED_BUS_PINS CLOCK
+reset FPGA_CONDITION FPGA_CONDITION_VALUE FPGA_ARC_CONDITION
+set cellinfo [list]
+catch {unset dotlib}
+catch {unset fpga_condition}
+set ::IS_PIN_SECTION 0
+
+foreach file [lsort -dictionary $files] {
+  set cellinfo [list]
+  catch {unset dotlib}
+  catch {unset fpga_condition}
+  reset LIBRARY CELL PIN BUS BUS_TYPE DIRECTION TIMING_TYPE TIMING_SENSE RELATED_PIN RELATED_BUS_PINS CLOCK
+  reset FPGA_CONDITION FPGA_CONDITION_VALUE FPGA_ARC_CONDITION
+  if {![file exists $file]} { puts " Error - $file does not exist"; continue }
+  puts " Processing $file"
+  set FH [open $file]
+  set script {} 
+  while {![eof $FH]} {
+    gets $FH line
+    regsub -all {\(\)} $line { } line
+    regsub -all {\(} $line { } line
+    regsub -all {\)} $line { } line
+    regsub -all {\",\"} $line {" "} line
+    regsub -all {\", \"} $line {" "} line
+    # The spaces around ':' avoid doing the replacement inside buses
+    regsub -all { \: } $line {   } line
+    regsub -all {\[} $line {\\[} line
+    regsub -all {\]} $line {\\]} line
+    # Dotlib comments: /* ... */
+    regsub -all {\/\*.+\*\/} $line { } line
+    append script "\n$line"
+    # Removing the following check speeds up the process considerably
+#     if {![info complete $script]} {
+#       continue
+#     }
+  }
+  if {[catch {eval $script} errorstring]} {
+    puts " -E- $errorstring (file $file)"
+  }
+  close $FH
+  
+  # Some stats
+  puts "    -> [llength [array names ::dotlib]] cell(s) found"
+  
+  # Saving the data structure
+  set filename "[file join $output [file rootname [file tail $file]]].ftcl"
+  puts " File $filename has been generated"
+  set FH [open $filename w]
+  puts $FH "# This file can be imported with:  array set myarray \[source $filename\]"
+  puts $FH "return {"
+  foreach cell [lsort -dictionary [array names ::dotlib]] {
+    puts $FH "   $cell { $::dotlib($cell) }"
+  }
+  puts $FH "}"
+  close $FH
+
+  # Saving the fpga_condition array
+  if {[info exists ::fpga_condition]} {
+    set filename "[file join $output [file rootname [file tail $file]]].fcond"
+    puts " File $filename has been generated"
+    set FH [open $filename w]
+    puts $FH "# This file can be imported with:  array set myarray \[source $filename\]"
+    puts $FH "return {"
+    foreach cond [lsort -dictionary [array names ::fpga_condition]] {
+      puts $FH "   $cond { $::fpga_condition($cond) }"
+    }
+    puts $FH "}"
+    close $FH
+  }
+
+}
+
+exit 0

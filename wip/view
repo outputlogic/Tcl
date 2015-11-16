@@ -1,0 +1,53 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec wish "$0" "$@"
+
+package require Tk
+
+# wm state . withdrawn
+
+# set w {.msg}
+set w {.}
+
+# toplevel $w 
+wm resizable $w 1 1
+wm title $w "Message Window"
+# wm protocol $w WM_DELETE_WINDOW [list wm state $w withdrawn]
+
+set w {}
+
+text $w.t -yscrollcommand "$w.sy set" -xscrollcommand "$w.sx set" -wrap none
+scrollbar $w.sy -command "$w.t yview" -orient v
+scrollbar $w.sx -command "$w.t xview" -orient h
+
+pack $w.sy -fill y
+pack $w.t -fill both -expand 1
+pack $w.sx -fill x
+
+grid $w.t -row 1 -column 1 -sticky nwes
+grid $w.sy -row 1 -column 2 -sticky nwes
+grid $w.sx -row 2 -column 1 -sticky nwes
+
+# Widgets need to be resized when the parent window is resized
+grid columnconfigure . 1 -weight 1
+grid rowconfigure . 1 -weight 1
+grid columnconfigure .t 1 -weight 1
+grid rowconfigure .t 1 -weight 1
+
+# pack .sy -side right -fill y
+# pack .t -side left -fill both -expand 1
+# pack .sx -side bottom -fill x
+
+# set f [open $filename r]
+# set data [read $f]
+# close $f
+
+set data {}
+while {![eof stdin]} {
+  append data "[gets stdin]\n"
+}
+
+$w.t delete 0.0 end
+$w.t insert 0.0 $data
+
+

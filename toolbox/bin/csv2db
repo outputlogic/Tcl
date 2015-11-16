@@ -1,0 +1,744 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    This utility provides to way to convert CSV files to SQLite database
+##
+########################################################################################
+
+########################################################################################
+## 2014.11.12 - Added a 'catch' for when the variable does not exist
+## 2014.11.06 - Initial release
+########################################################################################
+
+# if {[file tail [info script]]!=[file tail $argv0]} {
+#   # This file is sourced
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+# }
+
+if {[catch {package require sqlite3}]} {
+  lappend auto_path {/home/dpefour/root/usr/lib/sqlite3.8.0.2}
+  package require sqlite3
+}
+
+namespace eval ::tb {}
+
+namespace eval ::tb::csv2db {
+  namespace export csv2db
+
+  variable SCRIPT_VERSION {11-12-2014}
+  # There is a hardcoded maximum number of columns of 200
+  variable MAX_COLUMNS 200
+  variable VERBOSE 0
+  variable SAFE 1
+  variable DEBUG 0
+
+  variable SQL
+}
+
+##-----------------------------------------------------------------------
+## Long help function
+##-----------------------------------------------------------------------
+proc ::tb::csv2db::print_help {} {
+
+set help_message [format {
+#########################################################################
+#########################################################################
+##
+## csv2db
+##
+## Example:
+##    csv2db
+##
+## Description:
+##   Utility to convert CSV formated files to SQLite database
+##
+## Options:
+##
+##   -csv                Input CSV file(s)
+##
+##   -out                SQlite database to save results
+##
+##   -delimiter          CSV delimiter
+##                       Default: ,
+##
+#########################################################################
+#########################################################################
+} ]
+
+  foreach line [split $help_message "\n"] {
+    regsub {##} $line {  } line
+    puts $line
+  }
+
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tb::csv2db::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::csv2db::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## K lequal
+##-----------------------------------------------------------------------
+## List functions
+##-----------------------------------------------------------------------
+
+proc ::tb::csv2db::K {a b} {return $a}
+
+proc ::tb::csv2db::lequal {l1 l2} {
+    if {[llength $l1] != [llength $l2]} {
+        return false
+    }
+
+    set l2 [lsort $l2]
+
+    foreach elem $l1 {
+        set idx [lsearch -exact -sorted $l2 $elem]
+        if {$idx == -1} {
+            return false
+        } else {
+            set l2 [lreplace [K $l2 [unset l2]] $idx $idx]
+        }
+    }
+
+    return [expr {[llength $l2] == 0}]
+}
+
+##-----------------------------------------------------------------------
+## split-csv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc ::tb::csv2db::split-csv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## read-csv
+##-----------------------------------------------------------------------
+## Read CSV file and return a Table object
+##-----------------------------------------------------------------------
+proc ::tb::csv2db::read-csv {&header &rows filename {csvDelimiter ,}} {
+  variable VERBOSE
+  if {![file exists $filename]} {
+    error " -E- file '$filename' does not exist"
+  }
+  upvar 1 ${&header} header
+  upvar 1 ${&rows} rows
+  set FH [open $filename]
+  set first 1
+  set count 0
+  set header [list]
+  while {![eof $FH]} {
+    gets $FH line
+    # Skip comments and empty lines
+    if {[regexp {^\s*#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    if {$first} {
+      set header [split-csv $line $csvDelimiter]
+      set first 0
+    } else {
+      lappend rows [split-csv $line $csvDelimiter]
+      incr count
+    }
+  }
+  close $FH
+  if {$VERBOSE} {
+    puts " -I- Header: $header"
+    puts " -I- Number of imported row(s): $count"
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# execSQL
+#------------------------------------------------------------------------
+# Execute SQL command
+#------------------------------------------------------------------------
+proc ::tb::csv2db::execSQL {&SQL {cmd {pragma integrity_check} } } {
+  variable VERBOSE
+  set loop 0
+  set timeout 600
+  # Wait for the database to be unlocked
+#   while {[catch { uplevel [list ${&SQL} eval $cmd] } errorstring]} {}
+  while {[catch { set res [uplevel [list ${&SQL} eval $cmd]] } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database locked ..." }
+      exec sleep 1
+      incr loop
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      if {$VERBOSE} { puts "SQL database read-only ..." }
+      exec sleep 1
+      incr loop
+    } else {
+      error $errorstring
+    }
+    if {$loop > $timeout} { break }
+  }
+#   return 0
+  return $res
+}
+
+#------------------------------------------------------------------------
+# dbCreateTable
+#------------------------------------------------------------------------
+# Create SQL table
+#------------------------------------------------------------------------
+proc ::tb::csv2db::dbCreateTable {&SQL table columnPrefix size} {
+  variable DEBUG
+  set tables [dbGetTables ${&SQL}]
+  set tableHeader [list]
+  if {$size > 0} {
+    set string {}
+    for {set i 0} {$i < $size} {incr i} {
+      lappend tableHeader ${columnPrefix}${i}
+      append string "\n    ${columnPrefix}${i} TEXT DEFAULT NULL,"
+    }
+    # Remove last comma
+    regsub {,$} $string {} string
+    set SQLTable [format {
+    CREATE TABLE IF NOT EXISTS %s (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tag TEXT DEFAULT NULL,
+    %s
+    );
+    } $table $string ]
+#     puts $SQLTable
+    if {[lsearch -exact $tables $table] == -1} {
+      execSQL ${&SQL} $SQLTable
+    }
+  }
+  if {$DEBUG} {
+    puts "dbCreateTable: table: $table"
+    puts "dbCreateTable: $tableHeader"
+  }
+  # Return the table header
+  return $tableHeader
+}
+
+#------------------------------------------------------------------------
+# dbInsertIntoTable
+#------------------------------------------------------------------------
+# Insert rows inside SQL table
+#------------------------------------------------------------------------
+proc ::tb::csv2db::dbInsertIntoTable {&SQL table tableHeader &rows {tag {UNSET}}} {
+  variable SAFE
+  variable DEBUG
+  upvar 1 ${&rows} rows
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return 1
+  }
+  if {${&rows} != [list]} {
+    set count -1
+    foreach row ${&rows} {
+      incr count
+      if {$SAFE} {
+        # Skip rows that do not have the same length as the table header
+        if {[llength $row] != [llength $tableHeader]} {
+          puts " -W- skipping row $count (length row: [llength $row] / length header: [llength $tableHeader])"
+          continue
+        }
+      } else {
+        if {[llength $row] > [llength $tableHeader]} {
+          puts " -W- skipping row $count (length row: [llength $row] / length header: [llength $tableHeader])"
+          continue
+        }
+      }
+      # As long as the length of the row is less than the length of the table header,
+      # set only the columns covered by the row
+      set _header [lrange $tableHeader 0 [expr [llength $row] -1] ]
+      if {$tag == {UNSET}} {
+#         execSQL ${&SQL} [format {INSERT INTO %s('%s') VALUES('%s');} $table [join $tableHeader ','] [join $row ','] ]
+        execSQL ${&SQL} [format {INSERT INTO %s('%s') VALUES('%s');} $table [join $_header ','] [join $row ','] ]
+      } else {
+#         execSQL ${&SQL} [format {INSERT INTO %s(tag,'%s') VALUES($tag,'%s');} $table [join $tableHeader ','] [join $row ','] ]
+        execSQL ${&SQL} [format {INSERT INTO %s(tag,'%s') VALUES($tag,'%s');} $table [join $_header ','] [join $row ','] ]
+      }
+    }
+  }
+  if {$DEBUG} {
+    puts "dbInsertIntoTable: table: $table"
+    puts "dbInsertIntoTable: tableHeader: $tableHeader"
+    puts "dbInsertIntoTable: inserting [llength ${&rows}] row(s)"
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# dbGetTableColumns
+#------------------------------------------------------------------------
+# Get the list of columns of a SQL table
+#------------------------------------------------------------------------
+proc ::tb::csv2db::dbGetTableColumns {&SQL table} {
+  variable DEBUG
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return -1
+  }
+  set L [execSQL ${&SQL} [format {pragma table_info(%s);} $table]]
+  set cols [list]
+  foreach [list cid name type notnull dflt_value pk] $L {
+#     # Skip the first 2 columns: id tag
+#     if {[regexp {^(id|tag)$} $name]} { continue }
+    lappend cols $name
+  }
+  if {$DEBUG} {
+    puts "dbGetTableColumns: table: $table"
+    puts "dbGetTableColumns: $cols"
+  }
+  return $cols
+}
+
+#------------------------------------------------------------------------
+# dbGetTables
+#------------------------------------------------------------------------
+# Get the list of SQL tables
+#------------------------------------------------------------------------
+proc ::tb::csv2db::dbGetTables {&SQL} {
+  variable DEBUG
+  set tables [${&SQL} eval { SELECT name FROM sqlite_master WHERE type='table' }]
+  if {$DEBUG} {
+    puts "dbGetTables: $tables"
+  }
+  return $tables
+}
+
+#------------------------------------------------------------------------
+# dbGetTableHeader
+#------------------------------------------------------------------------
+# Get the headr matching the table. The header is extracted from the
+# 'headers' table.
+#------------------------------------------------------------------------
+proc ::tb::csv2db::dbGetTableHeader {&SQL table} {
+  variable DEBUG
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return -1
+  }
+  set columns [dbGetTableColumns ${&SQL} $table]
+#   # Remove columns 'id' and 'tag' from the list
+#   set columns [lsearch -inline -all -not -exact $columns {id}]
+#   set columns [lsearch -inline -all -not -exact $columns {tag}]
+  set size [llength $columns]
+  set L [execSQL ${&SQL} [format {SELECT * FROM headers WHERE tag='%s';} $table]]
+  # Only return the number of columns that fit the size of the table. This is
+  # a workaround to remove the trailing {}
+  if {$DEBUG} {
+    puts "dbGetTableHeader: table: $table"
+    puts "dbGetTableHeader: [lrange $L 0 [expr $size -1]]"
+#     puts "dbGetTableHeader: [lrange $L 2 [expr 2 + $size -1]]"
+  }
+  # Return the list of columns but not the first 2 columns (matching 'id' and 'tag'
+#   return [lrange $L 2 [expr 2 + $size -1]]
+  return [lrange $L 0 [expr $size -1]]
+}
+
+##-----------------------------------------------------------------------
+## csv2db
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::csv2db::csv2db {args} {
+
+  variable SCRIPT_VERSION
+  variable VERBOSE
+  variable DEBUG
+  variable MAX_COLUMNS
+  variable SAFE
+
+  variable SQL
+
+  set VERBOSE 0
+  set DEBUG 0
+  set SAFE 1
+
+  set error 0
+  set show_help 0
+  set show_long_help 0
+  set ifilename [list]
+  set ofilename {}
+  set tableName {csv}
+  set columnName {col}
+  set csvDelimiter {,}
+  set merge 0
+  set force 0
+  set append 0
+  set tag {UNSET}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -csv -
+      --csv {
+        while {![string match "-*" [set filename [lshift args]]]} {
+          if {$filename == {}} {
+            break
+          } else {
+            # Expand the pattern (if any)
+            foreach file [glob -nocomplain $filename] {
+              if {![file exists $file]} {
+                puts " -W- file '$file' does not exist"
+              } else {
+                lappend ifilename $file
+              }
+            }
+          }
+        }
+        # The last argument needs to be put back on the stack
+        if {$filename != {}} { unlshift args $filename }
+      }
+      -db -
+      --db -
+      -o -
+      --o -
+      -out -
+      --out {
+        set ofilename [lshift args]
+      }
+      -t -
+      --t -
+      -tag -
+      --tag {
+        set tag [lshift args]
+      }
+      -delimiter -
+      --delimiter {
+        set csvDelimiter [lshift args]
+      }
+      -v -
+      -verbose {
+          set VERBOSE 1
+      }
+      -m -
+      --m -
+      -merge -
+      --merge {
+          set merge 1
+      }
+      -u -
+      --u -
+      -unsafe -
+      --unsafe {
+          set SAFE 0
+      }
+      -f -
+      --f -
+      -force -
+      --force {
+          set force 1
+      }
+      -a -
+      --a -
+      -append -
+      --append {
+          set append 1
+      }
+      -d -
+      -debug {
+          set DEBUG 1
+          set VERBOSE 1
+      }
+      -h -
+      -help {
+          incr show_help
+      }
+      -longhelp {
+          incr show_help
+          incr show_long_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            # Expand the pattern (if any)
+            foreach file [glob -nocomplain $name] {
+              if {![file exists $file]} {
+                puts " -W- file '$file' does not exist"
+              } else {
+                lappend ifilename $file
+              }
+            }
+#             puts " -E- option '$name' is not a valid option"
+#             incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: csv2db
+                  [<filename> [<filename> ...]]
+                  [-csv <filename> [<filename> ...]]
+                  [-delimiter <csv-delimiter>]
+                  [-out <database>|-db <database>]
+                  [-tag <string>|-t <string>]
+                  [-merge|-m]
+                  [-unsafe|-u]
+                  [-force|-f]
+                  [-append|-a]
+                  [-verbose|-v]
+                  [-help|-h]
+                  [-longhelp]
+
+      Description: Utility to convert CSV formated files to SQLite database
+
+      Version: %s
+
+        Use -merge to merge CSV data to existing tables whenever possible. By default, each CSV file
+        is imported to a different table.
+        Use -unsafe to enable merging CSV rows that are smaller than the CSV header.
+        Use -tag to add a tag to the CSV data inside the database.
+
+      Example:
+         csv2db -csv file1.csv -delimiter ';'
+         csv2db -csv *.csv -out result.db -merge
+         csv2db -csv *.csv -db result.db -tag 'exp' -force -append
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    if {$show_long_help} { print_help }
+
+    return -code ok
+  }
+
+  if  {$ifilename == {}} {
+    puts " -E- no input file provided"
+    incr error
+  }
+
+  if  {$ofilename == {}} {
+    puts " -E- no output database name provided"
+    incr error
+  } elseif {[file exists $ofilename]} {
+    switch ${force}${append} {
+      00 {
+        puts " -E- file [file normalize $ofilename] already exists"
+        incr error
+      }
+      01 {
+        puts " -E- file [file normalize $ofilename] already exists"
+        incr error
+      }
+      10 {
+        puts " -W- database [file normalize $ofilename] is overriden (-force/-append)"
+        # Delete existing database if it already exist
+        catch {file delete -force $ofilename}
+      }
+      11 {
+        puts " -W- database [file normalize $ofilename] is updated (-force)"
+      }
+      default {
+      }
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  if {$ofilename != {}} {
+    sqlite3 SQL[pid] $ofilename -create true
+    set SQL SQL[pid]
+    execSQL $SQL { pragma integrity_check }
+    execSQL $SQL [format {
+      PRAGMA foreign_keys = ON;
+      PRAGMA main.temp_store = MEMORY;
+      PRAGMA main.page_size = 4096;
+      PRAGMA main.cache_size=10000;
+      PRAGMA main.locking_mode=EXCLUSIVE;
+      PRAGMA main.synchronous=NORMAL;
+      PRAGMA main.journal_mode=MEMORY;
+      PRAGMA main.cache_size=5000;
+    } ]
+
+  }
+
+  set header [list]
+  set mergeheader [list]
+  set rows [list]
+
+  set tableNum 0
+  set columnNum 0
+
+  # Create the table 'headers' to hold the header names
+  dbCreateTable $SQL {headers} $columnName $MAX_COLUMNS
+
+  set first 1
+  set count 0
+  foreach filename $ifilename {
+    incr count
+    if {$DEBUG} {
+      puts "####################"
+      puts "# $filename"
+      puts "####################"
+    }
+    set header [list]
+    set rows [list]
+    if {$VERBOSE} {
+      puts " -I- Processing file \[$count/[llength $ifilename]\] $filename"
+    }
+    read-csv header rows $filename $csvDelimiter
+    if {$header == [list]} {
+      if {$VERBOSE} {
+        puts " -W- empty CSV header. Skipping file"
+      }
+      continue
+    }
+    set found 0
+    set table {}
+    set tables [dbGetTables $SQL]
+    if {$merge} {
+      foreach table $tables {
+        if {[regexp {^(headers|sqlite_sequence)$} $table]} {continue}
+#         set _header [dbGetTableHeader $SQL $table]
+        # Remove the first 2 columns since they correspond to 'id' and 'tag'
+        set _header [lrange [dbGetTableHeader $SQL $table] 2 end]
+        if {$DEBUG} {
+          puts "checking table '$table'"
+          puts " ...  header '$header'"
+          puts " ... _header '$_header'"
+        }
+        if {[lequal $header $_header]} {
+          set found 1
+          break
+        }
+      }
+      if {$found} {
+        if {$DEBUG} {
+          puts " -I- merge mode. Found matching table: $table"
+          puts " -I- CSV header: $header"
+          puts " -I- Table header: $_header"
+        }
+      } else {
+        if {$DEBUG} {
+          puts " -I- merge mode. No matching table found"
+          puts " -I- CSV header: $header"
+        }
+      }
+    } else {
+    }
+    if {!$found} {
+      set i 0
+      while {[lsearch $tables ${tableName}${i}] != -1} { incr i }
+      set table ${tableName}${i}
+      set tableHeader [dbCreateTable $SQL $table $columnName [llength $header] ]
+      dbInsertIntoTable $SQL {headers} $tableHeader [list $header] $table
+    } else {
+#       set tableHeader [dbGetTableColumns $SQL $table]
+      # Remove the first 2 columns since they correspond to 'id' and 'tag'
+      set tableHeader [lrange [dbGetTableColumns $SQL $table] 2 end]
+    }
+    if {$DEBUG} {
+  #     puts "<tableHeader:$tableHeader>"
+    }
+    if {$tag == {UNSET}} {
+      # If not tag has been defined, use filename
+      set tag $filename
+    }
+    dbInsertIntoTable $SQL $table $tableHeader $rows $tag
+
+  }
+
+  puts " -I- [llength $ifilename] CSV file(s) have been imported"
+  puts " -I- database [file normalize $ofilename] has been generated"
+  # Remove 'sqlite_sequence' from the list
+  set tables [lsearch -inline -all -not -exact [dbGetTables $SQL] {sqlite_sequence}]
+  puts " -I- number of tables: [llength $tables]"
+  puts " -I- tables: $tables"
+
+  # Vacuum and close SQlite database
+  execSQL $SQL {VACUUM;}
+  $SQL close
+  set SQL {}
+
+  return -code ok
+}
+
+namespace eval ::tb {
+  namespace import ::tb::csv2db::csv2db
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::tb::csv2db::VERBOSE 0
+set ::tb::csv2db::DEBUG 0
+set ::tb::csv2db::SAFE 1
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tb::csv2db::csv2db
+} else {
+  if {[catch {eval [concat ::tb::csv2db::csv2db $argv]} errorstring]} {
+    puts $errorstring
+    # Close SQlite database
+    catch { if {$::tb::csv2db::SQL != {}} { $::tb::csv2db::SQL close } }
+    exit 1
+  }
+  exit 0
+}

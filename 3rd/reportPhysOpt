@@ -1,0 +1,161 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+# From Frederic Revenu
+
+proc reportPhysOpt {poLogFile} {
+  set F [open $poLogFile r]
+  set po 0
+  set poPhase ""
+  while {[gets $F line] >= 0} {
+    if {[regexp {^Command: phys_opt_design(.*)} $line all poCmd]} {
+      set po 1
+      set poPhase "Initial"
+#         foreach v {wnsGain tnsGain elapTot optObj newObj delObj} {}
+        foreach v {wnsGain tnsGain elapTot optObj newObj delObj candidate} {
+          catch {unset $v}
+        }
+        set prevWns 0.000; set prevTns 0.000
+        set prevCpu "00:00:00"; set prevElapsed "00:00:00"
+#         foreach phase {Initial Final} { set optObj($phase) 0; set newObj($phase) 0; set delObj($phase) 0 }
+        foreach phase {Initial Final} { set optObj($phase) 0; set newObj($phase) 0; set delObj($phase) 0 ; set candidate($phase) 0 ; set wnsGain($phase) 0 ; set tnsGain($phase) 0 ; set elapTot($phase) 0 }
+    } elseif {$po && [regexp {INFO: .* Post Physical Optimization Timing Summary \| WNS=(\S+) \| TNS=(\S+) \|} $line all wns tns]} {
+      set poPhase "Final"
+      set wnsGain($poPhase) $wns 
+      set tnsGain($poPhase) $tns 
+#       set prevElapsed "00:00:00"
+    } elseif {$po && [regexp {phys_opt_design completed} $line]} {
+      # Reset elapsed time only when phys_opt_design has completed
+      # Otherwise there is an issue with phase 'Deposit Clock Routing'
+      set prevElapsed "00:00:00"
+    } elseif {$po && [regexp {INFO: .* Estimated Timing Summary \| WNS=(\S+) \| TNS=(\S+) \|} $line all wns tns]} {
+      set wnsDelta [format %.3f [expr $wns - $prevWns]]
+      set tnsDelta [format %.3f [expr $tns - $prevTns]]
+      if {[info exist wnsGain($poPhase)]} {
+        set wnsGain($poPhase) [format %.3f [expr $wnsGain($poPhase) + $wnsDelta]]
+        set tnsGain($poPhase) [format %.3f [expr $tnsGain($poPhase) + $tnsDelta]]
+      } else {
+        set wnsGain($poPhase) $wnsDelta
+        set tnsGain($poPhase) $tnsDelta
+      }
+      set prevWns $wns
+      set prevTns $tns
+    } elseif {$po && [regexp {Phase \d+ ([\w ]+)$} $line all poPhase]} {
+      if {$poPhase == "Physical Synthesis Initialization"} { set poPhase "Initial" }
+      set poPhase [regsub -all { } $poPhase {_}]
+    } elseif {$po && [regexp {^Time \(s\): cpu = ([0-9:]+) ; elapsed = ([0-9:]+) .*} $line all cpu elapsed]} {
+#       set delta [clock format [expr [clock scan $elapsed -format {%H:%M:%S}] \
+#                                   - [clock scan $prevElapsed -format {%H:%M:%S}]] \
+#                              -format {%H:%M:%S} -gmt 8]
+      set delta [clock format [expr [clock scan $elapsed ] \
+                                  - [clock scan $prevElapsed ]] \
+                             -format {%H:%M:%S} -gmt 8]
+      if {[info exist elapTot($poPhase)]} {
+#         set elapTot($poPhase) [clock format [expr [clock scan $delta -format {%H:%M:%S}] \
+#                                                 + [clock scan $elapTot($poPhase) -format {%H:%M:%S}] \
+#                                                 - [clock scan 00:00:00 -format {%H:%M:%S}]] \
+#                                              -format {%H:%M:%S}]
+        set elapTot($poPhase) [clock format [expr [clock scan $delta ] \
+                                                + [clock scan $elapTot($poPhase) ] \
+                                                - [clock scan 00:00:00 ]] \
+                                             -format {%H:%M:%S}]
+      } else {
+        set elapTot($poPhase) $delta
+      }
+      if {$poPhase == "Final"} {
+        set elapTot($poPhase) $elapsed
+      }
+      set prevElapsed $elapsed
+      if {$poPhase == "Final"} {
+        set po 0
+        printPhysOptReport $poCmd [array get wnsGain] [array get tnsGain] [array get elapTot] [array get candidate] [array get optObj] [array get newObj] [array get delObj]
+      }
+    } elseif {$po && [regexp {^INFO: .* Identified (\d+) candidate .* optimization} $line all candidates]} {
+      if {[info exist candidate($poPhase)]} {
+        incr candidate($poPhase) $candidates
+      } else {
+        set candidate($poPhase) $candidates
+      }
+    } elseif {$po && [regexp {^INFO: .* Optimized (\d+) \S+. Created (\d+) new \S+ and deleted (\d+) existing \S+} $line all opt new del]} {
+      if {[info exist optObj($poPhase)]} {
+        incr optObj($poPhase) $opt
+        incr newObj($poPhase) $new
+        incr delObj($poPhase) $del
+      } else {
+        set optObj($poPhase) $opt
+        set newObj($poPhase) $new
+        set delObj($poPhase) $del
+      }
+    } elseif {$po && [regexp {^INFO: .* Optimized (\d+) \S+. Created (\d+) new \S+} $line all opt new]} {
+      if {[info exist optObj($poPhase)]} {
+        incr optObj($poPhase) $opt
+        incr newObj($poPhase) $new
+      } else {
+        set optObj($poPhase) $opt
+        set newObj($poPhase) $new
+        set delObj($poPhase) 0
+      }
+    } elseif {$po && [regexp {^INFO: .* Optimized (\d+) \S+. Re-placed (\d+) \S+} $line all opt foo]} {
+      if {[info exist optObj($poPhase)]} {
+        incr optObj($poPhase) $opt
+      } else {
+        set optObj($poPhase) $opt
+        set newObj($poPhase) 0
+        set delObj($poPhase) 0
+      }
+    }
+  }
+  close $F
+}
+
+proc printPhysOptReport {poCmd wnsArray tnsArray elapArray canArray optArray newArray delArray} {
+  array set wnsGain  $wnsArray
+  array set tnsGain  $tnsArray
+  array set elapTot  $elapArray
+  array set candidate $canArray
+  array set optObj   $optArray
+  array set newObj   $newArray
+  array set delObj   $delArray
+
+  foreach p [array names elapTot] { lappend s [string length $p] }
+  set s [lindex [lsort -integer -increasing $s] end]
+  puts "## phys_opt_design $poCmd"
+  puts [format "%-${s}s - WNS:      %7s - TNS:      %7s" "Initial" $wnsGain(Initial) $tnsGain(Initial)]
+  foreach p [lsort [array names elapTot]] {
+    if {$p == "Initial" || $p == "Final"} { continue }
+    foreach v {wnsGain tnsGain elapTot candidate optObj newObj delObj} { if {![eval info exist $v\($p\)]} { eval set $v\($p\) 0 } }
+    puts [format "%-${s}s - WNS gain: %7s - TNS gain: %7s - ELAPSED time: %s - candidate: %4s - opt: %4s - new: %4s - del: %4s" \
+                  $p        $wnsGain($p)    $tnsGain($p)    $elapTot($p)       $candidate($p)  $optObj($p) $newObj($p) $delObj($p)]
+    incr candidate(Final) $candidate($p)
+    incr optObj(Final) $optObj($p)
+    incr newObj(Final) $newObj($p)
+    incr delObj(Final) $delObj($p)
+  }
+  set p "Final"
+  puts [format "%-${s}s - WNS:      %7s - TNS:      %7s - ELAPSED time: %s - candidate: %4s - opt: %4s - new: %4s - del: %4s\n" \
+                $p     $wnsGain($p)    $tnsGain($p)    $elapTot($p) $candidate($p) $optObj($p) $newObj($p) $delObj($p)]
+}
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+} else {
+  foreach pattern $argv {
+    foreach filename [glob -nocomplain $pattern] {
+      if {![file exists $filename]} {
+        puts " -E- File '$filename' does not exists"
+        continue
+      }
+      puts "###################################################################################################"
+      puts "###################################################################################################"
+      puts "##"
+      puts "## [file normalize $filename]"
+      puts "##"
+      puts "###################################################################################################"
+      puts "###################################################################################################"
+      reportPhysOpt $filename
+      puts "\n"
+    }
+  }
+  exit 0
+}

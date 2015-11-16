@@ -1,0 +1,322 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+set SCRIPT_VERSION {04-29-2014}
+
+# Convert CSV files to tables
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  error " ERROR - this script is meant to be executed and not sourced.\n"
+}
+
+##-----------------------------------------------------------------------
+## Long help function
+##-----------------------------------------------------------------------
+proc print_help {} {
+
+set help_message [format {
+#########################################################################
+#########################################################################
+##
+## msgutil
+##
+## Example:
+##    csv2snapshot
+##
+## Description:
+##   Utility to convert CSV formated files to snapshot extraction script
+##
+## Options:
+##
+##   -csv                Input CSV file(s)
+##
+##   -out                Snapshot extraction script
+##
+##   -delimiter          CSV delimiter
+##                       Default: ,
+##
+#########################################################################
+#########################################################################
+} ]
+
+  foreach line [split $help_message "\n"] {
+    regsub {##} $line {  } line
+    puts $line
+  }
+
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## split-csv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc split-csv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## read-csv
+##-----------------------------------------------------------------------
+## Read CSV file and return a Table object
+##-----------------------------------------------------------------------
+proc read-csv {&header &rows filename {csvDelimiter ,}} {
+  if {![file exists $filename]} {
+    error " -E- file '$filename' does not exist"
+  }
+  upvar 1 ${&header} header
+  upvar 1 ${&rows} rows
+  set FH [open $filename]
+  set first 1
+  set count 0
+  set rows [list]
+  set header [list]
+  while {![eof $FH]} {
+    gets $FH line
+    # Skip comments and empty lines
+    if {[regexp {^\s*#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    if {$first} {
+      set header [split-csv $line $csvDelimiter]
+      set first 0
+    } else {
+      set row [split-csv $line $csvDelimiter]
+      lappend rows $row
+      incr count
+    }
+  }
+  close $FH
+  if {$::VERBOSE} {
+    puts $::channel " -I- Header: $header"
+    puts $::channel " -I- Number of imported row(s): $count"
+  }
+  return 0
+}
+
+##-----------------------------------------------------------------------
+## MAIN
+##-----------------------------------------------------------------------
+
+set VERBOSE 0
+set DEBUG 0
+
+set error 0
+set show_help 0
+set show_long_help 0
+set ifilename [list]
+set ofilename {}
+set mode {w}
+set csvDelimiter {,}
+set channel {stdout}
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [lshift argv]
+  switch -exact -- $name {
+    -csv -
+    --csv {
+      while {![string match "-*" [set filename [lshift argv]]]} {
+        if {$filename == {}} {
+          break
+        } elseif {![file exists $filename]} {
+          puts " -E- file '$filename' does not exist"
+          incr error
+        } else {
+          lappend ifilename $filename
+        }
+      }
+      # The last argument needs to be put back on the stack
+      if {$filename != {}} { unlshift argv $filename }
+    }
+    -o -
+    --o -
+    -out -
+    --out {
+      set ofilename [lshift argv]
+    }
+    -delimiter -
+    --delimiter {
+      set csvDelimiter [lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    -longhelp {
+        incr show_help
+        incr show_long_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: csv2snapshot
+                [-csv <filename> [<filename> ...]]
+                [-delimiter <csv-delimiter>]
+                [-out <filename>]
+                [-verbose|-v]
+                [-help|-h]
+                [-longhelp]
+
+    Description: Utility to convert CSV formated files to snapshot extraction script
+
+    Version: %s
+
+    Example:
+       csv2snapshot -csv file1.csv -delimiter ';'
+       csv2snapshot -csv *.csv -out result.tcl
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  if {$show_long_help} { print_help }
+
+  exit 0
+}
+
+if  {$ifilename == {}} {
+  puts " -E- no input file provided"
+  incr error
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+if {$ofilename != {}} {
+  if {[catch {set channel [open $ofilename $mode]} errorstring]} {
+    puts " -E- $errorstring"
+    exit 1
+  }
+  puts $channel "# -------------------------------------------------------"
+  puts $channel [format {# Created on %s with csv2snapshot} [clock format [clock seconds]] ]
+  puts $channel "# -------------------------------------------------------\n"
+  puts $channel ""
+  puts $channel "source /home/dpefour/git/scripts/wip/snapshot.tcl"
+  puts $channel ""
+}
+
+set first 1
+foreach filename $ifilename {
+  if {$VERBOSE} {
+    puts " -I- Processing file $filename"
+  }
+  set header [list]
+  set rows [list]
+  read-csv header rows $filename $csvDelimiter
+  foreach row $rows {
+    puts $channel "############################################################################"
+    set rundir [file dirname [file normalize /scratch/cisco/from_subhra/pr_1_0414/[lindex $row 0]]]
+    puts $channel "open_checkpoint /scratch/cisco/from_subhra/pr_1_0414/[lindex $row 0]"
+    catch {unset metrics}
+    puts "#################################"
+    foreach column $header value $row {
+#       puts $channel "<$column:$value>"
+      set metrics($column) $value
+    }
+#     parray metrics
+    puts $channel [format "snapshot reset
+snapshot configure -db /wrk/hdstaff/dpefour/designs/cisco/cisco_runs.db -verbose -log /wrk/hdstaff/dpefour/designs/cisco/cisco_runs.log
+snapshot configure -time \[file mtime /scratch/cisco/from_subhra/pr_1_0414/[lindex $row 0]\]
+snapshot configure -project {$metrics(project)} -run {}
+snapshot configure -experiment {$metrics(experiment)}
+snapshot configure -version {$metrics(version)}
+snapshot configure -step {$metrics(step)}
+snapshot configure -release {$metrics(vivado)}
+snapshot configure -description {}"]
+    foreach m {project experiment version step} { catch {unset metrics($m)} }
+    foreach m [array names metrics] {
+      puts $channel "snapshot set $m {$metrics($m)}"
+    }
+    puts $channel "catch { snapshot addfile vivado.log $rundir/vivado.log }"
+    puts $channel "catch { snapshot addfile run.script $rundir/run.tcl }"
+    puts $channel [format "snapshot extract
+snapshot save
+close_design
+"]
+    parray metrics
+  }
+}
+
+if {$channel != {stdout}} { close $channel }
+
+exit 0
+
+# metrics(Vivado)                         = 2014.1
+# metrics(clockspeed)                     = original
+# metrics(experiment)                     = td_no_mux_replacement_2014.1
+# metrics(filename)                       = ./td_no_mux_replacement_2014.1/synth.dcp
+# metrics(iteration)                      = 
+# metrics(mux2lut)                        = all
+# metrics(param.place.LmMaxIters)         = 
+# metrics(param.place.repartition4Bali)   = 
+# metrics(param.route.forceSllAssignment) = 
+# metrics(project)                        = cisco
+# metrics(step)                           = synth
+# metrics(version)                        = 0414

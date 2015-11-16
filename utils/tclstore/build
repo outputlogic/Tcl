@@ -1,0 +1,18 @@
+#!/bin/bash
+
+cat tclstore.tmpl  | sed -e '/#<include:tclstore.core.tcl>/{r tclstore.core.tcl' -e 'd}' \
+                         -e '/#<include:tclstore.clone_repo.tcl>/{r tclstore.clone_repo.tcl' -e 'd}' \
+                         -e '/#<include:tclstore.package_app.tcl>/{r tclstore.package_app.tcl' -e 'd}' \
+                         > tclstore
+dos2unix tclstore
+chmod +x tclstore
+
+cat tclstorex.tmpl | sed -e '/#<include:tclstore.core.tcl>/{r tclstore.core.tcl' -e 'd}' \
+                         -e '/#<include:tclstore.clone_repo.tcl>/{r tclstore.clone_repo.tcl' -e 'd}' \
+                         -e '/#<include:tclstore.package_app.tcl>/{r tclstore.package_app.tcl' -e 'd}' \
+                         -e '/#<include:tclstore.update_repo.tcl>/{r tclstore.update_repo.tcl' -e 'd}' \
+                         > tclstorex
+dos2unix tclstorex
+chmod +x tclstorex
+
+\cp tclstorex tclstore

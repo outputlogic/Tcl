@@ -1,0 +1,165 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  error " ERROR - this file is meant to be executed and not sourced.\n"
+}
+
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## debug
+##-----------------------------------------------------------------------
+## Debug proc
+##-----------------------------------------------------------------------
+proc debug { body } {
+  if {$::debug == 1} {
+    if {[catch [list uplevel #0 $body] errorstring]} {
+      puts " -E- $errorstring"
+    }
+  }
+}
+
+###########################################################################
+###########################################################################
+##
+## MAIN
+##
+###########################################################################
+###########################################################################
+
+set CR {}
+set action {show}
+set error 0
+set debug 0
+set verbose 0
+set show_help 0
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [lshift argv]
+  switch -exact -- $name {
+    -cr -
+    -cr {
+        set CR [lshift argv]
+    }
+    -ls -
+    -ls {
+        set action {list}
+    }
+    -cp -
+    -copy {
+        set action {copy}
+    }
+    -d -
+    -debug {
+        set debug 1
+    }
+    -v -
+    -verbose {
+        set verbose 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          set CR $name
+#           puts " -E- option '$name' is not a valid option."
+#           incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: bugcase
+                [<CR_number>][-cr <CR_number>]
+                [-ls]
+                [-cp]
+                [-verbose|-v]
+                [-help|-h]
+                
+    Description: Utility to copy data from bugcase directory
+    
+      Use -ls to list files.
+      Use -cp to copy the bugcase directory.
+    
+    Example:
+       bugcase 836989
+       bugcase 836989 -ls
+       bugcase 836989 -cp
+  
+  } ]
+  # HELP -->
+
+  exit 0
+}
+
+if {$CR == {}} {
+  puts " -E- no CR provided (-cr)"
+  incr error
+}
+
+set base_num [expr ($CR/1000)*1000]
+set bugcases_root [file join / public bugcases]
+set bugcases_dir [file join $bugcases_root $base_num-[expr $base_num+999] $CR]
+
+if {[file isdirectory $bugcases_dir]} {
+  set size [lindex [exec du -s -k $bugcases_dir] 0]
+  switch $action {
+    show {
+      puts "$bugcases_dir (${size}KB)"
+    }
+    list {
+      puts "$bugcases_dir (${size}KB)"
+      puts [exec ls -lrt $bugcases_dir]
+    }
+    copy {
+#       puts $bugcases_dir
+#       file mkdir $CR
+#       cd $CR
+      exec cp -r $bugcases_dir .
+      puts "$bugcases_dir copied (${size}KB)"
+    }
+    default {
+    }
+  }
+} else {
+  puts " -E- cannot access directory $bugcases_dir"
+}
+
+if {$error} {
+  puts "\n Some error(s) occur. Cannot continue.\n"
+  exit -1
+}
+
+exit 0

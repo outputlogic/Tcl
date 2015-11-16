@@ -1,0 +1,262 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+set SCRIPT_VERSION {10-31-2013}
+
+# Split 8-serie CSV file per COE group
+
+lappend auto_path /home/dpefour/git/scripts/toolbox
+package require toolbox
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  error " ERROR - this script is meant to be executed and not sourced.\n"
+}
+
+set COEGroups [list]
+
+# Load external cell/pin/csv header name mapping if file exists
+if {[file exists [file join [file dirname [info script]] mapping.ftcl]]} {
+  puts " Mapping file found: [file normalize [file join [file dirname [info script]] mapping.ftcl]]"
+  source [file join [file dirname [info script]] mapping.ftcl]
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## join-csv
+##-----------------------------------------------------------------------
+## Convert a Tcl list to a CSV-friedly string
+##-----------------------------------------------------------------------
+proc join-csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+#-----------------------------------------------------------------------
+## split-csv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc split-csv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## read-csv
+##-----------------------------------------------------------------------
+## Read CSV file and return a Table object
+##-----------------------------------------------------------------------
+proc read-csv {filename {csvDelimiter ,}} {
+  if {![file exists $filename]} {
+    error " -E- file '$filename' does not exist"
+  }
+  set result [list]
+  set FH [open $filename]
+  set first 1
+  set count 0
+  while {![eof $FH]} {
+    gets $FH line
+    # Skip comments and empty lines
+    if {[regexp {^\s*#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    lappend result [split-csv $line $csvDelimiter]
+    incr count
+  }
+  close $FH
+  if {$::VERBOSE} {
+    puts " -I- Header: [lindex $result 0]"
+    puts " -I- Number of imported row(s): $count"
+  }
+  return $result
+}
+
+##-----------------------------------------------------------------------
+## MAIN
+##-----------------------------------------------------------------------
+
+set VERBOSE 0
+set DEBUG 0
+
+set error 0
+set show_help 0
+set ifilename [list]
+set csvDelimiter {,}
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [lshift argv]
+  switch -exact -- $name {
+    -csv -
+    --csv {
+      while {![string match "-*" [set filename [lshift argv]]]} {
+        if {$filename == {}} {
+          break
+        } elseif {![file exists $filename]} {
+          puts " -E- file '$filename' does not exist"
+          incr error
+        } else {
+          lappend ifilename $filename
+        }
+      }
+      # The last argument needs to be put back on the stack
+      if {$filename != {}} { unlshift argv $filename }
+    }
+    -delimiter -
+    --delimiter {
+      set csvDelimiter [lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: splitCSVbyCOE
+                [-csv <filename> [<filename> ...]]
+                [-delimiter <csv-delimiter>]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to split CSV files by COE group
+
+    Version: %s
+
+    Example:
+       splitCSVbyCOE -csv file1.csv -delimiter ';'
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if  {$ifilename == {}} {
+  puts " -E- no input file provided"
+  incr error
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+foreach filename $ifilename {
+  if {$VERBOSE} {
+    puts " -I- Processing file [file normalize $filename]"
+  }
+  set csv [read-csv $filename $csvDelimiter]
+  set diffcsv 0
+  switch [lindex [lindex $csv 0] 0] {
+    "Cell K7" {
+      set diffcsv 1
+    }
+    "Cell Name" {
+      set diffcsv 0
+    }
+    default {
+      set diffcsv 0
+    }
+  }
+  foreach {name cells} $COEGroups {
+    set ofilename "[file rootname $filename].${name}[file extension $filename]"
+    set FH [open $ofilename {w}]
+    puts $FH [format {# Created on %s} [clock format [clock seconds]] ]
+    puts $FH [format {# Source CSV: %s} [file normalize $filename] ]
+    puts $FH [join-csv [lindex $csv 0] $csvDelimiter]
+    foreach row [lrange $csv 1 end] {
+      set cellname [lindex $row 0]
+      if {$diffcsv} {
+        set cellname [lindex $row 2]
+      }
+      set keep 0
+      foreach pattern $cells {
+        if {[regexp $pattern $cellname]} {
+          set keep 1
+          break
+        }
+      }
+      if {!$keep} {
+        continue
+      }
+    puts $FH [join-csv $row]
+    }
+    close $FH
+    puts " -I- Output file [file normalize $ofilename]"
+  }
+}
+
+exit 0

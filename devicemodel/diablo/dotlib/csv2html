@@ -1,0 +1,754 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+########################################################################################
+## 05-18-2015 - Added -name1/-name2 command line options when using -diff
+##            - Added -sum to support CSV reports from dbCmp
+##            - Major changes in HTML generation to only use online ressources
+## 10-28-2013 - Initial release
+########################################################################################
+
+set SCRIPT_VERSION {05-18-2015}
+
+# Convert CSV files to HTML tables
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  error " ERROR - this script is meant to be executed and not sourced.\n"
+}
+
+
+##-----------------------------------------------------------------------
+## txt2html
+##-----------------------------------------------------------------------
+## String to HTML conversion
+##-----------------------------------------------------------------------
+proc txt2html { string } {
+  return [string map {&lt; &amp;lt; &gt; &amp;gt; &amp; &amp;amp; \&quot; &amp;quot;} $string]
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## split-csv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc split-csv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## read-csv
+##-----------------------------------------------------------------------
+## Read CSV file and return a Table object
+##-----------------------------------------------------------------------
+proc read-csv {&L filename {csvDelimiter ,}} {
+  if {![file exists $filename]} {
+    error " -E- file '$filename' does not exist"
+  }
+  upvar 1 ${&L} L
+  set FH [open $filename]
+  set first 1
+  set count 0
+  while {![eof $FH]} {
+    gets $FH line
+    # Skip comments and empty lines
+    if {[regexp {^\s*#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    if {$first} {
+      set header [split-csv $line $csvDelimiter]
+      lappend L $header
+      set first 0
+    } else {
+      lappend L [split-csv $line $csvDelimiter]
+      incr count
+    }
+  }
+  close $FH
+  if {$::VERBOSE} {
+    puts " -I- Header: $header"
+    puts " -I- Number of imported row(s): $count"
+  }
+  return 0
+}
+
+##-----------------------------------------------------------------------
+## MAIN
+##-----------------------------------------------------------------------
+
+set VERBOSE 0
+set DEBUG 0
+
+set error 0
+set show_help 0
+set ifilename [list]
+set ofilename {}
+set serie1name {1st Serie}
+set serie2name {2nd Serie}
+set mode {w}
+set csvDelimiter {,}
+set channel {stdout}
+set header 1
+set body 1
+set footer 1
+set title {}
+set csvtype {default} ; # default (=reportDotlib) / diff / sum
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [lshift argv]
+  switch -exact -- $name {
+    -title -
+    --title {
+      set title [lshift argv]
+    }
+    -csv -
+    --csv {
+      set ifilename [lshift argv]
+    }
+    -o -
+    --o -
+    -out -
+    --out {
+      set ofilename [lshift argv]
+    }
+    -delimiter -
+    --delimiter {
+      set csvDelimiter [lshift argv]
+    }
+    -a -
+    --a -
+    -append -
+    --append {
+      set mode {a}
+    }
+    -diff -
+    -diff {
+        set csvtype {diff}
+    }
+    -sum -
+    -sum {
+        set csvtype {sum}
+    }
+    -name1 -
+    --name1 {
+      set serie1name [lshift argv]
+    }
+    -name2 -
+    --name2 {
+      set serie2name [lshift argv]
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: csv2html
+                [-csv <filename>]
+                [-delimiter <csv-delimiter>]
+                [-diff|-sum]
+                [-name1 <name>]
+                [-name2 <name>]
+                [-out <filename>]
+                [-append|-a]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to convert CSV formated files to HTML tables
+
+    Version: %s
+    
+    When comparing 2 CSV series, use -diff/-sum/-name1/-name2
+    
+    Use -diff for CSV from 'normalize'
+    Use -sum for CSV from 'dbCmp'
+
+    Example:
+       csv2html -csv file1.csv -delimiter ';'
+       csv2html -csv file1.csv -out result.rpt
+       csv2html -csv kintex7_kintex8_diff.csv -out result.rpt -diff -name1 kintex7 -name2 kintexu
+       csv2html -csv kintex7_kintex8_sum.csv -out result.rpt -sum -name1 kintex7 -name2 kintexu
+
+  } $SCRIPT_VERSION ]
+  # HELP -->
+
+  exit 0
+}
+
+if  {$ifilename == {}} {
+  puts " -E- no input file provided"
+  incr error
+} elseif {![file exists $ifilename]} {
+  puts " -E- file $ifilename does not exist"
+  incr error
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+if {$ofilename != {}} {
+  if {[catch {set channel [open $ofilename $mode]} errorstring]} {
+    puts " -E- $errorstring"
+    exit 1
+  }
+}
+
+set content [list]
+if {$VERBOSE} {
+  puts " -I- Processing file $ifilename"
+}
+read-csv content $ifilename $csvDelimiter
+# puts $channel " # rows: [llength $content]"
+# puts $channel " header: [lindex $content 0]"
+
+##-----------------------------------------------------------------------
+## HEADER
+##-----------------------------------------------------------------------
+
+if {$header} {
+
+  puts $channel [format {
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+    <link rel="shortcut icon" type="image/ico" href="http://www.xilinx.com/favicon.ico" />
+    <title>%s</title>
+
+    <style type="text/css" title="currentStyle">
+      @import "http://cdn.datatables.net/1.10.0/css/jquery.dataTables.css";
+      @import "http://netdna.bootstrapcdn.com/bootstrap/3.1.1/css/bootstrap.min.css";
+      /* @import "http://netdna.bootstrapcdn.com/bootstrap/3.1.1/css/bootstrap-theme.min.css"; */
+      @import "http://cdn.datatables.net/plug-ins/28e7751dbec/integration/bootstrap/3/dataTables.bootstrap.css";
+    </style>
+    <style type="text/css" title="currentStyle">
+      body {
+        padding-top: 70px;
+        padding-bottom: 30px;
+      }
+      table.dataTable tr.even.row_selected td {
+        background-color: #B0BED9;
+      }
+      table.dataTable tr.odd.row_selected td {
+        background-color: #9FAFD1;
+      }
+      table.dataTable tr.even.row_selected td.Serie1Only {
+        background-color: #B0BED9;
+      }
+      table.dataTable tr.odd.row_selected td.Serie1Only {
+        background-color: #9FAFD1;
+      }
+      table.dataTable tr.even.row_selected td.Serie2Only {
+        background-color: #B0BED9;
+      }
+      table.dataTable tr.odd.row_selected td.Serie2Only {
+        background-color: #9FAFD1;
+      }
+      /* lavender */
+      table.dataTable tr.even td.Serie1Only {
+        background-color: #E6E6FA;
+      }
+      table.dataTable tr.odd td.Serie1Only {
+        background-color: #E6E6FA;
+      }
+      /* PaleTurquoise */
+      table.dataTable tr.even td.Serie2Only {
+        background-color: #AFEEEE;
+      }
+      table.dataTable tr.odd td.Serie2Only {
+        background-color: #AFEEEE;
+      }
+
+      table.dataTable tr.even td {
+        background-color: white;
+      }
+      table.dataTable tr.odd td {
+        background-color: #E2E4FF;
+      }
+
+    </style>
+
+    <!-- HTML5 shim and Respond.js IE8 support of HTML5 elements and media queries -->
+    <!--[if lt IE 9]>
+      <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+      <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+    <![endif]-->
+
+    <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+    <script src="http://netdna.bootstrapcdn.com/bootstrap/3.1.1/js/bootstrap.min.js"></script>
+    <script src="http://cdn.datatables.net/1.10.0/js/jquery.dataTables.min.js"></script>
+    <script src="http://cdn.datatables.net/plug-ins/28e7751dbec/integration/bootstrap/3/dataTables.bootstrap.js"></script>
+    <script type="text/javascript" charset="utf-8">
+        function fnShowColumnHideColumn( iCol )
+        {
+            /* Get the DataTables object again - this is not a recreation, just a get of the object */
+            /*var oTable = $('#example').dataTable();*/
+            var bVis = oTable.fnSettings().aoColumns[iCol].bVisible;
+            oTable.fnSetColumnVis( iCol, bVis ? false : true );
+        }
+        function fnShowColumn( iCol )
+        {
+            /* Get the DataTables object again - this is not a recreation, just a get of the object */
+            /*var oTable = $('#example').dataTable();*/
+            oTable.fnSetColumnVis( iCol, true );
+        }
+        function fnHideColumn( iCol )
+        {
+            /* Get the DataTables object again - this is not a recreation, just a get of the object */
+            /*var oTable = $('#example').dataTable();*/
+            oTable.fnSetColumnVis( iCol, false );
+        }
+    </script>
+} [file tail $ifilename] ]
+
+  if {$csvtype == {diff}} {
+    puts $channel [format {
+    <script type="text/javascript" charset="utf-8">
+      var oTable;
+      $(document).ready(function() {
+
+          /* Add a click handler for filtering rows based on the filtering checkboxes */
+          $('.filter').click( function() {
+              if ( !$(this).is(':checked') ) {
+                  // Extract the class from the checkbox that has been clicked on: $(this).val()
+                  $("#csvtable tbody tr").filter("[class~='"+$(this).val()+"']").hide();
+              } else {
+                  // Extract the class from the checkbox that has been clicked on: $(this).val()
+                  $("#csvtable tbody tr").filter("[class~='"+$(this).val()+"']").show();
+              }
+          } );
+
+          /* Add a click handler to the rows - this could be used as a callback */
+          $("#csvtable tbody tr").click( function( e ) {
+            if ( $(this).hasClass('row_selected') ) {
+                $(this).removeClass('row_selected');
+            }
+            else {
+                oTable.$('tr.row_selected').removeClass('row_selected');
+                $(this).addClass('row_selected');
+            }
+          });
+        
+          $('#csvtable').dataTable( {
+              "aaSorting": [[4, 'asc']],
+              "aoColumnDefs": [
+                { "bVisible": false, "aTargets": [ 0 ] },
+                { "bVisible": false, "aTargets": [ 1 ] },
+                { "bVisible": false, "aTargets": [ 2 ] },
+                { "bVisible": false, "aTargets": [ 3 ] },
+                { "bSearchable": false, "aTargets": [ 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41 ] }
+              ],
+              "bJQueryUI": true,
+              "sPaginationType": "full_numbers",
+              "bPaginate": false
+           } );
+           
+           /* Add a click handler for the first 4 columns */
+           $('#showHideOriginalNames').click( function() {
+               $('body').css('cursor','progress');
+               if ( $(this).is(':checked') ) {
+                 fnShowColumn(0);
+                 fnShowColumn(1);
+                 fnShowColumn(2);
+                 fnShowColumn(3);
+               } else {
+                 fnHideColumn(0);
+                 fnHideColumn(1);
+                 fnHideColumn(2);
+                 fnHideColumn(3);
+               }
+               $('body').css('cursor','default');
+           } );
+            
+          /* Init the table */
+          oTable = $('#csvtable').dataTable();
+        
+      } );
+    </script>
+} ]
+
+  } elseif {$csvtype == {sum}} {
+    puts $channel [format {
+    <script type="text/javascript" charset="utf-8">
+      var oTable;
+      $(document).ready(function() {
+          $('#csvtable').dataTable( {
+              "aaSorting": [[0, 'asc']],
+              "bJQueryUI": true,
+              "sPaginationType": "full_numbers",
+              "bPaginate": false
+           } );
+           
+          /* Init the table */
+          oTable = $('#csvtable').dataTable();
+        
+      } );
+    </script>
+} ]
+
+  } else {
+    puts $channel [format {
+    <script type="text/javascript" charset="utf-8">
+      var oTable;
+      $(document).ready(function() {
+
+          /* Add a click handler to the rows - this could be used as a callback */
+          $("#csvtable tbody tr").click( function( e ) {
+            if ( $(this).hasClass('row_selected') ) {
+                $(this).removeClass('row_selected');
+            }
+            else {
+                oTable.$('tr.row_selected').removeClass('row_selected');
+                $(this).addClass('row_selected');
+            }
+          });
+        
+          $('#csvtable').dataTable( {
+              "aaSorting": [[0, 'asc']],
+              "aoColumnDefs": [
+                { "bSearchable": false, "aTargets": [ 2, 3, 4, 5, 6, 7, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34 ] }
+              ],
+              "bJQueryUI": true,
+              "sPaginationType": "full_numbers",
+              "bPaginate": false
+           } );
+           
+           /* Add a click handler for the first 4 columns */
+           $('#showHideOriginalNames').click( function() {
+               $('body').css('cursor','progress');
+               if ( $(this).is(':checked') ) {
+                 fnShowColumn(0);
+                 fnShowColumn(1);
+                 fnShowColumn(2);
+                 fnShowColumn(3);
+               } else {
+                 fnHideColumn(0);
+                 fnHideColumn(1);
+                 fnHideColumn(2);
+                 fnHideColumn(3);
+               }
+               $('body').css('cursor','default');
+           } );
+            
+          /* Init the table */
+          oTable = $('#csvtable').dataTable();
+        
+      } );
+    </script>
+} ]
+  }
+
+  puts $channel [format {
+    <script type="text/javascript" charset="utf-8">
+      $(document).ready(function() {
+        /* $('.Serie1Only').css('background-color', 'lavender'); */
+        /* $('.Serie2Only').css('background-color', 'PaleTurquoise'); */
+        /* $('.match').css('background-color', 'lightblue'); */
+        $('.mismatch').css('background-color', 'brown');
+      } );
+    </script>
+    
+</head>
+} ]
+
+# [format {Created on %s with csv2html} [clock format [clock seconds]] ]
+
+}
+
+##-----------------------------------------------------------------------
+## BODY
+##-----------------------------------------------------------------------
+
+if {$body} {
+
+  puts $channel [format {
+  <body role="document">
+
+    <!-- Fixed navbar -->
+    <div class="navbar navbar-inverse navbar-fixed-top" role="navigation">
+      <div class="container">
+        <div class="navbar-header">
+          <button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
+            <span class="sr-only">Toggle navigation</span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+          </button>
+          <a class="navbar-brand" href="#top">%s</a>
+        </div>
+
+        <div class="navbar-collapse collapse">
+          <ul class="nav navbar-nav">
+            <li class="active"><a href="#" data-toggle="modal" data-target="#filtersModal">Filters</a></li>
+      <!--
+            <li><a href="#about">About</a></li>
+            <li><a href="#contact">Contact</a></li>
+            <li class="dropdown">
+              <a href="#" class="dropdown-toggle" data-toggle="dropdown">Dropdown <b class="caret"></b></a>
+              <ul class="dropdown-menu">
+                <li><a href="#">Action</a></li>
+                <li><a href="#">Another action</a></li>
+                <li><a href="#">Something else here</a></li>
+                <li class="divider"></li>
+                <li class="dropdown-header">Nav header</li>
+                <li><a href="#">Separated link</a></li>
+                <li><a href="#">One more separated link</a></li>
+              </ul>
+      -->
+            </li>
+          </ul>
+        </div>
+
+      </div>
+    </div>
+<!--    <div class="container" role="main"> -->
+} [file tail $ifilename]]
+
+  puts $channel [format {
+     <div class="container_wrapper well">
+        <h1>%s</h1>
+} [txt2html $title] ]
+
+  puts $channel [format {
+        <table cellpadding="0" cellspacing="0" border="1" class="table table-striped table-bordered table-condensed table-hover" id="csvtable">
+          <thead>
+            <tr> }]
+
+  foreach elm [lindex $content 0] {
+    puts $channel [format {
+              <th>%s</th> } [txt2html $elm] ]
+  }
+
+  puts $channel [format {
+            </tr>
+          </thead>
+          <tbody> }]
+
+  foreach row [lrange $content 1 end] {
+#     puts $channel [format {
+#             <tr class="odd gradeX"> }]
+
+    # Index in the row (i.e column number), not counting the cell name and K7/K8 pin name columns
+    set index 0
+    set mismatch 0
+    set rowType {}
+    set rowHTML [list]
+    # Lisy of columns that have a mismatch
+    set mismatchCol [list]
+    # Scan the row a first time to build the list of colomns that have a mismatch
+    set colNum 0
+    foreach elm $row header [lindex $content 0] {
+      if {$csvtype == {diff}} {
+        if {($elm >= 1) && ($colNum >= 9)} {
+          lappend mismatchCol $header
+        }
+        incr colNum
+      }
+    }
+    # The second pass is to build the HTML
+    foreach elm $row header [lindex $content 0] {
+      set class {}
+      if {$csvtype == {diff}} {
+        # Only add a class to the table cell if this is HTML for a DIFF CSV
+        switch -exact -- $elm {
+          -2 {
+            set class { class="Serie1Only"}
+            set rowType {Serie1Only}
+          }
+          -1 {
+            set class { class="Serie2Only"}
+            set rowType {Serie2Only}
+          }
+          0 {
+            set class { class="match"}
+          }
+          1 {
+            if {$header != {Num Mismatchs}} {
+              set class [format { class="mismatch" title="%s"} $header]
+            } else {
+              set class [format { class="mismatch" title="%s"} [join [lsort $mismatchCol] \n]]
+            }
+            incr mismatch
+            set rowType {mismatch}
+          }
+          default {
+            if {[regexp {^[0-9]+$} $elm]} {
+              # The column {Num Mismatch} can have numbers above 1. This is covered here
+              if {$header != {Num Mismatchs}} {
+                set class [format { class="mismatch" title="%s"} $header]
+              } else {
+                set class [format { class="mismatch" title="%s"} [join [lsort $mismatchCol] \n]]
+              }
+              incr mismatch
+              set rowType {mismatch}
+            }
+          }
+        }
+      }
+      lappend rowHTML [format {
+              <td%s>%s</td> } $class [txt2html $elm] ]
+      incr index
+    }
+    
+    switch $rowType {
+      Serie1Only {
+        set class {Serie1Onlyrow}
+      }
+      Serie2Only {
+        set class {Serie2Onlyrow}
+      }
+      mismatch {
+        set class {mismatchrow}
+      }
+      default {
+        set class {matchrow}
+      }
+    }
+    puts $channel [format {
+            <tr class="odd gradeX %s"> } $class]
+    puts $channel [join $rowHTML \n]
+    puts $channel [format {
+            </tr> }]
+    
+  }
+
+  puts $channel [format {
+          </tbody>
+        </table>
+     </div>
+}]
+
+}
+
+##-----------------------------------------------------------------------
+## Filters
+##-----------------------------------------------------------------------
+
+  if {$csvtype == {diff}} {
+    puts $channel [format {
+<div class="modal" id="filtersModal" tabindex="-1" role="dialog" aria-labelledby="filtersModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
+        <h4 class="modal-title" id="filtersModalLabel">Filtering Options</h4>
+      </div>
+      <div class="modal-body">
+
+        <table class='table table-condensed table-bordered'>
+        <tr><td>
+        <div style='float:left'><label><input type='checkbox' id='showHideOriginalNames' unchecked /> Show Original Cell And Pin Names </label></div>
+        </td></tr><tr><td>
+        <div style='float:left'><label><input type='checkbox' value='matchrow' class='filter' checked /> Show Matching Rows </label></div>
+        </td></tr><tr><td>
+        <div style='float:left'><label><input type='checkbox' value='mismatchrow' class='filter' checked /> Show Mismatching Rows </label></div>
+        </td></tr><tr><td>
+        <div style='float:left'><label><input type='checkbox' value='Serie1Onlyrow' class='filter' checked /> Show %s Only Rows </label></div>
+        </td></tr><tr><td>
+        <div style='float:left'><label><input type='checkbox' value='Serie2Onlyrow' class='filter' checked /> Show %s Only Rows </label></div>
+        </td></tr>
+        </table>
+
+      </div>
+   <!--
+      <div class="modal-footer">
+        <button type="button" class="btn btn-xs btn-link" data-dismiss="modal">Close</button>
+      </div>
+   -->
+    </div><!-- /.modal-content -->
+  </div><!-- /.modal-dialog -->
+</div><!-- /.modal -->
+} $serie1name $serie2name]
+  }
+
+##-----------------------------------------------------------------------
+## FOOTER
+##-----------------------------------------------------------------------
+
+if {$footer} {
+
+  puts $channel [format {
+  </body>
+</html>
+}]
+
+}
+
+
+if {$channel != {stdout}} { close $channel }
+
+exit 0
