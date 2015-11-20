@@ -68,7 +68,7 @@
 ## Example runtime (unsafe mode):
 ## ------------------------------
 ## 128 FIFOs processed in 12mns (8195 added FDRE)
-## 1118 BRAMs processed in 12mns (24098 added FDRE)
+## 1118 BRAMs processed in 77mns (50K added FDRE with 100K nets)
 ## 
 
 # BE CAREFUL: will fail on protected IPs:
