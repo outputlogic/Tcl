@@ -11,6 +11,7 @@
 
 # Proc to reload current script
 proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 namespace eval ::tb {
     namespace export prettyTable
@@ -21,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ## 
-## Version:        2014.11.04
+## Version:        2015.12.09
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -264,8 +265,12 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2015.12.09 - Expanded syntax for 'sort' method to be able to sort columns of different
+##              types
+##            - Added -verbose to 'export' method for CSV format
 ## 2014.11.04 - Added proc 'lrevert' to avoid dependency
-## 2014.07.19 - Added support for a new table format to the 'print' and 'export' methods
+## 2014.07.19 - Added support for a new 'lean' table format to the 'print' 
+##              and 'export' methods
 ##            - Added support for left/right text alignment in table cells
 ## 2014.04.25 - Changed version format to 2014.04.25 to be compatible with 'package' command
 ## 04/25/2014 - Fixed typo inside exportToCSV
@@ -286,7 +291,7 @@ namespace eval ::tb {
 
 
 proc ::tb::prettyTable { args } {
-  # Summary : utility to easily create and print tables
+  # Summary : Utility to easily create and print tables
   
   # Argument Usage:
   # [args]: sub-command. The supported sub-commands are: create | info | sizeof | destroyall
@@ -317,7 +322,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0 
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 maxNumRows -1 maxNumRowsToDisplay -1 title {} columnsToDisplay {} ]
-  variable version {2014.11.04}
+  variable version {2015.12.09}
 } ]
 
 #------------------------------------------------------------------------
@@ -701,6 +706,7 @@ proc ::tb::prettyTable::exportToCSV {self args} {
   array set defaults [list \
       -delimiter {,} \
       -return_var {} \
+      -verbose 0 \
     ]
   array set options [array get defaults]
   array set options $args
@@ -731,12 +737,15 @@ proc ::tb::prettyTable::exportToCSV {self args} {
     }
   }
 #   append res "# title${sepChar}[::tb::prettyTable::list2csv [list $params(title)] $sepChar]\n"
-  append res "# header${sepChar}[::tb::prettyTable::list2csv $header $sepChar]\n"
-  append res "# indent${sepChar}[::tb::prettyTable::list2csv $params(indent) $sepChar]\n"
-  append res "# limit${sepChar}[::tb::prettyTable::list2csv $params(maxNumRows) $sepChar]\n"
-  append res "# display_limit${sepChar}[::tb::prettyTable::list2csv $params(maxNumRowsToDisplay) $sepChar]\n"
-  append res "# display_columns${sepChar}[::tb::prettyTable::list2csv [list $params(columnsToDisplay)] $sepChar]\n"
-  append res "[::tb::prettyTable::list2csv $header $sepChar]\n"
+  if {$options(-verbose)} {
+  	# Additional header information are hidden by default
+    append res "# header${sepChar}[::tb::prettyTable::list2csv $header $sepChar]\n"
+    append res "# indent${sepChar}[::tb::prettyTable::list2csv $params(indent) $sepChar]\n"
+    append res "# limit${sepChar}[::tb::prettyTable::list2csv $params(maxNumRows) $sepChar]\n"
+    append res "# display_limit${sepChar}[::tb::prettyTable::list2csv $params(maxNumRowsToDisplay) $sepChar]\n"
+    append res "# display_columns${sepChar}[::tb::prettyTable::list2csv [list $params(columnsToDisplay)] $sepChar]\n"
+    append res "[::tb::prettyTable::list2csv $header $sepChar]\n"
+  }
   set count 0
   foreach row $table {
     incr count
@@ -1612,7 +1621,7 @@ proc ::tb::prettyTable::method:sort {self args} {
       }
     }
     # Save the column and direction for each column
-    lappend indexes [list $index $direction]
+    lappend indexes [list $index $direction $sortType]
     # Reset default direction and column
     set direction {-increasing}
     set column {}
@@ -1628,18 +1637,24 @@ proc ::tb::prettyTable::method:sort {self args} {
               
   Description: Sort the table based on one or multiple column headers.
   
+    -real/-integer/-dictionary are sticky and apply to the column(s)
+    specified afterward. They can be used multiple times to sort columns
+    of different types.
+  
   Example:
      <prettyTableObject> sort +SLACK
      <prettyTableObject> sort -integer -FANOUT
      <prettyTableObject> sort -integer -2 +1 -SLACK
+     <prettyTableObject> sort -integer -2 -dictionary +1 -real -SLACK
      <prettyTableObject> sort +SETUP_SLACK -HOLD_SLACK
 } ]
     # HELP -->
     return {}
   }
 
-  foreach item [lrevert $indexes] {
-    foreach {index direction} $item { break }
+#   foreach item [lrevert $indexes] {}
+  foreach item [::tb::prettyTable::lrevert $indexes] {
+    foreach {index direction sortType} $item { break }
     if {$command == {}} {
       set command "lsort $direction $sortType -index $index \$table"
     } else {
@@ -1898,6 +1913,7 @@ proc ::tb::prettyTable::method:export {self args} {
 
   set error 0
   set help 0
+  set verbose 0
   set filename {}
   set append 0
   set returnVar {}
@@ -1935,6 +1951,10 @@ proc ::tb::prettyTable::method:export {self args} {
       -table {
            set tableFormat [lshift args]
       }
+      -v -
+      -verbose {
+           set verbose 1
+      }
       -h -
       -help {
            set help 1
@@ -1961,10 +1981,13 @@ proc ::tb::prettyTable::method:export {self args} {
               [-append]
               [-return_var <tcl_var_name>]
               [-columns <list_of_columns_to_display>]
+              [-verbose|-v]
               [-help|-h]
               
   Description: Export table content. The -columns argument is only available for the
                'list' and 'table' export formats.
+  
+    -verbose: applicable with -format csv. Add some configuration information as comment
   
   Example:
      <prettyTableObject> export -format csv
@@ -2012,9 +2035,9 @@ proc ::tb::prettyTable::method:export {self args} {
     }
     csv {
       if {$returnVar != {}} {
-        ::tb::prettyTable::exportToCSV $self -delimiter $csvDelimiter -return_var res
+        ::tb::prettyTable::exportToCSV $self -delimiter $csvDelimiter -return_var res -verbose $verbose
       } else {
-        set res [::tb::prettyTable::exportToCSV $self -delimiter $csvDelimiter]
+        set res [::tb::prettyTable::exportToCSV $self -delimiter $csvDelimiter -verbose $verbose]
       }
     }
     tcl {
