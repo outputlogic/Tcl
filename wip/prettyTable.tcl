@@ -559,6 +559,11 @@ proc ::tb::prettyTable::lshift {inputlist} {
 # Reverse a list
 #------------------------------------------------------------------------
 proc ::tb::prettyTable::lrevert L {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
    for {set res {}; set i [llength $L]} {$i>0} {#see loop} {
        lappend res [lindex $L [incr i -1]]
    }
