@@ -21,32 +21,32 @@ namespace eval ::tb {
 ##
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
-## 
-## Version:        2015.12.09
+##
+## Version:        2015.12.10
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
 ##
 ## BASIC USAGE:
 ## ============
-## 
+##
 ## 1- Create new table object with optional title
-## 
+##
 ##   Vivado% set tbl [::tb::prettyTable {Pin Slack}]
-## 
+##
 ## 2- Define header
-## 
+##
 ##   Vivado% $tbl header [list NAME IS_LEAF IS_CLOCK SETUP_SLACK HOLD_SLACK]
-## 
+##
 ## 3- Add row(s)
-##   
-##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[4]_i_45/I5} 1 0 10.000 3.266 ] 
-##   Vivado% $tbl addrow [list or1200_mult_mac/p_1_out__2_i_9/I2 1 0 9.998 1.024 ] 
-##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[3]_i_52/I1} 1 0 9.993 2.924 ] 
-##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[14]_i_41/I2} 1 0 9.990 3.925 ] 
-## 
+##
+##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[4]_i_45/I5} 1 0 10.000 3.266 ]
+##   Vivado% $tbl addrow [list or1200_mult_mac/p_1_out__2_i_9/I2 1 0 9.998 1.024 ]
+##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[3]_i_52/I1} 1 0 9.993 2.924 ]
+##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[14]_i_41/I2} 1 0 9.990 3.925 ]
+##
 ## 4- Print table
-## 
+##
 ##   Vivado% $tbl print
 ##   +-------------------------------------------------------------------------------------+
 ##   | Pin slack                                                                           |
@@ -58,38 +58,38 @@ namespace eval ::tb {
 ##   | or1200_wbmux/muxreg_reg[3]_i_52/I1  | 1       | 0        | 9.993       | 2.924      |
 ##   | or1200_wbmux/muxreg_reg[14]_i_41/I2 | 1       | 0        | 9.990       | 3.925      |
 ##   +-------------------------------------+---------+----------+-------------+------------+
-## 
+##
 ## 5- Get number of rows
-## 
+##
 ##   Vivado% $tbl numrows
 ##   4
 ##
 ## 5- Destroy table (optional)
-## 
+##
 ##   Vivado% $tbl destroy
-## 
-## 
-## 
+##
+##
+##
 ## ADVANCED USAGE:
 ## ===============
-## 
+##
 ## 1- Interactivity:
-## 
+##
 ##   Vivado% ::tb::prettyTable -help
 ##   Vivado% set tbl [::tb::prettyTable]
-##   Vivado% $tbl 
+##   Vivado% $tbl
 ##   Vivado% $tbl configure -help
 ##   Vivado% $tbl export -help
 ##   Vivado% $tbl import -help
 ##   Vivado% $tbl print -help
 ##   Vivado% $tbl sort -help
-## 
+##
 ## 2- Adjust table indentation:
-## 
+##
 ##   Vivado% $tbl indent 8
 ##   OR
 ##   Vivado% $tbl configure -indent 8
-##   
+##
 ##   Vivado% $tbl print
 ##           +-------------------------------------------------------------------------------------+
 ##           | Pin Slack                                                                           |
@@ -101,12 +101,12 @@ namespace eval ::tb {
 ##           | or1200_wbmux/muxreg_reg[3]_i_52/I1  | 1       | 0        | 9.993       | 2.924      |
 ##           | or1200_wbmux/muxreg_reg[14]_i_41/I2 | 1       | 0        | 9.990       | 3.925      |
 ##           +-------------------------------------+---------+----------+-------------+------------+
-##   
+##
 ## 3- Sort the table by columns. Multi-columns sorting is supporting:
-## 
+##
 ##   Vivado% $tbl sort +setup_slack
 ##   Vivado% $tbl sort +3
-## 
+##
 ##   Vivado% $tbl print
 ##           +-------------------------------------------------------------------------------------+
 ##           | Pin Slack                                                                           |
@@ -118,11 +118,11 @@ namespace eval ::tb {
 ##           | or1200_mult_mac/p_1_out__2_i_9/I2   | 1       | 0        | 9.998       | 1.024      |
 ##           | or1200_wbmux/muxreg_reg[4]_i_45/I5  | 1       | 0        | 10.000      | 3.266      |
 ##           +-------------------------------------+---------+----------+-------------+------------+
-## 
+##
 ## 4- Export table to multiple formats:
-## 
+##
 ##   4.1- Regular table:
-## 
+##
 ##     Vivado% $tbl export -format table
 ##           +-------------------------------------------------------------------------------------+
 ##           | Pin Slack                                                                           |
@@ -134,13 +134,13 @@ namespace eval ::tb {
 ##           | or1200_mult_mac/p_1_out__2_i_9/I2   | 1       | 0        | 9.998       | 1.024      |
 ##           | or1200_wbmux/muxreg_reg[4]_i_45/I5  | 1       | 0        | 10.000      | 3.266      |
 ##           +-------------------------------------+---------+----------+-------------+------------+
-##     
+##
 ##     is equivalent to
-##   
+##
 ##     Vivado% $tbl print
-##   
+##
 ##   4.2- CSV format:
-## 
+##
 ##     Vivado% $tbl export -format csv -delimiter {;}
 ##     # title;"Pin Slack"
 ##     # header;"NAME";"IS_LEAF";"IS_CLOCK";"SETUP_SLACK";"HOLD_SLACK"
@@ -152,37 +152,37 @@ namespace eval ::tb {
 ##     "or1200_wbmux/muxreg_reg[4]_i_45/I5";"1";"0";"10.000";"3.266"
 ##     "or1200_wbmux/muxreg_reg[3]_i_52/I1";"1";"0";"9.993";"2.924"
 ##     "or1200_mult_mac/p_1_out__2_i_9/I2";"1";"0";"9.998";"1.024"
-## 
+##
 ##   4.3- Tcl script:
-## 
+##
 ##     Vivado% $tbl export -format tcl
 ##     set tbl [::tb::prettyTable]
 ##     $tbl configure -title {Pin Slack} -indent 8 -limit -1 -display_limit 50
 ##     $tbl header [list NAME IS_LEAF IS_CLOCK SETUP_SLACK HOLD_SLACK]
-##     $tbl addrow [list {or1200_wbmux/muxreg_reg[14]_i_41/I2} 1 0 9.990 3.925 ] 
-##     $tbl addrow [list {or1200_wbmux/muxreg_reg[4]_i_45/I5} 1 0 10.000 3.266 ] 
-##     $tbl addrow [list {or1200_wbmux/muxreg_reg[3]_i_52/I1} 1 0 9.993 2.924 ] 
-##     $tbl addrow [list or1200_mult_mac/p_1_out__2_i_9/I2 1 0 9.998 1.024 ] 
-## 
+##     $tbl addrow [list {or1200_wbmux/muxreg_reg[14]_i_41/I2} 1 0 9.990 3.925 ]
+##     $tbl addrow [list {or1200_wbmux/muxreg_reg[4]_i_45/I5} 1 0 10.000 3.266 ]
+##     $tbl addrow [list {or1200_wbmux/muxreg_reg[3]_i_52/I1} 1 0 9.993 2.924 ]
+##     $tbl addrow [list or1200_mult_mac/p_1_out__2_i_9/I2 1 0 9.998 1.024 ]
+##
 ##   4.4- List format:
-## 
+##
 ##     Vivado% $tbl export -format list -delimiter { }
 ##           NAME:or1200_wbmux/muxreg_reg[14]_i_41/I2 IS_LEAF:1 IS_CLOCK:0 SETUP_SLACK:9.990 HOLD_SLACK:3.925
 ##           NAME:or1200_wbmux/muxreg_reg[4]_i_45/I5 IS_LEAF:1 IS_CLOCK:0 SETUP_SLACK:10.000 HOLD_SLACK:3.266
 ##           NAME:or1200_wbmux/muxreg_reg[3]_i_52/I1 IS_LEAF:1 IS_CLOCK:0 SETUP_SLACK:9.993 HOLD_SLACK:2.924
 ##           NAME:or1200_mult_mac/p_1_out__2_i_9/I2 IS_LEAF:1 IS_CLOCK:0 SETUP_SLACK:9.998 HOLD_SLACK:1.024
-## 
-## 
+##
+##
 ## 5- Save results to file:
-## 
+##
 ##   Vivado% $tbl print -file <filename> [-append]
 ##   Vivado% $tbl export -file <filename> [-append]
-## 
+##
 ## 6- Return results by reference for large tables:
-## 
+##
 ##   Vivado% $tbl print -return_var foo
 ##   Vivado% $tbl export -return_var foo
-##   
+##
 ##   Vivado% puts $foo
 ##           +-------------------------------------------------------------------------------------+
 ##           | Pin Slack                                                                           |
@@ -194,39 +194,39 @@ namespace eval ::tb {
 ##           | or1200_wbmux/muxreg_reg[3]_i_52/I1  | 1       | 0        | 9.993       | 2.924      |
 ##           | or1200_mult_mac/p_1_out__2_i_9/I2   | 1       | 0        | 9.998       | 1.024      |
 ##           +-------------------------------------+---------+----------+-------------+------------+
-## 
-## 
-## 
+##
+##
+##
 ## 7- Import table from CSV file
-## 
+##
 ##   Vivado% $tbl import -file table.csv -delimiter {,}
-## 
+##
 ## 8- Query/interact with the content of the table
-## 
+##
 ##   Vivado% upvar 0 ${tbl}::table table
 ##   Vivado% set header [$tbl header]
 ##   Vivado% foreach row $table { <do something with the row...> }
-## 
+##
 ## 9- Other commands:
-## 
+##
 ##   9.1- Clone the table:
-## 
+##
 ##     Vivado% set clone [$tbl clone]
-## 
+##
 ##   9.2- Reset/clear the content of the table:
-## 
+##
 ##     Vivado% $tbl reset
-## 
+##
 ##   9.3- Add separator between rows:
-## 
+##
 ##   Vivado% set tbl [::tb::prettyTable {Pin Slack}]
 ##   Vivado% $tbl header [list NAME IS_LEAF IS_CLOCK SETUP_SLACK HOLD_SLACK]
-##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[4]_i_45/I5} 1 0 10.000 3.266 ] 
-##   Vivado% $tbl addrow [list or1200_mult_mac/p_1_out__2_i_9/I2 1 0 9.998 1.024 ] 
+##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[4]_i_45/I5} 1 0 10.000 3.266 ]
+##   Vivado% $tbl addrow [list or1200_mult_mac/p_1_out__2_i_9/I2 1 0 9.998 1.024 ]
 ##   Vivado% $tbl separator
-##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[3]_i_52/I1} 1 0 9.993 2.924 ] 
+##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[3]_i_52/I1} 1 0 9.993 2.924 ]
 ##   Vivado% $tbl separator
-##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[14]_i_41/I2} 1 0 9.990 3.925 ] 
+##   Vivado% $tbl addrow [list {or1200_wbmux/muxreg_reg[14]_i_41/I2} 1 0 9.990 3.925 ]
 ##   Vivado% $tbl print
 ##           +-------------------------------------------------------------------------------------+
 ##           | Pin Slack                                                                           |
@@ -240,13 +240,13 @@ namespace eval ::tb {
 ##           +-------------------------------------+---------+----------+-------------+------------+
 ##           | or1200_wbmux/muxreg_reg[14]_i_41/I2 | 1       | 0        | 9.990       | 3.925      |
 ##           +-------------------------------------+---------+----------+-------------+------------+
-## 
+##
 ##   9.4- Destroy the table and release memory:
-## 
+##
 ##     Vivado% $tbl destroy
-## 
+##
 ##   9.5- Get information on the table:
-## 
+##
 ##     Vivado% $tbl info
 ##     Header: NAME IS_LEAF IS_CLOCK SETUP_SLACK HOLD_SLACK
 ##     # Cols: 5
@@ -256,20 +256,23 @@ namespace eval ::tb {
 ##     Param[maxNumRowsToDisplay]: -1
 ##     Param[title]: Pin Slack
 ##     Memory footprint: 330 bytes
-## 
+##
 ##   9.6- Get the memory size taken by the table:
-## 
+##
 ##     Vivado% $tbl sizeof
 ##     330
 ##
 ########################################################################################
 
 ########################################################################################
+## 2015.12.10 - Added 'title' method to add/change the table title
+##            - Added new command line options to 'configure' method to set the default
+##              table format and cell alignment
 ## 2015.12.09 - Expanded syntax for 'sort' method to be able to sort columns of different
 ##              types
 ##            - Added -verbose to 'export' method for CSV format
 ## 2014.11.04 - Added proc 'lrevert' to avoid dependency
-## 2014.07.19 - Added support for a new 'lean' table format to the 'print' 
+## 2014.07.19 - Added support for a new 'lean' table format to the 'print'
 ##              and 'export' methods
 ##            - Added support for left/right text alignment in table cells
 ## 2014.04.25 - Changed version format to 2014.04.25 to be compatible with 'package' command
@@ -292,11 +295,11 @@ namespace eval ::tb {
 
 proc ::tb::prettyTable { args } {
   # Summary : Utility to easily create and print tables
-  
+
   # Argument Usage:
   # [args]: sub-command. The supported sub-commands are: create | info | sizeof | destroyall
   # [-usage]: Usage information
-  
+
   # Return Value:
   # returns a new prettyTable object
 
@@ -318,11 +321,11 @@ proc ::tb::prettyTable { args } {
 #------------------------------------------------------------------------
 
 # Trick to silence the linter
-eval [list namespace eval ::tb::prettyTable { 
-  variable n 0 
+eval [list namespace eval ::tb::prettyTable {
+  variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
-  variable params [list indent 0 maxNumRows -1 maxNumRowsToDisplay -1 title {} columnsToDisplay {} ]
-  variable version {2015.12.09}
+  variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
+  variable version {2015.12.10}
 } ]
 
 #------------------------------------------------------------------------
@@ -373,7 +376,7 @@ proc ::tb::prettyTable::prettyTable { args } {
       return [eval [concat ::tb::prettyTable::Create [list $method]] ]
     }
   }
-  
+
   if {$show_help} {
     # <-- HELP
     puts [format {
@@ -385,9 +388,9 @@ proc ::tb::prettyTable::prettyTable { args } {
                   [info]                   - Provides a summary of all the prettyTable objects that have been created
                   [destroyall]             - Destroy all the prettyTable objects and release the memory
                   [-u|-usage|-h|-help]     - This help message
-                  
+
       Description: Utility to create and manipulate tables
-      
+
       Example Script:
          set tbl [prettyTable {Pins Slacks}]
          $tbl configure -limit -1 -indent 2 -display_limit -1
@@ -407,7 +410,7 @@ proc ::tb::prettyTable::prettyTable { args } {
          $tbl sort -SETUP_SLACK
          $tbl print -file table_sorted.rpt
          $tbl destroy
-    
+
     } ]
     # HELP -->
     return
@@ -428,10 +431,10 @@ proc ::tb::prettyTable::Create { {title {}} } {
 
 
   variable n
-  # Search for the next available object number, i.e namespace should not 
+  # Search for the next available object number, i.e namespace should not
   # already exist
   while { [namespace exist [set instance [namespace current]::[incr n]] ]} {}
-  namespace eval $instance { 
+  namespace eval $instance {
     variable header [list]
     variable table [list]
     variable separators [list]
@@ -922,6 +925,25 @@ proc ::tb::prettyTable::method:? {self args} {
 }
 
 #------------------------------------------------------------------------
+# ::tb::prettyTable::method:title
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> title <string>
+#------------------------------------------------------------------------
+# Set the table title
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:title {self title} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Set the title of the table
+  set ${self}::params(title) $title
+  set title
+}
+
+#------------------------------------------------------------------------
 # ::tb::prettyTable::method:header
 #------------------------------------------------------------------------
 # Usage: <prettyTableObject> header <list>
@@ -1066,7 +1088,7 @@ proc ::tb::prettyTable::method:set_param {self args} {
 }
 
 #------------------------------------------------------------------------
-# ::tb::prettyTable::method:separator 
+# ::tb::prettyTable::method:separator
 #------------------------------------------------------------------------
 # Usage: <prettyTableObject> separator
 #------------------------------------------------------------------------
@@ -1178,10 +1200,10 @@ proc ::tb::prettyTable::method:sizeof {ns args} {
 #------------------------------------------------------------------------
 # Return the printed table
 #------------------------------------------------------------------------
-# 
-# Sample of 'classic' table 
+#
+# Sample of 'classic' table
 # =========================
-# 
+#
 #   +-------------------------------------------------------------------------------------+
 #   | Pin Slack                                                                           |
 #   +-------------------------------------+---------+----------+-------------+------------+
@@ -1196,25 +1218,25 @@ proc ::tb::prettyTable::method:sizeof {ns args} {
 #   | or1200_wbmux/muxreg_reg[4]_i_45/I5  | 1       | 0        | 10.000      | 3.266      |
 #   | or1200_wbmux/muxreg_reg[4]_i_45/I5  | 1       | 0        | 10.000      | 3.266      |
 #   +-------------------------------------+---------+----------+-------------+------------+
-# 
-# Sample of 'lean' table 
+#
+# Sample of 'lean' table
 # ======================
-# 
+#
 #   +--------------------------------------------------------------------------
-#   | Pin Slack                                                                
+#   | Pin Slack
 #   +--------------------------------------------------------------------------
-# 
-#   NAME                                 IS_LEAF  IS_CLOCK  SETUP_SLACK  HOLD_SLACK 
-#   -----------------------------------  -------  --------  -----------  ---------- 
-#   or1200_wbmux/muxreg_reg[4]_i_45/I5   1        0         10.000       3.266      
-#   or1200_mult_mac/p_1_out__2_i_9/I2    1        0         9.998        1.024      
-#   or1200_wbmux/muxreg_reg[3]_i_52/I1   1        0         9.993        2.924      
-#   or1200_wbmux/muxreg_reg[14]_i_41/I2  1        0         9.990        3.925      
-#   or1200_wbmux/muxreg_reg[4]_i_45/I5   1        0         10.000       3.266      
-#   -----------------------------------  -------  --------  -----------  ---------- 
-#   or1200_wbmux/muxreg_reg[4]_i_45/I5   1        0         10.000       3.266      
-#   or1200_wbmux/muxreg_reg[4]_i_45/I5   1        0         10.000       3.266      
-# 
+#
+#   NAME                                 IS_LEAF  IS_CLOCK  SETUP_SLACK  HOLD_SLACK
+#   -----------------------------------  -------  --------  -----------  ----------
+#   or1200_wbmux/muxreg_reg[4]_i_45/I5   1        0         10.000       3.266
+#   or1200_mult_mac/p_1_out__2_i_9/I2    1        0         9.998        1.024
+#   or1200_wbmux/muxreg_reg[3]_i_52/I1   1        0         9.993        2.924
+#   or1200_wbmux/muxreg_reg[14]_i_41/I2  1        0         9.990        3.925
+#   or1200_wbmux/muxreg_reg[4]_i_45/I5   1        0         10.000       3.266
+#   -----------------------------------  -------  --------  -----------  ----------
+#   or1200_wbmux/muxreg_reg[4]_i_45/I5   1        0         10.000       3.266
+#   or1200_wbmux/muxreg_reg[4]_i_45/I5   1        0         10.000       3.266
+#
 #------------------------------------------------------------------------
 proc ::tb::prettyTable::method:print {self args} {
   # Summary :
@@ -1223,7 +1245,7 @@ proc ::tb::prettyTable::method:print {self args} {
   # Categories: xilinxtclstore, designutils
 
 
-  # Print table. The output can be captured in a variable
+  # Print table. The output can be captured in a variable (-help)
   upvar #0 ${self}::header header
   upvar #0 ${self}::table table
   upvar #0 ${self}::separators separators
@@ -1237,8 +1259,10 @@ proc ::tb::prettyTable::method:print {self args} {
   set startRow 0
   set printHeader 1
   set printTitle 1
-  set align {-} ; # '-' for left cell alignment and '' for right cell alignment
-  set format {classic} ; # table format: classic|lean
+#   set align {-} ; # '-' for left cell alignment and '' for right cell alignment
+  if {$params(cellAlignment) == {left}} { set align {-} } else { set align {} } ; # '-' for left cell alignment and '' for right cell alignment
+#   set format {classic} ; # table format: classic|lean
+  set format $params(tableFormat) ; # table format: classic|lean
   set append 0
   set returnVar {}
   set columnsToDisplay $params(columnsToDisplay)
@@ -1301,10 +1325,10 @@ proc ::tb::prettyTable::method:print {self args} {
       }
     }
   }
-  
+
   if {$help} {
     puts [format {
-  Usage: <prettyTableObject> print 
+  Usage: <prettyTableObject> print
               [-file <filename>]
               [-append]
               [-return_var <tcl_var_name>]
@@ -1316,11 +1340,11 @@ proc ::tb::prettyTable::method:print {self args} {
               [-noheader]
               [-notitle]
               [-help|-h]
-              
+
   Description: Return table content.
-  
+
   Example:
-     <prettyTableObject> print 
+     <prettyTableObject> print
      <prettyTableObject> print -columns {0 2 5}
      <prettyTableObject> print -return_var report
      <prettyTableObject> print -file output.rpt -append
@@ -1328,7 +1352,7 @@ proc ::tb::prettyTable::method:print {self args} {
     # HELP -->
     return {}
   }
-  
+
   switch $format {
     lean -
     classic {
@@ -1338,11 +1362,11 @@ proc ::tb::prettyTable::method:print {self args} {
       incr error
     }
   }
-  
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   # The -return_var option provides the variable name from the caller's environment
   # that should receive the report
   if {$returnVar != {}} {
@@ -1350,7 +1374,7 @@ proc ::tb::prettyTable::method:print {self args} {
     upvar 2 $returnVar res
   }
   set res {}
-  
+
   # Build the list of columns to be displayed
   if {$columnsToDisplay == {}} {
     # If empty, then all the columns are displayed. Build the list of all columns
@@ -1364,7 +1388,7 @@ proc ::tb::prettyTable::method:print {self args} {
     puts " -E- NO HEADER DEFINED"
     return {}
   }
-  
+
   set maxs {}
   foreach item $header {
       lappend maxs [string length $item]
@@ -1530,7 +1554,7 @@ proc ::tb::prettyTable::method:print {self args} {
     }
     puts $FH $res
     close $FH
-    return 
+    return
   }
   if {$returnVar != {}} {
     # The report is returned through the upvar
@@ -1570,7 +1594,7 @@ proc ::tb::prettyTable::method:info {self args} {
 #------------------------------------------------------------------------
 # ::tb::prettyTable::method:sort
 #------------------------------------------------------------------------
-# Usage: <prettyTableObject> [-real|-integer|-dictionary] [<COLUMN_HEADER>] [+<COLUMN_HEADER>] [-<COLUMN_HEADER>] 
+# Usage: <prettyTableObject> [-real|-integer|-dictionary] [<COLUMN_HEADER>] [+<COLUMN_HEADER>] [-<COLUMN_HEADER>]
 #------------------------------------------------------------------------
 # Sort the table based on the specified column header. The table can
 # be sorted ascending or descending
@@ -1582,7 +1606,7 @@ proc ::tb::prettyTable::method:sort {self args} {
   # Categories: xilinxtclstore, designutils
 
 
-  # Sort the table based on one or more column headers
+  # Sort the table based on one or more column headers (-help)
   upvar #0 ${self}::header header
   upvar #0 ${self}::table table
   upvar #0 ${self}::params params
@@ -1634,18 +1658,18 @@ proc ::tb::prettyTable::method:sort {self args} {
 
   if {$help} {
     puts [format {
-  Usage: <prettyTableObject> sort 
+  Usage: <prettyTableObject> sort
               [-real|-integer|-dictionary]
               [-<COLUMN_NUMBER>|+<COLUMN_NUMBER>|<COLUMN_NUMBER>]
               [-<COLUMN_HEADER>|+<COLUMN_HEADER>|<COLUMN_HEADER>]
               [-help|-h]
-              
+
   Description: Sort the table based on one or multiple column headers.
-  
+
     -real/-integer/-dictionary are sticky and apply to the column(s)
     specified afterward. They can be used multiple times to sort columns
     of different types.
-  
+
   Example:
      <prettyTableObject> sort +SLACK
      <prettyTableObject> sort -integer -FANOUT
@@ -1689,7 +1713,7 @@ proc ::tb::prettyTable::method:configure {self args} {
   # Categories: xilinxtclstore, designutils
 
 
-  # Configure object
+  # Configure object (-help)
   set error 0
   set help 0
   if {[llength $args] == 0} {
@@ -1700,6 +1724,33 @@ proc ::tb::prettyTable::method:configure {self args} {
     switch -exact -- $name {
       -title {
            set ${self}::params(title) [lshift args]
+      }
+      -left -
+      -align_left {
+           set ${self}::params(cellAlignment) {left}
+      }
+      -right -
+      -align_right {
+           set ${self}::params(cellAlignment) {right}
+      }
+      -lean {
+           set ${self}::params(tableFormat) {lean}
+      }
+      -classic {
+           set ${self}::params(tableFormat) {classic}
+      }
+      -format {
+           set format [lshift args]
+           switch $format {
+             lean -
+             classic {
+              	set ${self}::params(tableFormat) $format
+             }
+             default {
+               puts " -E- invalid format '$format'. The valid formats are: classic|lean"
+               incr error
+             }
+           }
       }
       -indent {
            set ${self}::params(indent) [lshift args]
@@ -1734,28 +1785,32 @@ proc ::tb::prettyTable::method:configure {self args} {
       }
     }
   }
-  
+
   if {$help} {
     puts [format {
-  Usage: <prettyTableObject> configure 
+  Usage: <prettyTableObject> configure
               [-title <string>]
+              [-format classic|lean][-lean][-classic]
+              [-align_left|-left]
+              [-align_right|-right]
               [-indent <indent_level>]
               [-limit <max_number_of_rows>]
               [-display_columns <list_of_columns_to_display>]
               [-display_limit <max_number_of_rows_to_display>]
               [-remove_separators]
               [-help|-h]
-              
+
   Description: Configure some of the internal parameters.
-  
+
   Example:
+     <prettyTableObject> configure -format lean -align_right
      <prettyTableObject> configure -indent 2
      <prettyTableObject> configure -display_columns {0 2 3 6}
 } ]
     # HELP -->
     return {}
   }
-    
+
 }
 
 #------------------------------------------------------------------------
@@ -1802,13 +1857,13 @@ proc ::tb::prettyTable::method:import {self args} {
   # Categories: xilinxtclstore, designutils
 
 
-  # Create table from CSV file
+  # Create table from CSV file (-help)
   upvar #0 ${self}::header header
   upvar #0 ${self}::table table
   upvar #0 ${self}::params params
   upvar #0 ${self}::separators separators
   upvar #0 ${self}::numRows numRows
-  
+
   set error 0
   set help 0
   set filename {}
@@ -1840,16 +1895,16 @@ proc ::tb::prettyTable::method:import {self args} {
       }
     }
   }
-  
+
   if {$help} {
     puts [format {
   Usage: <prettyTableObject> import
               -file <filename>
-              [-delimiter <csv_delimiter>] 
+              [-delimiter <csv_delimiter>]
               [-help|-h]
-              
+
   Description: Create table from CSV file.
-  
+
   Example:
      <prettyTableObject> import -file table.csv
      <prettyTableObject> import -file table.csv -delimiter ,
@@ -1861,11 +1916,11 @@ proc ::tb::prettyTable::method:import {self args} {
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   if {![file exists $filename]} {
     error " -E- file '$filename' does not exist"
   }
-  
+
   # Reset object but preserve some of the parameters
   set limit $params(maxNumRows)
 #   set displayLimit $params(maxNumRowsToDisplay)
@@ -1889,7 +1944,7 @@ proc ::tb::prettyTable::method:import {self args} {
       incr count
     }
   }
-  close $FH 
+  close $FH
   puts " -I- Header: $header"
   puts " -I- Number of imported row(s): $count"
   return 0
@@ -1909,7 +1964,7 @@ proc ::tb::prettyTable::method:export {self args} {
   # Categories: xilinxtclstore, designutils
 
 
-  # Export table (table / list / CSV format / tcl script)
+  # Export table (table/list/CSV format/tcl script) (-help)
   upvar #0 ${self}::header header
   upvar #0 ${self}::table table
   upvar #0 ${self}::separators separators
@@ -1923,7 +1978,8 @@ proc ::tb::prettyTable::method:export {self args} {
   set append 0
   set returnVar {}
   set format {table}
-  set tableFormat {classic}
+#   set tableFormat {classic}
+  set tableFormat $params(tableFormat) ; # table format: classic|lean
   set csvDelimiter {,}
   set columnsToDisplay $params(columnsToDisplay)
   if {[llength $args] == 0} { incr help }
@@ -1975,25 +2031,25 @@ proc ::tb::prettyTable::method:export {self args} {
       }
     }
   }
-  
+
   if {$help} {
     puts [format {
   Usage: <prettyTableObject> export
               -format table|csv|tcl|list
               [-table classic|lean]
-              [-delimiter <csv_delimiter>] 
+              [-delimiter <csv_delimiter>]
               [-file <filename>]
               [-append]
               [-return_var <tcl_var_name>]
               [-columns <list_of_columns_to_display>]
               [-verbose|-v]
               [-help|-h]
-              
+
   Description: Export table content. The -columns argument is only available for the
                'list' and 'table' export formats.
-  
+
     -verbose: applicable with -format csv. Add some configuration information as comment
-  
+
   Example:
      <prettyTableObject> export -format csv
      <prettyTableObject> export -format csv -return_var report
@@ -2002,7 +2058,7 @@ proc ::tb::prettyTable::method:export {self args} {
     # HELP -->
     return {}
   }
-  
+
   switch $tableFormat {
     lean -
     classic {
@@ -2012,11 +2068,11 @@ proc ::tb::prettyTable::method:export {self args} {
       incr error
     }
   }
-  
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   # No header has been defined
   if {[lsearch [list {table} {tcl} {csv} {list}] $format] == -1} {
     error " -E- invalid format '$format'. The valid formats are: table | csv | tcl | list"
@@ -2062,7 +2118,7 @@ proc ::tb::prettyTable::method:export {self args} {
     default {
     }
   }
-  
+
   if {$filename != {}} {
     if {$append} {
       set FH [open $filename a]
@@ -2071,7 +2127,7 @@ proc ::tb::prettyTable::method:export {self args} {
     }
     puts $FH $res
     close $FH
-    return 
+    return
   }
   if {$returnVar != {}} {
     # The report is returned through the upvar
