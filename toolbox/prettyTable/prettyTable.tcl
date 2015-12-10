@@ -268,6 +268,7 @@ namespace eval ::tb {
 ## 2015.12.10 - Added 'title' method to add/change the table title
 ##            - Added new command line options to 'configure' method to set the default
 ##              table format and cell alignment
+##            - Added support for -indent from the 'print' method
 ## 2015.12.09 - Expanded syntax for 'sort' method to be able to sort columns of different
 ##              types
 ##            - Added -verbose to 'export' method for CSV format
@@ -1307,6 +1308,9 @@ proc ::tb::prettyTable::method:print {self args} {
       -format {
            set format [lshift args]
       }
+      -indent {
+           set indent [lshift args]
+      }
       -notitle {
            set printTitle 0
       }
@@ -1337,6 +1341,7 @@ proc ::tb::prettyTable::method:print {self args} {
               [-align_left|-left]
               [-align_right|-right]
               [-format classic|lean][-lean][-classic]
+              [-indent <indent_level>]
               [-noheader]
               [-notitle]
               [-help|-h]
