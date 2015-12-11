@@ -70,6 +70,10 @@ proc ::tb::ishell::ishell { args } {
   # Argument Usage:
   # Return Value:
 
+  # Check that Vivado is run in tcl mode
+	if {$rdi::mode!="tcl"} {
+		error "-E- ishell cannot run in GUI or batch mode"
+	}
   #-------------------------------------------------------
   # Process command line arguments
   #-------------------------------------------------------
