@@ -2,6 +2,10 @@
 # use -*-TCL-*- \
 exec tclsh "$0" "$@"
 
+########################################################################################
+## 2015.12.14 - Added support for -nodcp/-rts/-rda/-rrs
+## 2015.11.16 - Initial tracked release
+########################################################################################
 
 proc print_help {} {
 
@@ -289,6 +293,10 @@ set LSFCmd [format {bsub -app sil_rhel5 -q %%queue -R {rusage[mem=%%mem]} }]
 set mode {localhost}
 set unplaceDesign 0
 set unrouteDesign 0
+set reportTimingSummary {}
+set reportDesignAnalysis {}
+set reportRouteStatus {}
+set standalone 0
 set verbose 0
 set debug 0
 set quiet 0
@@ -305,6 +313,10 @@ while {[llength $::argv]} {
     -dcp -
     -checkpoint {
          set checkpoint [lshift ::argv]
+    }
+    -nodcp -
+    -standalone {
+         set standalone 1
     }
     -scr -
     -script {
@@ -363,6 +375,33 @@ while {[llength $::argv]} {
     -unroute {
          set unrouteDesign 1
     }
+    -rts -
+    -timing_summary -
+    -report_timing_summary {
+         set reportTimingSummary [lshift ::argv]
+         if {![file exists $reportTimingSummary]} {
+         	 print error "file '$reportTimingSummary' does not exist"
+         	 incr error
+        }
+    }
+    -rda -
+    -design_analysis -
+    -report_design_analysis {
+         set reportDesignAnalysis [lshift ::argv]
+         if {![file exists $reportDesignAnalysis]} {
+         	 print error "file '$reportDesignAnalysis' does not exist"
+         	 incr error
+        }
+    }
+    -rrs -
+    -route_status -
+    -report_route_status {
+         set reportRouteStatus [lshift ::argv]
+         if {![file exists $reportRouteStatus]} {
+         	 print error "file '$reportRouteStatus' does not exist"
+         	 incr error
+        }
+    }
     -time {
          set time [lshift ::argv]
     }
@@ -418,7 +457,7 @@ while {[llength $::argv]} {
 if {$help} {
   print stdout [format {
 Usage: take_snapshot
-            -dcp <filename>
+            -dcp <filename>|-nodcp
             [-db <filename>]
             [-createdb]
             [-id <snapshot_id>]
@@ -432,6 +471,9 @@ Usage: take_snapshot
             [-unplace]
             [-unroute]
             [-scr <filename>|-script <filename>]
+            [-rts <filename>|-report_timing_summary <filename>]
+            [-rda <filename>|-report_design_analysis <filename>]
+            [-rrs <filename>|-report_route_status <filename>]
             [-time <time_in_seconds>]
             [-timeout <seconds>]
             [-lsf]
@@ -449,6 +491,7 @@ Example:
    take_snapshot -dcp post_route.dcp -script extract.tcl -step route_design
    take_snapshot -dcp post_route.dcp -script extract.tcl -step opt_design -unroute -unplace
    take_snapshot -dcp post_route.dcp -script extract.tcl -step route_design -lsf -lsf-mem 12000 -lsf-queue long
+   take_snapshot -nodcp -step route_design -rts report_ts.rpt -rda report_da.rpt -rrs report_rs.rpt
 } ]
   # HELP -->
 
@@ -459,8 +502,15 @@ Example:
 }
 
 if {$checkpoint == {}} {
-  print error "no checkpoint provided (-dcp)"
-  incr error
+	if {!$standalone} {
+    print error "no checkpoint provided (-dcp)"
+    incr error
+  }
+} else {
+	if {$standalone} {
+    print error "options -dcp and -nodcp are mutually exclusive"
+    incr error
+  }
 }
 
 if {$error} {
@@ -501,10 +551,6 @@ if {$error} {
 #   }
 # }
 
-# set vivadoCmdLine [list vivado -nolog -nojournal -notrace -mode batch -source /home/dpefour/git/scripts/wip/snapshot/snapshot.tcl -source take_snapshot.tmp.[pid]]
-set vivadoCmdLine [list vivado -log vivado.log.[pid] -journal vivado.jou.[pid] -notrace -mode batch -source take_snapshot.tmp.[pid]]
-# if {$checkpoint != {}} { set vivadoCmdLine [concat $vivadoCmdLine $checkpoint] }
-
 set cmdLine [list ]
 if {$createdb} { set cmdLine [concat $cmdLine -createdb] }
 if {$db != {}} { set cmdLine [concat $cmdLine -db [list $db] ] }
@@ -521,6 +567,44 @@ if {$timeout != {}} { set cmdLine [concat $cmdLine -timeout [list $timeout] ] }
 if {$verbose} { set cmdLine [concat $cmdLine -verbose] }
 if {$debug} { set cmdLine [concat $cmdLine -debug] }
 
+#-------------------------------------------------------
+# Standalone mode (no DCP)
+#-------------------------------------------------------
+if {$standalone} {
+  if {[catch {
+#     source /home/dpefour/git/scripts/wip/snapshot/snapshot
+    lappend auto_path /home/dpefour/git/scripts/wip/snapshot
+#     lappend auto_path /home/dpefour/git/scripts/toolbox/snapshot
+    package require snapshot
+    eval [concat snapshot configure $cmdLine]
+    if {$reportTimingSummary != {}} {
+    	snapshot addfile report.timing_summary $reportTimingSummary
+    }
+    if {$reportDesignAnalysis != {}} {
+    	snapshot addfile report.design_analysis $reportDesignAnalysis
+    }
+    if {$reportRouteStatus != {}} {
+    	snapshot addfile report.route_status $reportRouteStatus
+    }
+    snapshot extract
+    snapshot save
+  } errorstring]} {
+  	puts " -E- Extraction failed with the following error:"
+  	foreach line [split $errorstring \n] { puts [format {     %s} $line] }
+  	exit 1
+  }
+	puts " -I- Extraction completed on [clock format [clock seconds]]"
+	exit 0
+}
+
+#-------------------------------------------------------
+# Vivado mode (DCP)
+#-------------------------------------------------------
+
+# set vivadoCmdLine [list vivado -nolog -nojournal -notrace -mode batch -source /home/dpefour/git/scripts/wip/snapshot/snapshot.tcl -source take_snapshot.tmp.[pid]]
+set vivadoCmdLine [list vivado -log vivado.log.[pid] -journal vivado.jou.[pid] -notrace -mode batch -source take_snapshot.tmp.[pid]]
+# if {$checkpoint != {}} { set vivadoCmdLine [concat $vivadoCmdLine $checkpoint] }
+
 # set FH [open take_snapshot.tmp {w}]
 set FH [open take_snapshot.tmp.[pid] {w}]
 puts $FH [format {#########################################################################
@@ -531,13 +615,22 @@ puts $FH [format {##############################################################
 # checkpoint
 set checkpoint {%s}
 
+# report_timing_summary report
+set rts {%s}
+
+# report_design_analysis report
+set rda {%s}
+
+# report_route_status report
+set rrs {%s}
+
 # Load main script
 # source /home/dpefour/git/scripts/toolbox/snapshot/snapshot
 # lappend auto_path /home/dpefour/git/scripts/toolbox/snapshot
 # package require snapshot
 # package require extract
 source /home/dpefour/git/scripts/wip/snapshot/snapshot
-} [clock format [clock seconds]] $cmdLineArguments $checkpoint]
+} [clock format [clock seconds]] $cmdLineArguments $checkpoint [file normalize $reportTimingSummary] [file normalize $reportDesignAnalysis] [file normalize $reportRouteStatus] ]
 
 if {$scripts != {}} {
   puts $FH [format {# Remove default metrics
@@ -566,6 +659,17 @@ puts $FH [format {if {[file exists $checkpoint]} {
   # Unplace design?
   if {%d} {
     catch {place_design -unplace}
+  }
+  
+  # Import reports if specified on the command line
+  if {[file exists $rts]} {
+  	snapshot addfile report.timing_summary $rts
+  }
+  if {[file exists $rda]} {
+  	snapshot addfile report.design_analysis $rda
+  }
+  if {[file exists $rrs]} {
+  	snapshot addfile report.route_status $rrs
   }
 
   # Extract metrics and save snapshot into database
