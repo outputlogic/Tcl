@@ -6,18 +6,25 @@
 # HEADER_END
 ####################################################################################################
 
+proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+
 ########################################################################################
 ##
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.10.01
+## Version:        2015.12.14
 ## Tool Version:   Vivado 2014.1
 ## Description:    This file defined default metrics for snapshot.tcl
 ##
 ########################################################################################
 
 ########################################################################################
+## 2015.12.14 - Minor restructuring so that existing metrics are not overriden
+##            - Moved parseRDACongestion to ::tb::snapshot::parseRDACongestion
+##            - Added report_design_analysis metrics in non-Vivado flow
+##            - Added support for -once for method 'set'
 ## 2015.10.01 - Added placer/router congestion from report_design_analysis
 ## 2015.05.05 - Added report from report_design_analysis
 ## 2014.12.11 - Added report from check_timing
@@ -36,7 +43,7 @@
 # Extract the placement + routing congestions from report_design_analysis
 # Format: North-South-East-West
 #         PlacerNorth-PlacerSouth-PlacerEast-PlacerWest RouterNorth-RouterSouth-RouterEast-RouterWest
-proc parseRDACongestion {report} {
+proc ::tb::snapshot::parseRDACongestion {report} {
   set section "other"
   set placerCong [list u u u u]
   set routerCong [list u u u u]
@@ -92,52 +99,52 @@ if {[package provide Vivado] != {}} {
       variable [namespace parent]::debug
       # Vivado related statistics
       # The release name is shortened: 2014.3.0 => 2014.3
-      snapshot set vivado.version [regsub {^([0-9]+\.[0-9]+)\.0$} [version -short] {\1}]
-      snapshot set vivado.details [version]
-      catch { snapshot set vivado.plateform $::tcl_platform(platform)  }
-      catch { snapshot set vivado.os $::tcl_platform(os)  }
-      catch { snapshot set vivado.osVersion $::tcl_platform(osVersion)  }
+      snapshot set -once vivado.version [regsub {^([0-9]+\.[0-9]+)\.0$} [version -short] {\1}]
+      snapshot set -once vivado.details [version]
+      catch { snapshot set -once vivado.plateform $::tcl_platform(platform)  }
+      catch { snapshot set -once vivado.os $::tcl_platform(os)  }
+      catch { snapshot set -once vivado.osVersion $::tcl_platform(osVersion)  }
       # Project related statistics
       set project [current_project -quiet]
       if {$project != {}} {
-        snapshot set project.details [report_property -quiet -return_string $project]
-        snapshot set project.dir [file normalize [get_property -quiet DIRECTORY $project]]
-        snapshot set project.part [get_property -quiet PART $project]
-        snapshot set project.runs [get_runs -quiet]
+        snapshot set -once project.details [report_property -quiet -return_string $project]
+        snapshot set -once project.dir [file normalize [get_property -quiet DIRECTORY $project]]
+        snapshot set -once project.part [get_property -quiet PART $project]
+        snapshot set -once project.runs [get_runs -quiet]
       }
 #       set run {}
       # Run related statistics
       set run [current_run -quiet]
       if {$run != {}} {
-        snapshot set run.details [report_property -quiet -return_string $run]
-        snapshot set run.dir [file normalize [get_property -quiet DIRECTORY $run]]
-        snapshot set run.part [get_property -quiet PART $run]
-        snapshot set run.parent [get_property -quiet PARENT $run]
-        snapshot set run.progress [get_property -quiet PROGRESS $run]
-        snapshot set run.stats.elapsed [get_property -quiet STATS.ELAPSED $run]
-        snapshot set run.stats.tns [get_property -quiet STATS.TNS $run]
-        snapshot set run.stats.ths [get_property -quiet STATS.THS $run]
-        snapshot set run.stats.wns [get_property -quiet STATS.WNS $run]
-        snapshot set run.stats.whs [get_property -quiet STATS.WHS $run]
-        snapshot set run.stats.tpws [get_property -quiet STATS.TPWS $run]
+        snapshot set -once run.details [report_property -quiet -return_string $run]
+        snapshot set -once run.dir [file normalize [get_property -quiet DIRECTORY $run]]
+        snapshot set -once run.part [get_property -quiet PART $run]
+        snapshot set -once run.parent [get_property -quiet PARENT $run]
+        snapshot set -once run.progress [get_property -quiet PROGRESS $run]
+        snapshot set -once run.stats.elapsed [get_property -quiet STATS.ELAPSED $run]
+        snapshot set -once run.stats.tns [get_property -quiet STATS.TNS $run]
+        snapshot set -once run.stats.ths [get_property -quiet STATS.THS $run]
+        snapshot set -once run.stats.wns [get_property -quiet STATS.WNS $run]
+        snapshot set -once run.stats.whs [get_property -quiet STATS.WHS $run]
+        snapshot set -once run.stats.tpws [get_property -quiet STATS.TPWS $run]
       }
       # Messages related statistics
-      snapshot set msg.error [get_msg_config -quiet -count -severity {error}]
-      snapshot set msg.criticalwarning [get_msg_config -quiet -count -severity {critical warning}]
-      snapshot set msg.warning [get_msg_config -quiet -count -severity {warning}]
-      snapshot set msg.info [get_msg_config -quiet -count -severity {info}]
+      snapshot set -once msg.error [get_msg_config -quiet -count -severity {error}]
+      snapshot set -once msg.criticalwarning [get_msg_config -quiet -count -severity {critical warning}]
+      snapshot set -once msg.warning [get_msg_config -quiet -count -severity {warning}]
+      snapshot set -once msg.info [get_msg_config -quiet -count -severity {info}]
       # Design related statistics
-      snapshot set design.nets [llength [get_nets -quiet -hier]]
-      snapshot set design.cells [llength [get_cells -quiet -hier]]
-      snapshot set design.ports [llength [get_ports -quiet]]
-      snapshot set design.clocks.list [lsort [get_clocks -quiet]]
-      snapshot set design.clocks.num [llength [get_clocks -quiet]]
-      snapshot set design.allclocks.list [lsort [get_clocks -quiet -include_generated_clocks]]
-      snapshot set design.allclocks.num [llength [get_clocks -quiet -include_generated_clocks]]
-      snapshot set design.pblocks.list [lsort [get_pblocks -quiet]]
-      snapshot set design.pblocks.num [llength [get_pblocks -quiet]]
-      snapshot set design.ips.list [lsort [get_ips -quiet]]
-      snapshot set design.ips.num [llength [get_ips -quiet]]
+      snapshot set -once design.nets [llength [get_nets -quiet -hier]]
+      snapshot set -once design.cells [llength [get_cells -quiet -hier]]
+      snapshot set -once design.ports [llength [get_ports -quiet]]
+      snapshot set -once design.clocks.list [lsort [get_clocks -quiet]]
+      snapshot set -once design.clocks.num [llength [get_clocks -quiet]]
+      snapshot set -once design.allclocks.list [lsort [get_clocks -quiet -include_generated_clocks]]
+      snapshot set -once design.allclocks.num [llength [get_clocks -quiet -include_generated_clocks]]
+      snapshot set -once design.pblocks.list [lsort [get_pblocks -quiet]]
+      snapshot set -once design.pblocks.num [llength [get_pblocks -quiet]]
+      snapshot set -once design.ips.list [lsort [get_ips -quiet]]
+      snapshot set -once design.ips.num [llength [get_ips -quiet]]
       # Various reports
       if {1} {
         if {![snapshot exists route.compile_order.constraints]} {
@@ -162,13 +169,13 @@ if {[package provide Vivado] != {}} {
       set report [snapshot get report.route_status]
       foreach line [split $report \n] {
         if {[regexp {nets with routing errors.+\:\s*([0-9]+)\s*\:} $line - val]} {
-          snapshot set report.route_status.errors $val
+          snapshot set -once report.route_status.errors $val
         } elseif {[regexp {fully routed nets.+\:\s*([0-9]+)\s*\:} $line - val]} {
-          snapshot set report.route_status.routed $val
+          snapshot set -once report.route_status.routed $val
         } elseif {[regexp {nets with fixed routing.+\:\s*([0-9]+)\s*\:} $line - val]} {
-          snapshot set report.route_status.fixed $val
+          snapshot set -once report.route_status.fixed $val
         } elseif {[regexp {routable nets.+\:\s*([0-9]+)\s*\:} $line - val]} {
-          snapshot set report.route_status.nets $val
+          snapshot set -once report.route_status.nets $val
         } else {
         }
       }
@@ -183,44 +190,69 @@ if {[package provide Vivado] != {}} {
       set report [split $report \n]
       if {[set i [lsearch -regexp $report {Design Timing Summary}]] != -1} {
          foreach {wns tns tnsFallingEp tnsTotalEp whs ths thsFallingEp thsTotalEp wpws tpws tpwsFailingEp tpwsTotalEp} [regexp -inline -all -- {\S+} [lindex $report [expr $i + 6]]] { break }
-         snapshot set report.timing_summary.wns $wns
-         snapshot set report.timing_summary.tns $tns
-         snapshot set report.timing_summary.tns.failing $tnsFallingEp
-         snapshot set report.timing_summary.tns.total $tnsTotalEp
-         snapshot set report.timing_summary.whs $whs
-         snapshot set report.timing_summary.ths $ths
-         snapshot set report.timing_summary.ths.failing $thsFallingEp
-         snapshot set report.timing_summary.ths.total $thsTotalEp
-         snapshot set report.timing_summary.wpws $wpws
-         snapshot set report.timing_summary.tpws $tpws
-         snapshot set report.timing_summary.tpws.failing $tpwsFailingEp
-         snapshot set report.timing_summary.tpws.total $tpwsTotalEp
+         snapshot set -once report.timing_summary.wns $wns
+         snapshot set -once report.timing_summary.tns $tns
+         snapshot set -once report.timing_summary.tns.failing $tnsFallingEp
+         snapshot set -once report.timing_summary.tns.total $tnsTotalEp
+         snapshot set -once report.timing_summary.whs $whs
+         snapshot set -once report.timing_summary.ths $ths
+         snapshot set -once report.timing_summary.ths.failing $thsFallingEp
+         snapshot set -once report.timing_summary.ths.total $thsTotalEp
+         snapshot set -once report.timing_summary.wpws $wpws
+         snapshot set -once report.timing_summary.tpws $tpws
+         snapshot set -once report.timing_summary.tpws.failing $tpwsFailingEp
+         snapshot set -once report.timing_summary.tpws.total $tpwsTotalEp
       }
-      snapshot set report.clocks [report_clocks -quiet -return_string]
-      snapshot set report.clock_interaction [report_clock_interaction -quiet -return_string]
-      snapshot set report.clock_utilization [report_clock_utilization -quiet -return_string]
-      snapshot set report.clock_networks [report_clock_networks -quiet -return_string]
-      snapshot set report.utilization [report_utilization -quiet -return_string]
-      snapshot set report.high_fanout_nets [report_high_fanout_nets -quiet -return_string]
-      snapshot set report.ip_status [report_ip_status -quiet -return_string]
-      snapshot set report.control_sets [report_control_sets -quiet -return_string]
-      catch {snapshot set report.ram_utilization [report_ram_utilization -quiet -return_string]}
-      if {[llength [get_slrs -quiet]] > 1} { snapshot set report.slr [report_utilization -quiet -slr -return_string] }
+      if {![snapshot exists report.clocks]} {
+        snapshot set report.clocks [report_clocks -quiet -return_string]
+      }
+      if {![snapshot exists report.clock_interaction]} {
+        snapshot set report.clock_interaction [report_clock_interaction -quiet -return_string]
+      }
+      if {![snapshot exists report.clock_utilization]} {
+        snapshot set report.clock_utilization [report_clock_utilization -quiet -return_string]
+      }
+      if {![snapshot exists report.clock_networks]} {
+        snapshot set report.clock_networks [report_clock_networks -quiet -return_string]
+      }
+      if {![snapshot exists report.utilization]} {
+        snapshot set report.utilization [report_utilization -quiet -return_string]
+      }
+      if {![snapshot exists report.high_fanout_nets]} {
+        snapshot set report.high_fanout_nets [report_high_fanout_nets -quiet -return_string]
+      }
+      if {![snapshot exists report.ip_status]} {
+        snapshot set report.ip_status [report_ip_status -quiet -return_string]
+      }
+      if {![snapshot exists report.control_sets]} {
+        snapshot set report.control_sets [report_control_sets -quiet -return_string]
+      }
+      if {![snapshot exists report.ram_utilization]} {
+        catch {snapshot set report.ram_utilization [report_ram_utilization -quiet -return_string]}
+      }
+      if {![snapshot exists report.slr]} {
+        if {[llength [get_slrs -quiet]] > 1} { snapshot set report.slr [report_utilization -quiet -slr -return_string] }
+      }
+      if {![snapshot exists report.check_timing]} {
+        catch {
+          set filename [format {check_timing.%s} [clock seconds]]
+          check_timing -file $filename
+          set FH [open $filename {r}]
+          set report [read $FH]
+          close $FH
+          file delete $filename
+          snapshot set report.check_timing $report
+        }
+      }
       catch {
-        set filename [format {check_timing.%s} [clock seconds]]
-        check_timing -file $filename
-        set FH [open $filename {r}]
-        set report [read $FH]
-        close $FH
-        file delete $filename
-        snapshot set report.check_timing $report
-      }
-      catch { 
-        set report [report_design_analysis -max_paths 100 -timing -congestion -complexity -return_string]
-        snapshot set report.design_analysis $report
-        set congestion [parseRDACongestion $report]
-        snapshot set report.design_analysis.congestion.placer [lindex $congestion 0]
-        snapshot set report.design_analysis.congestion.router [lindex $congestion 1]
+        if {![snapshot exists report.design_analysis]} {
+          set report [report_design_analysis -max_paths 100 -timing -congestion -complexity -return_string]
+          snapshot set report.design_analysis $report
+        }
+        set report [snapshot get report.design_analysis]
+        set congestion [::tb::snapshot::parseRDACongestion $report]
+        snapshot set -once report.design_analysis.congestion.placer [lindex $congestion 0]
+        snapshot set -once report.design_analysis.congestion.router [lindex $congestion 1]
       }
     }
   }
@@ -245,13 +277,13 @@ if {[package provide Vivado] != {}} {
         set report [snapshot get report.route_status]
         foreach line [split $report \n] {
           if {[regexp {nets with routing errors.+\:\s*([0-9]+)\s*\:} $line - val]} {
-            snapshot set report.route_status.errors $val
+            snapshot set -once report.route_status.errors $val
           } elseif {[regexp {fully routed nets.+\:\s*([0-9]+)\s*\:} $line - val]} {
-            snapshot set report.route_status.routed $val
+            snapshot set -once report.route_status.routed $val
           } elseif {[regexp {nets with fixed routing.+\:\s*([0-9]+)\s*\:} $line - val]} {
-            snapshot set report.route_status.fixed $val
+            snapshot set -once report.route_status.fixed $val
           } elseif {[regexp {routable nets.+\:\s*([0-9]+)\s*\:} $line - val]} {
-            snapshot set report.route_status.nets $val
+            snapshot set -once report.route_status.nets $val
           } elseif {[regexp -nocase {\|\s*Tool\s*Version\s*:\s*Vivado\s*(v\.)?([0-9\.]+)\s} $line - - val]} {
             # Extract Vivado release from header:
             # | Tool Version : Vivado v.2014.3 (lin64) Build 1034051 Fri Oct  3 16:31:15 MDT 2014
@@ -266,18 +298,18 @@ if {[package provide Vivado] != {}} {
         set report [split $report \n]
         if {[set i [lsearch -regexp $report {Design Timing Summary}]] != -1} {
            foreach {wns tns tnsFallingEp tnsTotalEp whs ths thsFallingEp thsTotalEp wpws tpws tpwsFailingEp tpwsTotalEp} [regexp -inline -all -- {\S+} [lindex $report [expr $i + 6]]] { break }
-           snapshot set report.timing_summary.wns $wns
-           snapshot set report.timing_summary.tns $tns
-           snapshot set report.timing_summary.tns.failing $tnsFallingEp
-           snapshot set report.timing_summary.tns.total $tnsTotalEp
-           snapshot set report.timing_summary.whs $whs
-           snapshot set report.timing_summary.ths $ths
-           snapshot set report.timing_summary.ths.failing $thsFallingEp
-           snapshot set report.timing_summary.ths.total $thsTotalEp
-           snapshot set report.timing_summary.wpws $wpws
-           snapshot set report.timing_summary.tpws $tpws
-           snapshot set report.timing_summary.tpws.failing $tpwsFailingEp
-           snapshot set report.timing_summary.tpws.total $tpwsTotalEp
+           snapshot set -once report.timing_summary.wns $wns
+           snapshot set -once report.timing_summary.tns $tns
+           snapshot set -once report.timing_summary.tns.failing $tnsFallingEp
+           snapshot set -once report.timing_summary.tns.total $tnsTotalEp
+           snapshot set -once report.timing_summary.whs $whs
+           snapshot set -once report.timing_summary.ths $ths
+           snapshot set -once report.timing_summary.ths.failing $thsFallingEp
+           snapshot set -once report.timing_summary.ths.total $thsTotalEp
+           snapshot set -once report.timing_summary.wpws $wpws
+           snapshot set -once report.timing_summary.tpws $tpws
+           snapshot set -once report.timing_summary.tpws.failing $tpwsFailingEp
+           snapshot set -once report.timing_summary.tpws.total $tpwsTotalEp
         }
         # Extract Vivado release from header:
         # | Tool Version : Vivado v.2014.3 (lin64) Build 1034051 Fri Oct  3 16:31:15 MDT 2014
@@ -286,8 +318,21 @@ if {[package provide Vivado] != {}} {
           set release $val
         }
       }
+      if {[snapshot exists report.design_analysis]} {
+        set report [snapshot get report.design_analysis]
+        set congestion [::tb::snapshot::parseRDACongestion $report]
+        snapshot set -once report.design_analysis.congestion.placer [lindex $congestion 0]
+        snapshot set -once report.design_analysis.congestion.router [lindex $congestion 1]
+        # Extract Vivado release from header:
+        # | Tool Version : Vivado v.2014.3 (lin64) Build 1034051 Fri Oct  3 16:31:15 MDT 2014
+        set report [split $report \n]
+        if {[set i [lsearch -regexp $report {\|\s*Tool\s*Version\s*:\s*Vivado\s*(v\.)?([0-9\.]+)\s}]] != -1} {
+          regexp -nocase {\|\s*Tool\s*Version\s*:\s*Vivado\s*(v\.)?([0-9\.]+)\s} [lindex $report $i] - - val
+          set release $val
+        }
+      }
       # The release name is shortened: 2014.3.0 => 2014.3
-      snapshot set vivado.version [regsub {^([0-9]+\.[0-9]+)\.0$} $release {\1}]
+      snapshot set -once vivado.version [regsub {^([0-9]+\.[0-9]+)\.0$} $release {\1}]
     }
   }
 

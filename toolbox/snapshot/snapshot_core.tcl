@@ -15,13 +15,14 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.05.06
+## Version:        2015.12.14
 ## Tool Version:   Vivado 2014.1
 ## Description:    This utility provides a simple way to extract and save metrics
 ##
 ########################################################################################
 
 ########################################################################################
+## 2015.12.14 - Added -once to method 'set'
 ## 2015.05.06 - Fixed uninitialized variable when database is locked and timeout occurs
 ## 2014.10.24 - Moved the SQL TABLE/PRAGMA structures in standalone procs
 ##            - Added more snapshot related information in verbose mode
@@ -378,7 +379,7 @@ proc ::tb::snapshot::take_snapshot { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::snapshot {
-  variable version {2015.05.06}
+  variable version {2015.12.14}
   variable params
   variable metrics
   variable metricTypes
@@ -1989,10 +1990,12 @@ proc ::tb::snapshot::method:set {args} {
   variable metrics
   variable metricTypes
   variable metricRefs
+  variable verbose
 
   set type {blob}
   set error 0
   set help 0
+  set override 1
   set parameters [list]
 #   if {[llength $args] == 0} {
 #     set help 1
@@ -2014,6 +2017,10 @@ proc ::tb::snapshot::method:set {args} {
       }
       -param {
         set type {param}
+      }
+      -once -
+      -nooverride {
+        set override 0
       }
       -h -
       -help {
@@ -2040,9 +2047,12 @@ proc ::tb::snapshot::method:set {args} {
               [-blob][-file]-param]
               [-type <blob|param|file>]
               [-ref <string>]
+              [-once]
               [-help|-h]
 
   Description: Set a metric value
+  
+    -once: does not override the metric value if already set
 
   Example:
      snapshot set numnets 1000
@@ -2073,6 +2083,12 @@ proc ::tb::snapshot::method:set {args} {
       error "wrong number of parameters: snapshot set <metric> <value>"
     }
     2 {
+    	if {!$override && [info exists metrics([lindex $parameters 0])]} {
+    		if {$verbose} { 
+    			puts " -W- metric '[lindex $parameters 0]' already defined. Metric value not overriden (-once)"
+    		}
+    		return 1
+      }
       set metrics([lindex $parameters 0]) [lindex $parameters 1]
       set metricTypes([lindex $parameters 0]) $type
       if {[info exists ref]} {
@@ -2080,6 +2096,12 @@ proc ::tb::snapshot::method:set {args} {
       }
     }
     default {
+    	if {!$override && [info exists metrics([lindex $parameters 0])]} {
+    		if {$verbose} { 
+    			puts " -W- metric '[lindex $parameters 0]' already defined. Metric value not overriden (-once)"
+    		}
+    		return 1
+      }
       set metrics([lindex $parameters 0]) [lrange $parameters 1 end]
       set metricTypes([lindex $parameters 0]) $type
       if {[info exists ref]} {
