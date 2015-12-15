@@ -15,13 +15,15 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.12.14
+## Version:        2015.12.15
 ## Tool Version:   Vivado 2014.1
 ## Description:    This utility provides a simple way to extract and save metrics
 ##
 ########################################################################################
 
 ########################################################################################
+## 2015.12.15 - Added -noreset to 'take_snapshot'
+##            - Minor reformatting (tabs->spaces)
 ## 2015.12.14 - Added -once to method 'set'
 ## 2015.05.06 - Fixed uninitialized variable when database is locked and timeout occurs
 ## 2014.10.24 - Moved the SQL TABLE/PRAGMA structures in standalone procs
@@ -215,6 +217,7 @@ proc ::tb::snapshot::take_snapshot { args } {
   set incremental 0
   set id {}
   set time 0
+  set reset 1
   set error 0
   set help 0
 #   if {[llength $args] == 0} {
@@ -224,12 +227,17 @@ proc ::tb::snapshot::take_snapshot { args } {
     set name [lshift args]
     switch -exact -- $name {
       -id {
-           set id [lshift args]
+        set id [lshift args]
       }
       -incr -
       -incremental {
-           # Incremental extraction
-           set incremental 1
+        # Incremental extraction
+        set incremental 1
+      }
+      -noreset -
+      -noreset {
+        # Prevent resetting the metrics before extraction
+        set reset 0
       }
       -time {
         ::tb::snapshot::method:configure -time [lshift args]
@@ -260,12 +268,12 @@ proc ::tb::snapshot::take_snapshot { args } {
       -rel -
       -release -
       -vivado {
-           ::tb::snapshot::method:configure -release [lshift args]
+        ::tb::snapshot::method:configure -release [lshift args]
       }
       -d -
       -desc -
       -description {
-           ::tb::snapshot::method:configure -description [lshift args]
+        ::tb::snapshot::method:configure -description [lshift args]
       }
       -timeout {
         ::tb::snapshot::method:configure -timeout [lshift args]
@@ -284,16 +292,16 @@ proc ::tb::snapshot::take_snapshot { args } {
       }
       -h -
       -help {
-           set help 1
+        set help 1
       }
       default {
-            if {[string match "-*" $name]} {
-              print error "option '$name' is not a valid option."
-              incr error
-            } else {
-              print error "option '$name' is not a valid option."
-              incr error
-            }
+        if {[string match "-*" $name]} {
+          print error "option '$name' is not a valid option."
+          incr error
+        } else {
+          print error "option '$name' is not a valid option."
+          incr error
+        }
       }
     }
   }
@@ -312,6 +320,7 @@ proc ::tb::snapshot::take_snapshot { args } {
               [-time <time_in_seconds>]
               [-timeout <seconds>]
               [-id <snapshot_id>|-incr|-incremental]
+              [-noreset]
               [-verbose|-quiet]
               [-help|-h]
 
@@ -341,13 +350,15 @@ proc ::tb::snapshot::take_snapshot { args } {
   }
 
   print stdout "Running 'take_snapshot' for step '$params(step)' on [clock format [clock seconds]] ..."
-  # Destroy all the metrics first
-  catch {unset metrics}
-  catch {unset metricTypes}
-  catch {unset metricRefs}
-  array set metrics [list]
-  array set metricTypes [list]
-  array set metricRefs [list]
+  if {$reset} {
+   # Destroy all the metrics first
+    catch {unset metrics}
+    catch {unset metricTypes}
+    catch {unset metricRefs}
+    array set metrics [list]
+    array set metricTypes [list]
+    array set metricRefs [list]
+  }
   # Extract the metrics
   ::tb::snapshot::method:extract
   # Save the snapshot
@@ -379,7 +390,7 @@ proc ::tb::snapshot::take_snapshot { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::snapshot {
-  variable version {2015.12.14}
+  variable version {2015.12.15}
   variable params
   variable metrics
   variable metricTypes
@@ -2083,11 +2094,11 @@ proc ::tb::snapshot::method:set {args} {
       error "wrong number of parameters: snapshot set <metric> <value>"
     }
     2 {
-    	if {!$override && [info exists metrics([lindex $parameters 0])]} {
-    		if {$verbose} { 
-    			puts " -W- metric '[lindex $parameters 0]' already defined. Metric value not overriden (-once)"
-    		}
-    		return 1
+      if {!$override && [info exists metrics([lindex $parameters 0])]} {
+        if {$verbose} { 
+          puts " -W- metric '[lindex $parameters 0]' already defined. Metric value not overriden (-once)"
+        }
+        return 1
       }
       set metrics([lindex $parameters 0]) [lindex $parameters 1]
       set metricTypes([lindex $parameters 0]) $type
@@ -2096,11 +2107,11 @@ proc ::tb::snapshot::method:set {args} {
       }
     }
     default {
-    	if {!$override && [info exists metrics([lindex $parameters 0])]} {
-    		if {$verbose} { 
-    			puts " -W- metric '[lindex $parameters 0]' already defined. Metric value not overriden (-once)"
-    		}
-    		return 1
+      if {!$override && [info exists metrics([lindex $parameters 0])]} {
+        if {$verbose} { 
+          puts " -W- metric '[lindex $parameters 0]' already defined. Metric value not overriden (-once)"
+        }
+        return 1
       }
       set metrics([lindex $parameters 0]) [lrange $parameters 1 end]
       set metricTypes([lindex $parameters 0]) $type
