@@ -81,8 +81,6 @@ exec tclsh "$0" "$@"
 #   | compass | 0811    | 2015.3  | impl_4.pblocks | 7 hrs 19 mins 10 secs  | place_design | WLDrivenBlockPlacement | -0.737 | -496.181  | 3343  | -0.430 | -316.523 | 7794 | 4-6-4-4 | 1 hr 11 mins 36 secs | phys_opt_design | AggressiveExplore AggressiveFanoutOpt AlternateReplication | 3    | -0.737 | -229.574 | 1958 | -0.430 | -316.493 | 7792 | 4-6-4-4 | 2 hrs 59 mins 54 secs | route_design | Explore   | -0.684 | -2779.242 | 17149 | 0.016 | 0.000 | 0 | 0        | 2-0-0-0 | 2 hrs 35 mins 25 secs | phys_opt_design | Default   | -0.680 | -2779.237 | 17148 | 0.016 | 0.000 | 0 | 2-0-0-0 | 32 mins 15 secs       |
 #   +---------+---------+---------+----------------+------------------------+--------------+------------------------+--------+-----------+-------+--------+----------+------+---------+----------------------+-----------------+------------------------------------------------------------+------+--------+----------+------+--------+----------+------+---------+-----------------------+--------------+-----------+--------+-----------+-------+-------+-------+---+----------+---------+-----------------------+-----------------+-----------+--------+-----------+-------+-------+-------+---+---------+-----------------------+
 
-package require toolbox
-
 #------------------------------------------------------------------------
 # ::tb::snapshot::method:summary
 #------------------------------------------------------------------------
@@ -758,9 +756,11 @@ proc ::tb::snapshot::summary {args} {
 
 if {[file tail [info script]]!=[file tail $argv0]} {
   # This file is sourced to be used as a plugin of the command 'snapshot'
-  # Nothing to be done
+  # Nothing to be done beside loading the prettyTable package
+  package require prettyTable
 } else {
-	# This file is executed to be used as standalone
+  # This file is executed to be used as standalone
+  package require toolbox
   if {[catch {eval [concat ::tb::snapshot::summary -standalone $argv]} errorstring]} {
     puts $errorstring
     exit 1
