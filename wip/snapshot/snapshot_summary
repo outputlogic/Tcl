@@ -15,15 +15,18 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.10.15
+## Version:        2015.12.15
 ## Description:    Example script to extract summary report from snapshot database
 ##
 ########################################################################################
 
 ########################################################################################
+## 2015.12.15 - Reformatted the script so that it can be used standalone or as a
+##              plugin to the command 'snapshot'
+##            - Added support for -lean for lean table
 ## 2015.10.15 - Renamed congestion column: 'Congestion' -> 'N-S-E-W'
 ## 2015.10.01 - Added -show_congestion to report placer/router congestion
-## 2015.05.08 - Removed the first 'Directive' column and removed formatting for 
+## 2015.05.08 - Removed the first 'Directive' column and removed formatting for
 ##              column 'Experiment'
 ## 2015.04.19 - Added -show_directive to report directive for all steps
 ##            - Renamed -show_all_hold as -show_hold
@@ -54,6 +57,7 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 # Sample report:
+# % snapshot summary metrics.db -show_all_hold -show_directive -show_congestion -runtime
 # % snapshot_summary metrics.db -show_all_hold -show_directive -show_congestion -runtime
 #   +---------+---------+---------+----------------+------------------------+--------------+------------------------+--------+-----------+-------+--------+----------+------+---------+----------------------+-----------------+------------------------------------------------------------+------+--------+----------+------+--------+----------+------+---------+-----------------------+--------------+-----------+--------+-----------+-------+-------+-------+---+----------+---------+-----------------------+-----------------+-----------+--------+-----------+-------+-------+-------+---+---------+-----------------------+
 #   | Project | Version | Release | Experiment     | Total Runtime          | Step         | Directive              | WNS    | TNS       | #     | WHS    | THS      | #    | N-S-E-W | Runtime              | Step            | Directive                                                  | Iter | WNS    | TNS      | #    | WHS    | THS      | #    | N-S-E-W | Runtime               | Step         | Directive | WNS    | TNS       | #     | WHS   | THS   | # | Overlaps | N-S-E-W | Runtime               | Step            | Directive | WNS    | TNS       | #     | WHS   | THS   | # | N-S-E-W | Runtime               |
@@ -79,617 +83,687 @@ exec tclsh "$0" "$@"
 
 package require toolbox
 
-proc progressBar {cur tot {indent {}}} {
-  # http://wiki.tcl.tk/16939
-  # if you don't want to redraw all the time, uncomment and change ferquency
-  #if {$cur % ($tot/300)} { return }
-  # set to total width of progress bar
-  set total 76
+#------------------------------------------------------------------------
+# ::tb::snapshot::method:summary
+#------------------------------------------------------------------------
+# Usage: snapshot summary [<options>]
+#------------------------------------------------------------------------
+# Convert database to CSV
+#------------------------------------------------------------------------
+proc ::tb::snapshot::method:summary { args } {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
 
-  # Do not show the progress bar in GUI and Batch modes
-  catch { if {$rdi::mode != {tcl}} { return } }
-
-  set half [expr {$total/2}]
-  set percent [expr {100.*$cur/$tot}]
-  set val (\ [format "%6.2f%%" $percent]\ )
-  set str "|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
-  set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
-  puts -nonewline stderr "\r${indent}${str}"
+  # Generate a timing summary table and CSV (-help)
+  return [uplevel [concat ::tb::snapshot::summary $args]]
 }
 
-# Convert duration string such as '1 hr 7 mins 47 secs' to seconds
-proc duration2seconds { string } {
-  set seconds 0
-  # If the input string is already formated as an integer, then return the number as-is
-  if {[regexp {^[0-9]+$} $string]} { return $string }
-  if {$string == {}} { return {} }
-  foreach mult {86400 3600 60 1} name {day hr min sec} {
-    if {[regexp [format {([0-9]+)\s*%s} $name] $string - t]} {
-      set seconds [expr $seconds + $mult * $t]
-    }
-  }
-  return $seconds
-}
+#------------------------------------------------------------------------
+# ::tb::snapshot::db2csv
+#------------------------------------------------------------------------
+# Usage: ::tb::snapshot::db2csv [<options>]
+#------------------------------------------------------------------------
+# Convert database to CSV
+#------------------------------------------------------------------------
+proc ::tb::snapshot::summary {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
 
-# Generate a list of integers
-proc iota {from to} {
-  set out [list]
-  if {$from <= $to} {
-    for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
-  } else {
-    for {set i $from} {$i >= $to} {incr i -1} {lappend out $i}
-  }
-  return $out
-}
+  variable summary
+  variable params
+  variable verbose
+  variable debug
 
-# Flatten a list
-proc lflatten {data} {
-    while { $data != [set data [join $data]] } { }
-    return $data
-}
+  proc progressBar {cur tot {indent {}}} {
+    # http://wiki.tcl.tk/16939
+    # if you don't want to redraw all the time, uncomment and change ferquency
+    #if {$cur % ($tot/300)} { return }
+    # set to total width of progress bar
+    set total 76
 
-proc get_snapshot_info {project version release experiment step} {
-  # Array for optional extra metrics
-  catch {unset metrics}
-  set id [::tb::get_snapshot_ids -project $project -version $version -release $release -experiment $experiment -step $step]
-  # It should not happens unless same databases are merged multiple times, but what should happens
-  # when multiple snapshot ids are being found
-  if {[llength $id]>1} {
-    puts " -W- Found multiple equivalent snapshots: $id (project:$project / version:$version / release:$release / experiment:$experiment / step:$step)"
-    # Keep id from last snapshot
-    set id [lindex $id end]
-    puts " -W- Kept last snapshot id: $id"
-  }
-  if {$id == {}} { return [list {} {} {} {} {} {} {} {}] }
-  set directive [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {directive}]]
-  if {$directive == [list {}]} { set directive {} }
-  set wns [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.wns}]]
-  set tns [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.tns}]]
-  set tnsFailing [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.tns.failing}]]
-  set whs [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.whs}]]
-  set ths [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.ths}]]
-  set thsFailing [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.ths.failing}]]
-  set overlaps [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.route_status.errors}]]
-  set duration [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {duration}]]
-  if {($duration == {}) || ($duration == [list {}])} { set duration 0 }
+    # Do not show the progress bar in GUI and Batch modes
+    catch { if {$rdi::mode != {tcl}} { return } }
 
-#   # Example of extra metrics being extracted:
-#   # +----------------------------+--------+-------+-----------+-------+
-#   # |          Site Type         |  Used  | Fixed | Available | Util% |
-#   # +----------------------------+--------+-------+-----------+-------+
-#   # | CLB LUTs                   | 291167 |     0 |    537600 | 54.16 |
-#   # |   LUT as Logic             | 259342 |     0 |    537600 | 48.24 |
-#   # |   LUT as Memory            |  31825 |     0 |     76800 | 41.43 |
-#   # |     LUT as Distributed RAM |  24458 |     0 |           |       |
-#   # |     LUT as Shift Register  |   7367 |     0 |           |       |
-#   # | CLB Registers              | 433322 |     0 |   1075200 | 40.30 |
-#   # |   Register as Flip Flop    | 433322 |     0 |   1075200 | 40.30 |
-#   # |   Register as Latch        |      0 |     0 |   1075200 |  0.00 |
-#   # | CARRY8                     |   2833 |     0 |     67200 |  4.21 |
-#   # | F7 Muxes                   |   7776 |     0 |    268800 |  2.89 |
-#   # | F8 Muxes                   |    111 |     0 |    134400 |  0.08 |
-#   # | F9 Muxes                   |      0 |     0 |     67200 |  0.00 |
-#   # +----------------------------+--------+-------+-----------+-------+
-#   set report_utilization [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.utilization}]]
-#   # Extract values from report_utilization
-#   regexp -nocase -- {LUT as Logic\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_logic)
-#   regexp -nocase -- {LUT as Memory\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_memory)
-#   regexp -nocase -- {LUT as Distributed RAM\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_distributed_ram)
-#   regexp -nocase -- {LUT as Shift Register\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_shift_register)
-#   regexp -nocase -- {Register as Flip Flop\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_flip_flop)
-
-  set placerCong [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.design_analysis.congestion.placer}]]
-  set routerCong [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.design_analysis.congestion.router}]]
-  if {($routerCong != {u-u-u-u}) && ($routerCong != {})} {
-    set congestion $routerCong
-  } elseif {($placerCong != {u-u-u-u}) && ($placerCong != {})} {
-    set congestion $placerCong
-  } else {
-    set congestion {N/A}
-  }
-  if {$congestion == {}} {
-    set congestion {N/A}
-  }
-  return [list $wns $tns $tnsFailing $whs $ths $thsFailing $overlaps $directive $congestion [duration2seconds $duration] [array get metrics] ]
-}
-
-set files {}
-set sortBy {}
-set saveResults 0
-set showDirective 0
-set showRuntime 0
-set showPostRoute 0
-set showAllHold 0
-set showCongestion 0
-set verbose 0
-set help 0
-set error 0
-if {[llength $::argv] == 0} {
-  set help 1
-}
-while {[llength $::argv]} {
-  set name [::tb::lshift ::argv]
-  switch -exact -- $name {
-    -db -
-    -db {
-         set files [concat $files [glob -nocomplain [lshift ::argv]]]
-    }
-    -show -
-    -show_hold -
-    -show_all -
-    -show_all_hold -
-    -hold {
-         set showAllHold 1
-    }
-    -show -
-    -show_directive -
-    -directive {
-         set showDirective 1
-    }
-    -so -
-    -sort -
-    -sort_by -
-    -sort_by_wns {
-         set sortBy {routeWNS}
-    }
-    -sa -
-    -save -
-    -save {
-         set saveResults 1
-    }
-    -runtime -
-    -runtime -
-    -runtime {
-         set showRuntime 1
-    }
-    -cong -
-    -congestion -
-    -show_congestion {
-         set showCongestion 1
-    }
-    -h -
-    -help {
-         set help 1
-    }
-    -v -
-    -verbose {
-         set verbose 1
-    }
-    default {
-          if {[string match "-*" $name]} {
-            puts " -E- option '$name' is not a valid option."
-            incr error
-          } else {
-            set files [concat $files [glob -nocomplain $name]]
-          }
-    }
-  }
-}
-
-if {$help} {
-  puts [format {
-Usage: snapshot_summary
-            [-db <filename(s)>]
-            [-hold|-show_hold]
-            [-directive|-show_directive]
-            [-congestion|-show_congestion]
-            [-so|-sort_by_wns]
-            [-sa|-save]
-            [-runtime]
-            [-verbose|-v]
-            [-help|-h]
-
-Description: Extract timing summary metrics from snapshot database
-
-  Use -db to specify a list of files or a file pattern
-  Use -show_hold to report hold time for synth_design/opt_design/place_design
-  Use -show_directive to report the directive used for all steps
-  Use -show_congestion to report the placer/router congestions
-  Use -sort_by_wns to sort the results by post-route wns
-  Use -save to save CSV + report files
-  Use -runtime to show runtime
-
-Example:
-   snapshot_summary -db metrics.db
-   snapshot_summary -db metrics.db -sort_by_wns
-   snapshot_summary -db */metrics.db -sort_by_wns -show_hold
-   snapshot_summary -db '*/metrics.db' -save -runtime -congestion
-} ]
-  # HELP -->
-
-  puts ""
-  exit 0
-}
-
-if {$files == {}} {
-  puts " -E- no snapshot db provided (-db)"
-  incr error
-}
-
-if {$error} {
-  puts " -E- some error(s) happened. Cannot continue.\n"
-  exit 1
-}
-
-set tbl [::tb::prettyTable]
-set header [list]
-set header [concat $header Project Version Release Experiment [list {Total Runtime}] ]
-# Step: synth_design
-set header [concat $header Step Directive WNS TNS # WHS THS # Runtime ]
-# Extra metrics
-# set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
-# Step: opt_design
-set header [concat $header Step Directive WNS TNS # WHS THS # Runtime ]
-# Extra metrics
-# set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
-# Step: place_design
-set header [concat $header Step Directive WNS TNS # WHS THS # {N-S-E-W} Runtime ]
-# # Extra metrics
-# set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
-# Step: phys_opt_design
-set header [concat $header Step Directive Iter WNS TNS # WHS THS # {N-S-E-W} Runtime ]
-# # Extra metrics
-# set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
-# Step: route_design
-set header [concat $header Step Directive WNS TNS # WHS THS # Overlaps {N-S-E-W} Runtime ]
-# # Extra metrics
-# set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
-# Step: phys_opt_design
-set header [concat $header Step Directive WNS TNS # WHS THS # {N-S-E-W} Runtime ]
-# # Extra metrics
-# set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
-$tbl header $header
-
-set num 0
-set synthCount 0
-set optCount 0
-set placeCount 0
-set physOptCount 0
-set routeCount 0
-set postRoutePhysOptCount 0
-foreach filename $files {
-  incr num
-  # Open the database in memory (-memory)
-  set SQL [::tb::open_snapshot_db -db $filename -memory]
-  set dbVersion [$SQL eval { SELECT value FROM param WHERE property='version' LIMIT 1; } ]
-  if {$dbVersion < 1.5} {
-    puts " -W- snapshot database $dbVersion is not supported. Skipped"
-    continue
+    set half [expr {$total/2}]
+    set percent [expr {100.*$cur/$tot}]
+    set val (\ [format "%6.2f%%" $percent]\ )
+    set str "|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
+    set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
+    puts -nonewline stderr "\r${indent}${str}"
   }
 
-  set allsnapshotids [::tb::get_snapshot_ids]
-  set projects [lsort [::tb::get_projects]]
-  set count 0
-  foreach project $projects {
-    set projectids [::tb::get_snapshot_ids -project $project]
-    set versions [lsort [::tb::get_versions -ids $projectids]]
-    foreach version $versions {
-      set versionids [::tb::get_snapshot_ids -project $project -version $version]
-      set releases [lsort [::tb::get_releases -ids $versionids]]
-      foreach release $releases {
-        set releaseids [::tb::get_snapshot_ids -project $project -version $version -release $release]
-        set experiments [lsort [::tb::get_experiments -ids $releaseids]]
-        foreach experiment $experiments {
-#           puts [format {%s -> %s -> %s -> %s} $project $version $release $experiment]
-          if {[llength $files] > 1} {
-            if {$verbose} {
-              progressBar $count [llength $allsnapshotids] [format { Processing [%s/%s] (%s)} $num [llength $files] [file normalize $filename] ]
-            } else {
-              progressBar $count [llength $allsnapshotids] [format { Processing [%s/%s] } $num [llength $files]]
-            }
-          } else {
-            progressBar $count [llength $allsnapshotids]
-          }
-          
-          set totalRuntime 0
-          set synthTim [list {} {} {} {} {} {} {} {} {} {}]
-          set synthRuntime 0
-          set synthDirective [list]
-          set synthCongestion {N/A}
-          # Extra metrics (optional)
-          catch {unset synthMetrics}
-          set optTim [list {} {} {} {} {} {} {} {} {} {}]
-          set optRuntime 0
-          set optDirective [list]
-          set optCongestion {N/A}
-          # Extra metrics (optional)
-          catch {unset optMetrics}
-          set placeTim [list {} {} {} {} {} {} {} {} {} {}]
-          set placeRuntime 0
-          set placeDirective [list]
-          set placeCongestion {N/A}
-          # Extra metrics (optional)
-          catch {unset placeMetrics}
-          set physOptTim [list {} {} {} {} {} {} {} {} {} {}]
-          set physOptIter 0
-          set physOptRuntime 0
-          set physOptDirective [list]
-          set physOptCongestion {N/A}
-          # Extra metrics (optional)
-          catch {unset physOptMetrics}
-          set routeTim [list {} {} {} {} {} {} {} {} {} {}]
-          set routeRuntime 0
-          set routeDirective [list]
-          set routeCongestion {N/A}
-          # Extra metrics (optional)
-          catch {unset routeMetrics}
-          set postRoutePhysOptTim [list {} {} {} {} {} {} {} {} {} {}]
-          set postRoutePhysOptRuntime 0
-          set postRoutePhysOptDirective [list]
-          set postRoutePhysOptCongestion {N/A}
-          # Extra metrics (optional)
-          catch {unset postRoutePhysOptMetrics}
-          # Default values for extra metrics
-#           foreach var {lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop} { 
-#             eval [list set synthMetrics($var) {N/A}]
-#             eval [list set optMetrics($var) {N/A}]
-#             eval [list set placeMetrics($var) {N/A}]
-#             eval [list set physOptMetrics($var) {N/A}]
-#             eval [list set routeMetrics($var) {N/A}]
-#             eval [list set postRoutePhysOptMetrics($var) {N/A}]
-#           }
-
-          foreach step [::tb::get_steps -ids [::tb::get_snapshot_ids -project $project -version $version -release $release -experiment $experiment]] {
-            incr count
-            switch -regexp -- $step {
-              {^.*synth_design.*$} {
-                incr synthCount
-                set timInfo [get_snapshot_info $project $version $release $experiment $step]
-                if {[lsort -unique $timInfo] != [list {}]} {
-                  set synthTim [lrange $timInfo 0 9]
-                  # Extra metrics
-                  array set synthMetrics [lindex $timInfo 10]
-                  lappend synthDirective [lindex $timInfo 7]
-                  set synthCongestion [lindex $timInfo 8]
-                  incr synthRuntime [lindex $timInfo 9]
-                }
-              }
-              {^.*place_design.*$} {
-                incr placeCount
-                set timInfo [get_snapshot_info $project $version $release $experiment $step]
-                if {[lsort -unique $timInfo] != [list {}]} {
-                  set placeTim [lrange $timInfo 0 9]
-                  # Extra metrics
-                  array set placeMetrics [lindex $timInfo 10]
-                  lappend placeDirective [lindex $timInfo 7]
-                  set placeCongestion [lindex $timInfo 8]
-                  incr placeRuntime [lindex $timInfo 9]
-                }
-              }
-              {^.*phys_opt_design.*$} {
-                set timInfo [get_snapshot_info $project $version $release $experiment $step]
-                if {[lsort -unique $timInfo] != [list {}]} {
-                  if {[lsort -unique $routeTim] == [list {}]} {
-                    # Pre-route phys_opt_design
-                    incr physOptCount
-                    incr physOptIter
-                    set physOptTim [lrange $timInfo 0 9]
-                    # Extra metrics
-                    array set physOptMetrics [lindex $timInfo 10]
-                    lappend physOptDirective [lindex $timInfo 7]
-                    set physOptCongestion [lindex $timInfo 8]
-                    incr physOptRuntime [lindex $timInfo 9]
-                  } else {
-                    # Post-route phys_opt_design
-                    incr postRoutePhysOptCount
-                    set showPostRoute 1
-                    set postRoutePhysOptTim [lrange $timInfo 0 9]
-                    # Extra metrics
-                    array set postRoutePhysOptMetrics [lindex $timInfo 10]
-                    lappend postRoutePhysOptDirective [lindex $timInfo 7]
-                    set postRoutePhysOptCongestion [lindex $timInfo 8]
-                    incr postRoutePhysOptRuntime [lindex $timInfo 9]
-                  }
-                } else {
-                }
-              }
-              {^.*opt_design.*$} {
-                # Moved after {^.*phys_opt_design.*$} so that the string matching is done after
-                incr optCount
-                set timInfo [get_snapshot_info $project $version $release $experiment $step]
-                if {[lsort -unique $timInfo] != [list {}]} {
-                  set optTim [lrange $timInfo 0 9]
-                  # Extra metrics
-                  array set optMetrics [lindex $timInfo 10]
-                  lappend optDirective [lindex $timInfo 7]
-                  set optCongestion [lindex $timInfo 8]
-                  incr optRuntime [lindex $timInfo 9]
-                }
-              }
-              {^.*route_design.*$} {
-                incr routeCount
-                set timInfo [get_snapshot_info $project $version $release $experiment $step]
-                if {[lsort -unique $timInfo] != [list {}]} {
-                  set routeTim [lrange $timInfo 0 9]
-                  # Extra metrics
-                  array set routeMetrics [lindex $timInfo 10]
-                  lappend routeDirective [lindex $timInfo 7]
-                  set routeCongestion [lindex $timInfo 8]
-                  incr routeRuntime [lindex $timInfo 9]
-                }
-              }
-              default {
-              }
-            }
-          }
-          # Only one of the step runtime is not zero
-          set totalRuntime [expr $totalRuntime + $synthRuntime + $optRuntime + $placeRuntime + $physOptRuntime + $routeRuntime + $postRoutePhysOptRuntime]
-          # Remove last dot(s) from the experiment name $name
-          regsub -all {(\.*)$} $name {} name
-          # Flatten the lists of directive to cover the case when the variable is a list of a single 
-          # empty string: [list {}]
-          # In this case, since we build a list of $<variable> with '$tbl addrow', we don't want the 
-          # column to contain: {} instead of an empty string
-          set synthDirective [lflatten $synthDirective]
-          set optDirective [lflatten $optDirective]
-          set placeDirective [lflatten $placeDirective]
-          set physOptDirective [lflatten $physOptDirective]
-          set routeDirective [lflatten $routeDirective]
-          set postRoutePhysOptDirective [lflatten $postRoutePhysOptDirective]
-          # Add row to table
-          $tbl addrow [concat \
-               [list $project] [list $version] [list $release] \
-               [list $experiment] \
-               [list [::tb::snapshot::duration $totalRuntime]] \
-               synth_design [list $synthDirective] [lrange $synthTim 0 5] [list [::tb::snapshot::duration $synthRuntime]] \
-               opt_design [list $optDirective] [lrange $optTim 0 5] [list [::tb::snapshot::duration $optRuntime]] \
-               place_design [list $placeDirective] [lrange $placeTim 0 5] $placeCongestion [list [::tb::snapshot::duration $placeRuntime]] \
-               phys_opt_design [list $physOptDirective] $physOptIter [lrange $physOptTim 0 5] $physOptCongestion [list [::tb::snapshot::duration $physOptRuntime]] \
-               route_design [list $routeDirective] [lrange $routeTim 0 6] $routeCongestion [list [::tb::snapshot::duration $routeRuntime]] \
-               phys_opt_design [list $postRoutePhysOptDirective] [lrange $postRoutePhysOptTim 0 5] $postRoutePhysOptCongestion [list [::tb::snapshot::duration $postRoutePhysOptRuntime]] \
-               ]
-
-#         # Example of extra metrics for the different flow steps:
-#                [list $synthMetrics(lut_as_logic) $synthMetrics(lut_as_memory) $synthMetrics(lut_as_distributed_ram) $synthMetrics(lut_as_shift_register) $synthMetrics(lut_as_flip_flop)] \
-#                [list $optMetrics(lut_as_logic) $optMetrics(lut_as_memory) $optMetrics(lut_as_distributed_ram) $optMetrics(lut_as_shift_register) $optMetrics(lut_as_flip_flop)] \
-#                [list $placeMetrics(lut_as_logic) $placeMetrics(lut_as_memory) $placeMetrics(lut_as_distributed_ram) $placeMetrics(lut_as_shift_register) $placeMetrics(lut_as_flip_flop)] \
-#                [list $physOptMetrics(lut_as_logic) $physOptMetrics(lut_as_memory) $physOptMetrics(lut_as_distributed_ram) $physOptMetrics(lut_as_shift_register) $physOptMetrics(lut_as_flip_flop)] \
-#                [list $routeMetrics(lut_as_logic) $routeMetrics(lut_as_memory) $routeMetrics(lut_as_distributed_ram) $routeMetrics(lut_as_shift_register) $routeMetrics(lut_as_flip_flop)] \
-#                [list $postRoutePhysOptMetrics(lut_as_logic) $postRoutePhysOptMetrics(lut_as_memory) $postRoutePhysOptMetrics(lut_as_distributed_ram) $postRoutePhysOptMetrics(lut_as_shift_register) $postRoutePhysOptMetrics(lut_as_flip_flop)] \
-
-        #   puts "$experiment / place_design:<$placeTim>"
-        #   puts "$experiment / phys_opt_design:$physOptTim"
-        #   puts "$experiment / route_design:$routeTim"
-
-        }
+  # Convert duration string such as '1 hr 7 mins 47 secs' to seconds
+  proc duration2seconds { string } {
+    set seconds 0
+    # If the input string is already formated as an integer, then return the number as-is
+    if {[regexp {^[0-9]+$} $string]} { return $string }
+    if {$string == {}} { return {} }
+    foreach mult {86400 3600 60 1} name {day hr min sec} {
+      if {[regexp [format {([0-9]+)\s*%s} $name] $string - t]} {
+        set seconds [expr $seconds + $mult * $t]
       }
     }
+    return $seconds
+  }
+
+  # Generate a list of integers
+  proc iota {from to} {
+    set out [list]
+    if {$from <= $to} {
+      for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
+    } else {
+      for {set i $from} {$i >= $to} {incr i -1} {lappend out $i}
+    }
+    return $out
+  }
+
+  # Flatten a list
+  proc lflatten {data} {
+      while { $data != [set data [join $data]] } { }
+      return $data
+  }
+
+  proc get_snapshot_info {project version release experiment step} {
+    # Array for optional extra metrics
+    catch {unset metrics}
+    set id [::tb::get_snapshot_ids -project $project -version $version -release $release -experiment $experiment -step $step]
+    # It should not happens unless same databases are merged multiple times, but what should happens
+    # when multiple snapshot ids are being found
+    if {[llength $id]>1} {
+      puts " -W- Found multiple equivalent snapshots: $id (project:$project / version:$version / release:$release / experiment:$experiment / step:$step)"
+      # Keep id from last snapshot
+      set id [lindex $id end]
+      puts " -W- Kept last snapshot id: $id"
+    }
+    if {$id == {}} { return [list {} {} {} {} {} {} {} {}] }
+    set directive [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {directive}]]
+    if {$directive == [list {}]} { set directive {} }
+    set wns [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.wns}]]
+    set tns [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.tns}]]
+    set tnsFailing [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.tns.failing}]]
+    set whs [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.whs}]]
+    set ths [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.ths}]]
+    set thsFailing [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.timing_summary.ths.failing}]]
+    set overlaps [::tb::get_metric_values -ids [::tb::get_metric_ids -ids $id -glob {report.route_status.errors}]]
+    set duration [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {duration}]]
+    if {($duration == {}) || ($duration == [list {}])} { set duration 0 }
+
+#     # Example of extra metrics being extracted:
+#     # +----------------------------+--------+-------+-----------+-------+
+#     # |          Site Type         |  Used  | Fixed | Available | Util% |
+#     # +----------------------------+--------+-------+-----------+-------+
+#     # | CLB LUTs                   | 291167 |     0 |    537600 | 54.16 |
+#     # |   LUT as Logic             | 259342 |     0 |    537600 | 48.24 |
+#     # |   LUT as Memory            |  31825 |     0 |     76800 | 41.43 |
+#     # |     LUT as Distributed RAM |  24458 |     0 |           |       |
+#     # |     LUT as Shift Register  |   7367 |     0 |           |       |
+#     # | CLB Registers              | 433322 |     0 |   1075200 | 40.30 |
+#     # |   Register as Flip Flop    | 433322 |     0 |   1075200 | 40.30 |
+#     # |   Register as Latch        |      0 |     0 |   1075200 |  0.00 |
+#     # | CARRY8                     |   2833 |     0 |     67200 |  4.21 |
+#     # | F7 Muxes                   |   7776 |     0 |    268800 |  2.89 |
+#     # | F8 Muxes                   |    111 |     0 |    134400 |  0.08 |
+#     # | F9 Muxes                   |      0 |     0 |     67200 |  0.00 |
+#     # +----------------------------+--------+-------+-----------+-------+
+#     set report_utilization [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.utilization}]]
+#     # Extract values from report_utilization
+#     regexp -nocase -- {LUT as Logic\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_logic)
+#     regexp -nocase -- {LUT as Memory\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_memory)
+#     regexp -nocase -- {LUT as Distributed RAM\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_distributed_ram)
+#     regexp -nocase -- {LUT as Shift Register\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_shift_register)
+#     regexp -nocase -- {Register as Flip Flop\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_flip_flop)
+
+    set placerCong [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.design_analysis.congestion.placer}]]
+    set routerCong [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.design_analysis.congestion.router}]]
+    if {($routerCong != {u-u-u-u}) && ($routerCong != {})} {
+      set congestion $routerCong
+    } elseif {($placerCong != {u-u-u-u}) && ($placerCong != {})} {
+      set congestion $placerCong
+    } else {
+      set congestion {N/A}
+    }
+    if {$congestion == {}} {
+      set congestion {N/A}
+    }
+    return [list $wns $tns $tnsFailing $whs $ths $thsFailing $overlaps $directive $congestion [duration2seconds $duration] [array get metrics] ]
+  }
+
+  set table {classic}
+  set files {}
+  set sortBy {}
+  set saveResults 0
+  set showDirective 0
+  set showRuntime 0
+  set showPostRoute 0
+  set showAllHold 0
+  set showCongestion 0
+  set verbose 0
+  set help 0
+  set standalone 0
+  set error 0
+  if {[llength $args] == 0} {
+    set help 1
+  }
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -standalone {
+      	# The script is run in standalone mode
+        set standalone 1
+      }
+      -db -
+      -db {
+           set files [concat $files [glob -nocomplain [lshift args]]]
+      }
+      -show -
+      -show_hold -
+      -show_all -
+      -show_all_hold -
+      -hold {
+           set showAllHold 1
+      }
+      -show -
+      -show_directive -
+      -directive {
+           set showDirective 1
+      }
+      -so -
+      -sort -
+      -sort_by -
+      -sort_by_wns {
+           set sortBy {routeWNS}
+      }
+      -sa -
+      -save -
+      -save {
+           set saveResults 1
+      }
+      -runtime -
+      -runtime -
+      -runtime {
+           set showRuntime 1
+      }
+      -cong -
+      -congestion -
+      -show_congestion {
+           set showCongestion 1
+      }
+      -lean -
+      -lean {
+           set table {lean}
+      }
+      -h -
+      -help {
+           set help 1
+      }
+      -v -
+      -verbose {
+           set verbose 1
+      }
+      default {
+            if {[string match "-*" $name]} {
+              puts " -E- option '$name' is not a valid option."
+              incr error
+            } else {
+              set files [concat $files [glob -nocomplain $name]]
+            }
+      }
+    }
+  }
+
+  if {$help} {
+    set msg [format {
+  Usage: snapshot_summary
+              [-db <filename(s)>]
+              [-hold|-show_hold]
+              [-directive|-show_directive]
+              [-congestion|-show_congestion]
+              [-so|-sort_by_wns]
+              [-sa|-save]
+              [-runtime]
+              [-lean]
+              [-verbose|-v]
+              [-help|-h]
+
+  Description: Extract timing summary metrics from snapshot database
+
+    Use -db to specify a list of files or a file pattern
+    Use -show_hold to report hold time for synth_design/opt_design/place_design
+    Use -show_directive to report the directive used for all steps
+    Use -show_congestion to report the placer/router congestions
+    Use -sort_by_wns to sort the results by post-route wns
+    Use -save to save CSV + report files
+    Use -runtime to show runtime
+    Use -lean to use lean versus classic table
+
+  Example:
+     snapshot_summary -db metrics.db
+     snapshot_summary -db metrics.db -sort_by_wns
+     snapshot_summary -db */metrics.db -sort_by_wns -show_hold
+     snapshot_summary -db '*/metrics.db' -save -runtime -congestion -lean
+  } ]
+    # HELP -->
+    if {!$standalone} {
+    	# Reformat the help message depending on the mode used (standalone/plugin)
+    	regsub -all {snapshot_summary} $msg {snapshot summary} msg
+    }
+    puts $msg
+    puts ""
+    return -code ok
+  }
+
+  if {$files == {}} {
+    puts " -E- no snapshot db provided (-db)"
+    incr error
+  }
+
+  if {$error} {
+    puts " -E- some error(s) happened. Cannot continue.\n"
+    if {$standalone} {
+    	exit 1
+    } else {
+    	return 1
+    }
+  }
+
+  set tbl [::tb::prettyTable]
+  set header [list]
+  set header [concat $header Project Version Release Experiment [list {Total Runtime}] ]
+  # Step: synth_design
+  set header [concat $header Step Directive WNS TNS # WHS THS # Runtime ]
+  # Extra metrics
+  # set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
+  # Step: opt_design
+  set header [concat $header Step Directive WNS TNS # WHS THS # Runtime ]
+  # Extra metrics
+  # set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
+  # Step: place_design
+  set header [concat $header Step Directive WNS TNS # WHS THS # {N-S-E-W} Runtime ]
+  # # Extra metrics
+  # set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
+  # Step: phys_opt_design
+  set header [concat $header Step Directive Iter WNS TNS # WHS THS # {N-S-E-W} Runtime ]
+  # # Extra metrics
+  # set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
+  # Step: route_design
+  set header [concat $header Step Directive WNS TNS # WHS THS # Overlaps {N-S-E-W} Runtime ]
+  # # Extra metrics
+  # set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
+  # Step: phys_opt_design
+  set header [concat $header Step Directive WNS TNS # WHS THS # {N-S-E-W} Runtime ]
+  # # Extra metrics
+  # set header [concat $header lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop ]
+  $tbl header $header
+
+  set num 0
+  set synthCount 0
+  set optCount 0
+  set placeCount 0
+  set physOptCount 0
+  set routeCount 0
+  set postRoutePhysOptCount 0
+  foreach filename $files {
+    incr num
+    # Open the database in memory (-memory)
+    set SQL [::tb::open_snapshot_db -db $filename -memory]
+    set dbVersion [$SQL eval { SELECT value FROM param WHERE property='version' LIMIT 1; } ]
+    if {$dbVersion < 1.5} {
+      puts " -W- snapshot database $dbVersion is not supported. Skipped"
+      continue
+    }
+
+    set allsnapshotids [::tb::get_snapshot_ids]
+    set projects [lsort [::tb::get_projects]]
+    set count 0
+    foreach project $projects {
+      set projectids [::tb::get_snapshot_ids -project $project]
+      set versions [lsort [::tb::get_versions -ids $projectids]]
+      foreach version $versions {
+        set versionids [::tb::get_snapshot_ids -project $project -version $version]
+        set releases [lsort [::tb::get_releases -ids $versionids]]
+        foreach release $releases {
+          set releaseids [::tb::get_snapshot_ids -project $project -version $version -release $release]
+          set experiments [lsort [::tb::get_experiments -ids $releaseids]]
+          foreach experiment $experiments {
+#             puts [format {%s -> %s -> %s -> %s} $project $version $release $experiment]
+            if {[llength $files] > 1} {
+              if {$verbose} {
+                progressBar $count [llength $allsnapshotids] [format { Processing [%s/%s] (%s)} $num [llength $files] [file normalize $filename] ]
+              } else {
+                progressBar $count [llength $allsnapshotids] [format { Processing [%s/%s] } $num [llength $files]]
+              }
+            } else {
+              progressBar $count [llength $allsnapshotids]
+            }
+
+            set totalRuntime 0
+            set synthTim [list {} {} {} {} {} {} {} {} {} {}]
+            set synthRuntime 0
+            set synthDirective [list]
+            set synthCongestion {N/A}
+            # Extra metrics (optional)
+            catch {unset synthMetrics}
+            set optTim [list {} {} {} {} {} {} {} {} {} {}]
+            set optRuntime 0
+            set optDirective [list]
+            set optCongestion {N/A}
+            # Extra metrics (optional)
+            catch {unset optMetrics}
+            set placeTim [list {} {} {} {} {} {} {} {} {} {}]
+            set placeRuntime 0
+            set placeDirective [list]
+            set placeCongestion {N/A}
+            # Extra metrics (optional)
+            catch {unset placeMetrics}
+            set physOptTim [list {} {} {} {} {} {} {} {} {} {}]
+            set physOptIter 0
+            set physOptRuntime 0
+            set physOptDirective [list]
+            set physOptCongestion {N/A}
+            # Extra metrics (optional)
+            catch {unset physOptMetrics}
+            set routeTim [list {} {} {} {} {} {} {} {} {} {}]
+            set routeRuntime 0
+            set routeDirective [list]
+            set routeCongestion {N/A}
+            # Extra metrics (optional)
+            catch {unset routeMetrics}
+            set postRoutePhysOptTim [list {} {} {} {} {} {} {} {} {} {}]
+            set postRoutePhysOptRuntime 0
+            set postRoutePhysOptDirective [list]
+            set postRoutePhysOptCongestion {N/A}
+            # Extra metrics (optional)
+            catch {unset postRoutePhysOptMetrics}
+            # Default values for extra metrics
+#             foreach var {lut_as_logic lut_as_memory lut_as_distributed_ram lut_as_shift_register lut_as_flip_flop} {
+#               eval [list set synthMetrics($var) {N/A}]
+#               eval [list set optMetrics($var) {N/A}]
+#               eval [list set placeMetrics($var) {N/A}]
+#               eval [list set physOptMetrics($var) {N/A}]
+#               eval [list set routeMetrics($var) {N/A}]
+#               eval [list set postRoutePhysOptMetrics($var) {N/A}]
+#             }
+
+            foreach step [::tb::get_steps -ids [::tb::get_snapshot_ids -project $project -version $version -release $release -experiment $experiment]] {
+              incr count
+              switch -regexp -- $step {
+                {^.*synth_design.*$} {
+                  incr synthCount
+                  set timInfo [get_snapshot_info $project $version $release $experiment $step]
+                  if {[lsort -unique $timInfo] != [list {}]} {
+                    set synthTim [lrange $timInfo 0 9]
+                    # Extra metrics
+                    array set synthMetrics [lindex $timInfo 10]
+                    lappend synthDirective [lindex $timInfo 7]
+                    set synthCongestion [lindex $timInfo 8]
+                    incr synthRuntime [lindex $timInfo 9]
+                  }
+                }
+                {^.*place_design.*$} {
+                  incr placeCount
+                  set timInfo [get_snapshot_info $project $version $release $experiment $step]
+                  if {[lsort -unique $timInfo] != [list {}]} {
+                    set placeTim [lrange $timInfo 0 9]
+                    # Extra metrics
+                    array set placeMetrics [lindex $timInfo 10]
+                    lappend placeDirective [lindex $timInfo 7]
+                    set placeCongestion [lindex $timInfo 8]
+                    incr placeRuntime [lindex $timInfo 9]
+                  }
+                }
+                {^.*phys_opt_design.*$} {
+                  set timInfo [get_snapshot_info $project $version $release $experiment $step]
+                  if {[lsort -unique $timInfo] != [list {}]} {
+                    if {[lsort -unique $routeTim] == [list {}]} {
+                      # Pre-route phys_opt_design
+                      incr physOptCount
+                      incr physOptIter
+                      set physOptTim [lrange $timInfo 0 9]
+                      # Extra metrics
+                      array set physOptMetrics [lindex $timInfo 10]
+                      lappend physOptDirective [lindex $timInfo 7]
+                      set physOptCongestion [lindex $timInfo 8]
+                      incr physOptRuntime [lindex $timInfo 9]
+                    } else {
+                      # Post-route phys_opt_design
+                      incr postRoutePhysOptCount
+                      set showPostRoute 1
+                      set postRoutePhysOptTim [lrange $timInfo 0 9]
+                      # Extra metrics
+                      array set postRoutePhysOptMetrics [lindex $timInfo 10]
+                      lappend postRoutePhysOptDirective [lindex $timInfo 7]
+                      set postRoutePhysOptCongestion [lindex $timInfo 8]
+                      incr postRoutePhysOptRuntime [lindex $timInfo 9]
+                    }
+                  } else {
+                  }
+                }
+                {^.*opt_design.*$} {
+                  # Moved after {^.*phys_opt_design.*$} so that the string matching is done after
+                  incr optCount
+                  set timInfo [get_snapshot_info $project $version $release $experiment $step]
+                  if {[lsort -unique $timInfo] != [list {}]} {
+                    set optTim [lrange $timInfo 0 9]
+                    # Extra metrics
+                    array set optMetrics [lindex $timInfo 10]
+                    lappend optDirective [lindex $timInfo 7]
+                    set optCongestion [lindex $timInfo 8]
+                    incr optRuntime [lindex $timInfo 9]
+                  }
+                }
+                {^.*route_design.*$} {
+                  incr routeCount
+                  set timInfo [get_snapshot_info $project $version $release $experiment $step]
+                  if {[lsort -unique $timInfo] != [list {}]} {
+                    set routeTim [lrange $timInfo 0 9]
+                    # Extra metrics
+                    array set routeMetrics [lindex $timInfo 10]
+                    lappend routeDirective [lindex $timInfo 7]
+                    set routeCongestion [lindex $timInfo 8]
+                    incr routeRuntime [lindex $timInfo 9]
+                  }
+                }
+                default {
+                }
+              }
+            }
+            # Only one of the step runtime is not zero
+            set totalRuntime [expr $totalRuntime + $synthRuntime + $optRuntime + $placeRuntime + $physOptRuntime + $routeRuntime + $postRoutePhysOptRuntime]
+            # Remove last dot(s) from the experiment name $name
+            regsub -all {(\.*)$} $name {} name
+            # Flatten the lists of directive to cover the case when the variable is a list of a single
+            # empty string: [list {}]
+            # In this case, since we build a list of $<variable> with '$tbl addrow', we don't want the
+            # column to contain: {} instead of an empty string
+            set synthDirective [lflatten $synthDirective]
+            set optDirective [lflatten $optDirective]
+            set placeDirective [lflatten $placeDirective]
+            set physOptDirective [lflatten $physOptDirective]
+            set routeDirective [lflatten $routeDirective]
+            set postRoutePhysOptDirective [lflatten $postRoutePhysOptDirective]
+            # Add row to table
+            $tbl addrow [concat \
+                 [list $project] [list $version] [list $release] \
+                 [list $experiment] \
+                 [list [::tb::snapshot::duration $totalRuntime]] \
+                 synth_design [list $synthDirective] [lrange $synthTim 0 5] [list [::tb::snapshot::duration $synthRuntime]] \
+                 opt_design [list $optDirective] [lrange $optTim 0 5] [list [::tb::snapshot::duration $optRuntime]] \
+                 place_design [list $placeDirective] [lrange $placeTim 0 5] $placeCongestion [list [::tb::snapshot::duration $placeRuntime]] \
+                 phys_opt_design [list $physOptDirective] $physOptIter [lrange $physOptTim 0 5] $physOptCongestion [list [::tb::snapshot::duration $physOptRuntime]] \
+                 route_design [list $routeDirective] [lrange $routeTim 0 6] $routeCongestion [list [::tb::snapshot::duration $routeRuntime]] \
+                 phys_opt_design [list $postRoutePhysOptDirective] [lrange $postRoutePhysOptTim 0 5] $postRoutePhysOptCongestion [list [::tb::snapshot::duration $postRoutePhysOptRuntime]] \
+                 ]
+
+#           # Example of extra metrics for the different flow steps:
+#                  [list $synthMetrics(lut_as_logic) $synthMetrics(lut_as_memory) $synthMetrics(lut_as_distributed_ram) $synthMetrics(lut_as_shift_register) $synthMetrics(lut_as_flip_flop)] \
+#                  [list $optMetrics(lut_as_logic) $optMetrics(lut_as_memory) $optMetrics(lut_as_distributed_ram) $optMetrics(lut_as_shift_register) $optMetrics(lut_as_flip_flop)] \
+#                  [list $placeMetrics(lut_as_logic) $placeMetrics(lut_as_memory) $placeMetrics(lut_as_distributed_ram) $placeMetrics(lut_as_shift_register) $placeMetrics(lut_as_flip_flop)] \
+#                  [list $physOptMetrics(lut_as_logic) $physOptMetrics(lut_as_memory) $physOptMetrics(lut_as_distributed_ram) $physOptMetrics(lut_as_shift_register) $physOptMetrics(lut_as_flip_flop)] \
+#                  [list $routeMetrics(lut_as_logic) $routeMetrics(lut_as_memory) $routeMetrics(lut_as_distributed_ram) $routeMetrics(lut_as_shift_register) $routeMetrics(lut_as_flip_flop)] \
+#                  [list $postRoutePhysOptMetrics(lut_as_logic) $postRoutePhysOptMetrics(lut_as_memory) $postRoutePhysOptMetrics(lut_as_distributed_ram) $postRoutePhysOptMetrics(lut_as_shift_register) $postRoutePhysOptMetrics(lut_as_flip_flop)] \
+
+          #   puts "$experiment / place_design:<$placeTim>"
+          #   puts "$experiment / phys_opt_design:$physOptTim"
+          #   puts "$experiment / route_design:$routeTim"
+
+          }
+        }
+      }
+
+    }
+
+    ::tb::close_snapshot_db
 
   }
 
-  ::tb::close_snapshot_db
-
-}
-
-# Clear progress bar
-if {$verbose} {
-  puts "\r[string repeat { } 220]"
-} else {
-  puts "\r[string repeat { } 100]"
-}
-
-switch $sortBy {
-  routeWNS {
-    # Sort the table based on router's WNS (from highest to lowest)
-    $tbl sort -real -44
+  # Clear progress bar
+  if {$verbose} {
+    puts "\r[string repeat { } 220]"
+  } else {
+    puts "\r[string repeat { } 100]"
   }
-  default {
-  }
-}
 
-set columnsToDisplay [list 0 1 2 3]
-if {$showRuntime} {
-  set columnsToDisplay [concat $columnsToDisplay [list 4] ]
-}
-if {$synthCount} {
-  # synth_design info
-  set columnsToDisplay [concat $columnsToDisplay [list 5 7 8 9] ]
-  if {$showDirective} {
-    set columnsToDisplay [concat $columnsToDisplay [list 6] ]
+  switch $sortBy {
+    routeWNS {
+      # Sort the table based on router's WNS (from highest to lowest)
+      $tbl sort -real -44
+    }
+    default {
+    }
   }
+
+  set columnsToDisplay [list 0 1 2 3]
   if {$showRuntime} {
-    set columnsToDisplay [concat $columnsToDisplay [list 13] ]
+    set columnsToDisplay [concat $columnsToDisplay [list 4] ]
   }
-  if {$showAllHold} {
-    # Show WHS/THS/# for syn_design
-    set columnsToDisplay [concat $columnsToDisplay [list 10 11 12] ]
-  }
-}
-if {$optCount} {
-  # opt_design info
-  set columnsToDisplay [concat $columnsToDisplay [list 14 16 17 18] ]
-  if {$showDirective} {
-    set columnsToDisplay [concat $columnsToDisplay [list 15] ]
-  }
-  if {$showRuntime} {
-    set columnsToDisplay [concat $columnsToDisplay [list 22] ]
-  }
-  if {$showAllHold} {
-    # Show WHS/THS/# for opt_design
-    set columnsToDisplay [concat $columnsToDisplay [list 19 20 21] ]
-  }
-}
-if {$placeCount} {
-  # place_design info
-  set columnsToDisplay [concat $columnsToDisplay [list 23 25 26 27] ]
-  if {$showDirective} {
-    set columnsToDisplay [concat $columnsToDisplay [list 24] ]
-  }
-  if {$showRuntime} {
-    set columnsToDisplay [concat $columnsToDisplay [list 32] ]
-  }
-  if {$showAllHold} {
-    # Show WHS/THS/# for place_design
-    set columnsToDisplay [concat $columnsToDisplay [list 28 29 30] ]
-  }
-  if {$showCongestion} {
-    set columnsToDisplay [concat $columnsToDisplay [list 31] ]
-  }
-}
-if {$physOptCount} {
-  # phys_opt_design info
-  set columnsToDisplay [concat $columnsToDisplay [list 33 35 36 37 38 39 40 41] ]
-  if {$showDirective} {
-    set columnsToDisplay [concat $columnsToDisplay [list 34] ]
-  }
-  if {$showRuntime} {
-    set columnsToDisplay [concat $columnsToDisplay [list 43] ]
-  }
-  if {$showCongestion} {
-    set columnsToDisplay [concat $columnsToDisplay [list 42] ]
-  }
-}
-if {$routeCount} {
-  # route_design info
-  set columnsToDisplay [concat $columnsToDisplay [list 44 46 47 48 49 50 51 52] ]
-  if {$showDirective} {
-    set columnsToDisplay [concat $columnsToDisplay [list 45] ]
-  }
-  if {$showRuntime} {
-    set columnsToDisplay [concat $columnsToDisplay [list 54] ]
-  }
-  if {$showCongestion} {
-    set columnsToDisplay [concat $columnsToDisplay [list 53] ]
-  }
-}
-if {$postRoutePhysOptCount} {
-  if {$showPostRoute == 1} {
-    # phys_opt_design info
-    set columnsToDisplay [concat $columnsToDisplay [list 55 57 58 59 60 61 62] ]
+  if {$synthCount} {
+    # synth_design info
+    set columnsToDisplay [concat $columnsToDisplay [list 5 7 8 9] ]
     if {$showDirective} {
-      set columnsToDisplay [concat $columnsToDisplay [list 56] ]
+      set columnsToDisplay [concat $columnsToDisplay [list 6] ]
     }
     if {$showRuntime} {
-      set columnsToDisplay [concat $columnsToDisplay [list 64] ]
+      set columnsToDisplay [concat $columnsToDisplay [list 13] ]
+    }
+    if {$showAllHold} {
+      # Show WHS/THS/# for syn_design
+      set columnsToDisplay [concat $columnsToDisplay [list 10 11 12] ]
+    }
+  }
+  if {$optCount} {
+    # opt_design info
+    set columnsToDisplay [concat $columnsToDisplay [list 14 16 17 18] ]
+    if {$showDirective} {
+      set columnsToDisplay [concat $columnsToDisplay [list 15] ]
+    }
+    if {$showRuntime} {
+      set columnsToDisplay [concat $columnsToDisplay [list 22] ]
+    }
+    if {$showAllHold} {
+      # Show WHS/THS/# for opt_design
+      set columnsToDisplay [concat $columnsToDisplay [list 19 20 21] ]
+    }
+  }
+  if {$placeCount} {
+    # place_design info
+    set columnsToDisplay [concat $columnsToDisplay [list 23 25 26 27] ]
+    if {$showDirective} {
+      set columnsToDisplay [concat $columnsToDisplay [list 24] ]
+    }
+    if {$showRuntime} {
+      set columnsToDisplay [concat $columnsToDisplay [list 32] ]
+    }
+    if {$showAllHold} {
+      # Show WHS/THS/# for place_design
+      set columnsToDisplay [concat $columnsToDisplay [list 28 29 30] ]
     }
     if {$showCongestion} {
-      set columnsToDisplay [concat $columnsToDisplay [list 63] ]
+      set columnsToDisplay [concat $columnsToDisplay [list 31] ]
     }
   }
-}
-
-# If some extra metrics have been added, then display all the columns. That's easier than figuring out
-# how the column numbers (runtime, ...) have been affected
-# set columnsToDisplay [iota 0 [llength $header]]
-
-$tbl configure -display_columns $columnsToDisplay
-
-# Print summary table
-puts [$tbl print]
-
-if {$saveResults} {
-  if {[llength $files] == 1} {
-    # Only 1 snapshot database has been specified
-    set prefix [file normalize [file rootname $files]]
-  } else {
-    # Multiple snapshot databases have been specified
-    # In this case, the results are saved in current working directory
-    set prefix [file join [file normalize [pwd]] metrics]
+  if {$physOptCount} {
+    # phys_opt_design info
+    set columnsToDisplay [concat $columnsToDisplay [list 33 35 36 37 38 39 40 41] ]
+    if {$showDirective} {
+      set columnsToDisplay [concat $columnsToDisplay [list 34] ]
+    }
+    if {$showRuntime} {
+      set columnsToDisplay [concat $columnsToDisplay [list 43] ]
+    }
+    if {$showCongestion} {
+      set columnsToDisplay [concat $columnsToDisplay [list 42] ]
+    }
   }
-  $tbl export -format csv -file ${prefix}.csv
-  $tbl export -file ${prefix}.rpt
-  puts " File ${prefix}.csv has been generated"
-  puts " File ${prefix}.rpt has been generated"
+  if {$routeCount} {
+    # route_design info
+    set columnsToDisplay [concat $columnsToDisplay [list 44 46 47 48 49 50 51 52] ]
+    if {$showDirective} {
+      set columnsToDisplay [concat $columnsToDisplay [list 45] ]
+    }
+    if {$showRuntime} {
+      set columnsToDisplay [concat $columnsToDisplay [list 54] ]
+    }
+    if {$showCongestion} {
+      set columnsToDisplay [concat $columnsToDisplay [list 53] ]
+    }
+  }
+  if {$postRoutePhysOptCount} {
+    if {$showPostRoute == 1} {
+      # phys_opt_design info
+      set columnsToDisplay [concat $columnsToDisplay [list 55 57 58 59 60 61 62] ]
+      if {$showDirective} {
+        set columnsToDisplay [concat $columnsToDisplay [list 56] ]
+      }
+      if {$showRuntime} {
+        set columnsToDisplay [concat $columnsToDisplay [list 64] ]
+      }
+      if {$showCongestion} {
+        set columnsToDisplay [concat $columnsToDisplay [list 63] ]
+      }
+    }
+  }
+
+  # If some extra metrics have been added, then display all the columns. That's easier than figuring out
+  # how the column numbers (runtime, ...) have been affected
+  # set columnsToDisplay [iota 0 [llength $header]]
+
+  $tbl configure -display_columns $columnsToDisplay
+
+  # Print summary table
+  puts [$tbl print -format $table]
+
+  if {$saveResults} {
+    if {[llength $files] == 1} {
+      # Only 1 snapshot database has been specified
+      set prefix [file normalize [file rootname $files]]
+    } else {
+      # Multiple snapshot databases have been specified
+      # In this case, the results are saved in current working directory
+      set prefix [file join [file normalize [pwd]] metrics]
+    }
+    $tbl export -format csv -file ${prefix}.csv
+    $tbl print -file ${prefix}.rpt -format $table
+    puts " File ${prefix}.csv has been generated"
+    puts " File ${prefix}.rpt has been generated"
+  }
+
+  catch {$tbl destroy}
 }
 
-catch {$tbl destroy}
+##-----------------------------------------------------------------------
+## Main
+##-----------------------------------------------------------------------
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced to be used as a plugin of the command 'snapshot'
+  # Nothing to be done
+} else {
+	# This file is executed to be used as standalone
+  if {[catch {eval [concat ::tb::snapshot::summary -standalone $argv]} errorstring]} {
+    puts $errorstring
+    exit 1
+  }
+  exit 0
+}

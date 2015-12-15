@@ -15,13 +15,14 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.04.07
+## Version:        2015.12.15
 ## Tool Version:   Vivado 2014.1
 ## Description:    This script import all the file related to the snapshot utility
 ##
 ########################################################################################
 
 ########################################################################################
+## 2015.12.15 - Load plugin 'snapshot_summary'
 ## 2015.04.07 - Minor fix
 ## 2014.06.23 - Initial release
 ########################################################################################
@@ -38,6 +39,7 @@ exec tclsh "$0" "$@"
 # source [file join [file dirname [info script]] snapshot_db2csv.tcl]
 # source [file join [file dirname [info script]] snapshot_db2dir.tcl]
 # source [file join [file dirname [info script]] snapshot_ext.tcl]
+# source [file join [file dirname [info script]] snapshot_summary]
 # source [file join [file dirname [info script]] extract.tcl]
 
 # Find the directory where the current script is (i.e trace back links)
@@ -53,6 +55,7 @@ source [file join $dir snapshot_helpers.tcl]
 source [file join $dir snapshot_db2csv.tcl]
 source [file join $dir snapshot_db2dir.tcl]
 source [file join $dir snapshot_ext.tcl]
+source [file join $dir snapshot_summary]
 source [file join $dir extract.tcl]
 
 if {[file tail [info script]]==[file tail $argv0]} {
