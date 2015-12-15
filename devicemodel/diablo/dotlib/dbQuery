@@ -3,6 +3,8 @@
 exec tclsh "$0" "$@"
 
 ########################################################################################
+## 12-15-2015 - Added support for -dir to include pin direction (input/output) in the
+##              attribute column
 ## 05-12-2015 - Added new pin attribute columns to report clock pins and internal
 ##              pins for from/to pins
 ## 02-26-2015 - Added option to tag pins with clock attribute: <pin> (*)
@@ -13,7 +15,7 @@ exec tclsh "$0" "$@"
 # The flow is to generate fragment files from Dotlib first with dotlib2tcl
 # Once this is done, this script can be run.
 
-set SCRIPT_VERSION {05-12-2015}
+set SCRIPT_VERSION {12-15-2015}
 
 lappend auto_path /home/dpefour/git/scripts/toolbox
 package require toolbox
@@ -55,6 +57,7 @@ set reportArcs {all}; # all|matching|mismatching
 set limit 999999999
 set showclockpins 0
 set showinternalpins 0
+set showdirection 0
 
 set reportfilename {}
 set filemode {w}
@@ -154,11 +157,16 @@ while {[llength $argv]} {
     -internal {
       set showinternalpins 1
     }
+    -dir -
+    -direction {
+      set showdirection 1
+    }
     -attr -
     -attribute -
     -attributes {
       set showclockpins 1
       set showinternalpins 1
+      set showdirection 1
     }
     -v -
     -verbose {
@@ -201,7 +209,7 @@ if {$show_help} {
                 [-m|-matching_dotlib]
                 [-M|-mismatching_dotlib]
                 [-l|-limit <interger>]
-                [-attr|-attribute][-clock][-internal]
+                [-attr|-attribute][-clock][-internal][-dir]
                 [-file <filename>]
                 [-a|-append]
                 [-table|-csv|-list]
@@ -232,7 +240,8 @@ if {$show_help} {
       
       The -clock reports pins with 'clock : true' inside Dotlib
       The -internal reports internal pins
-      The -attribute reports both clock and internal pins (-clock and -internal)
+      The -dir reports pin direction (input/output)
+      The -attribute reports clock, internal pins and direction (-clock/-internal/-dir)
 
       The -table|-csv|-list select the output format. The default is -table that
       generates a tabular format. The -csv generates a CSV format. The -list generates
@@ -459,6 +468,34 @@ if {[catch {
         set pinName $values(pinName)
         set fromAttr {}
         set toAttr {}
+        if {$showdirection} {
+          switch $values(relatedpinDir) {
+            input {
+              append fromAttr {I}
+            }
+            output {
+              append fromAttr {O}
+            }
+            internal {
+            }
+            default {
+              append fromAttr {?}
+            }
+          }
+          switch $values(pinDir) {
+            input {
+              append toAttr {I}
+            }
+            output {
+              append toAttr {O}
+            }
+            internal {
+            }
+            default {
+              append toAttr {?}
+            }
+          }
+        }
         if {$showclockpins} {
           # Reformat pins with 'clock : true' inside Dotlib as: <pin> (c)
 #           if {$values(relatedpinClock) != {}} { set relatedpinName [format {%s (c)} $relatedpinName] }
@@ -611,7 +648,7 @@ if {1} {
   # not make sense anymore
 #   set columns [list 2 3 4 5 6 7 8 9 10 11 12 13 14 15]
   set columns [list 2 3 5 7 8 9 10 11 12 13 14 15]
-  if {$showinternalpins || $showclockpins} {
+  if {$showinternalpins || $showclockpins || $showdirection} {
     # Showing the pin attribute columns
     set columns [concat $columns [list 4 6] ]
   }
@@ -684,8 +721,8 @@ if {$reportfilename == {}} {
   puts " File [file normalize $reportfilename] generated"
 }
 
-if {$showinternalpins || $showclockpins} {
-  puts "  Pin attributes: c=clock i=internal"
+if {$showinternalpins || $showclockpins || $showdirection} {
+  puts "  Pin attributes: c=clock i=internal I=input O=output"
 }
 puts "  Found [$tbl numrows] arc(s)"
 if {($reportArcs == {all}) && ($mismatchArcs > 0)} {
