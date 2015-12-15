@@ -86,7 +86,7 @@ exec tclsh "$0" "$@"
 #------------------------------------------------------------------------
 # Usage: snapshot summary [<options>]
 #------------------------------------------------------------------------
-# Convert database to CSV
+# Generate a timing summary table and CSV
 #------------------------------------------------------------------------
 proc ::tb::snapshot::method:summary { args } {
   # Summary :
@@ -98,11 +98,11 @@ proc ::tb::snapshot::method:summary { args } {
 }
 
 #------------------------------------------------------------------------
-# ::tb::snapshot::db2csv
+# ::tb::snapshot::summary
 #------------------------------------------------------------------------
-# Usage: ::tb::snapshot::db2csv [<options>]
+# Usage: ::tb::snapshot::summary [<options>]
 #------------------------------------------------------------------------
-# Convert database to CSV
+# Generate a timing summary table and CSV
 #------------------------------------------------------------------------
 proc ::tb::snapshot::summary {args} {
   # Summary :
