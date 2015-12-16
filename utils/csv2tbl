@@ -5,7 +5,7 @@ exec tclsh "$0" "$@"
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -20,6 +20,12 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
+## 2015.12.16 - Added support for -lean/-classic/-format/-left/-right
+##              When using those command line options, the script requires prettyTable
+##              otherwise it reverts to default format
+##            - Changed the behavior when multiple input CSV files are provided.
+##              Each CSV file is now converted as a report and saved inside the same
+##              directory (unless -out/-stdout is used)
 ## 2014.11.03 - Code reorganization under namespace ::tb::csv2tbl
 ## 2013.09.27 - Initial release
 ########################################################################################
@@ -34,9 +40,10 @@ namespace eval ::tb {}
 namespace eval ::tb::csv2tbl {
   namespace export csv2tbl
 
-  variable SCRIPT_VERSION {11-03-2014}
+  variable SCRIPT_VERSION {12-16-2015}
   variable VERBOSE 0
   variable DEBUG 0
+  variable channel {}
 }
 
 ##-----------------------------------------------------------------------
@@ -347,6 +354,7 @@ proc ::tb::csv2tbl::split-csv { str {sepChar ,} } {
 ##-----------------------------------------------------------------------
 proc ::tb::csv2tbl::read-csv {&tbl filename {csvDelimiter ,}} {
   variable VERBOSE
+  variable channel
   if {![file exists $filename]} {
     error " -E- file '$filename' does not exist"
   }
@@ -381,9 +389,9 @@ proc ::tb::csv2tbl::read-csv {&tbl filename {csvDelimiter ,}} {
     }
   }
   close $FH
-  if {$VERBOSE} {
-    puts $::channel " -I- Header: $header"
-    puts $::channel " -I- Number of imported row(s): $count"
+  if {$VERBOSE && ($channel != {})} {
+    puts $channel " -I- Header: $header"
+    puts $channel " -I- Number of imported row(s): $count"
   }
   return 0
 }
@@ -398,6 +406,7 @@ proc ::tb::csv2tbl::csv2tbl {args} {
   variable SCRIPT_VERSION
   variable VERBOSE
   variable DEBUG
+  variable channel
 
   set VERBOSE 0
   set DEBUG 0
@@ -410,7 +419,12 @@ proc ::tb::csv2tbl::csv2tbl {args} {
   set mode {w}
   set csvDelimiter {,}
   set merge 0
-  set channel {stdout}
+  set stdout 0
+  set outputMode {multiple} ; # single|multiple|stdout
+  set channel {}
+  set table {classic}
+  set alignment {left}
+  set usePrettyTable 0
   if {[llength $args] == 0} {
     incr show_help
   }
@@ -455,11 +469,44 @@ proc ::tb::csv2tbl::csv2tbl {args} {
       -verbose {
           set VERBOSE 1
       }
+      -stdout -
+      --stdout {
+          set stdout 1
+      }
       -m -
       --m -
       -merge -
       --merge {
           set merge 1
+      }
+      -lean -
+      --lean {
+           set table {lean}
+      }
+      -classic -
+      --classic {
+           set table {classic}
+      }
+      -format -
+      --format {
+           set table [lshift args]
+           switch $table {
+             lean -
+             classic {
+             }
+             default {
+               puts " -E- invalid format '$table'. The valid formats are: classic|lean"
+               incr error
+             }
+           }
+      }
+      -left -
+      -align_left {
+           set alignment {left}
+      }
+      -right -
+      -align_right {
+           set alignment {right}
       }
       -d -
       -debug {
@@ -502,6 +549,10 @@ proc ::tb::csv2tbl::csv2tbl {args} {
                   [-csv <filename> [<filename> ...]]
                   [-delimiter <csv-delimiter>]
                   [-out <filename>]
+                  [-format classic|lean][-lean][-classic]
+                  [-align_left|-left]
+                  [-align_right|-right]
+                  [-stdout]
                   [-append|-a]
                   [-verbose|-v]
                   [-help|-h]
@@ -510,10 +561,16 @@ proc ::tb::csv2tbl::csv2tbl {args} {
       Description: Utility to convert CSV formated files to tables formated reports
 
       Version: %s
+      
+        If -out/-stdout is not specified then each report is saved in the same
+        directory as the CSV file with .rpt
+        
+        Use -stdout to redirect output to stdout
 
       Example:
          csv2tbl -csv file1.csv -delimiter ';'
          csv2tbl -csv *.csv -out result.rpt -merge
+         csv2tbl -csv *.csv
 
     } $SCRIPT_VERSION ]
     # HELP -->
@@ -527,13 +584,43 @@ proc ::tb::csv2tbl::csv2tbl {args} {
     puts " -E- no input file provided"
     incr error
   }
+  
+  if {$merge} {
+    if  {!$stdout && $ofilename == {}} {
+      puts " -E- -merge must be used with -out or -stdout"
+      incr error
+    }
+  }
+
+  if  {$stdout && $ofilename != {}} {
+    puts " -E- -out and -stdout are mutually exclusive"
+    incr error
+  }
+
+  if {($table == {lean}) || ($alignment == {right})} {
+  	if {[catch {package require prettyTable} errorstring]} {
+  		# The package prettyTable cannot be found
+  		puts " -W- package prettyTable cannot be found. Reverting to classic format and left alignment"
+  	} else {
+  		set usePrettyTable 1
+  	}
+  }
 
   if {$error} {
     error "\n Some error(s) occured. Cannot continue.\n"
 #    exit -1
   }
-
-  if {$ofilename != {}} {
+  
+  if {$stdout} {
+  	# Redirect to STDOUT
+  	set outputMode {stdout}
+  	set channel {stdout}
+  } elseif {$ofilename == {}} {
+  	# Generate a report file for each CSV file
+  	set outputMode {multiple}
+  } else {
+  	# Generate a single report file for all the CSV files
+  	set outputMode {single}
     if {[catch {set channel [open $ofilename $mode]} errorstring]} {
       error " -E- $errorstring"
 #       exit 1
@@ -543,7 +630,13 @@ proc ::tb::csv2tbl::csv2tbl {args} {
     puts $channel "# -------------------------------------------------------\n"
   }
 
-  set tbl [::tb::csv2tbl::Table::Create]
+  if {$usePrettyTable} {
+  	# Use prettyTable
+    set tbl [::tb::prettyTable]
+  } else {
+  	# Use the table package provided with the script
+    set tbl [::tb::csv2tbl::Table::Create]
+  }
 
   set first 1
   foreach filename $ifilename {
@@ -560,15 +653,53 @@ proc ::tb::csv2tbl::csv2tbl {args} {
       $tbl reset
       $tbl title "CSV: [file normalize $filename]"
       read-csv tbl $filename $csvDelimiter
-      puts $channel "[$tbl print]\n"
+      if {$outputMode == {multiple}} {
+        # Generate the report file
+        set ofilename "[file rootname $filename].rpt"
+        if {[catch {set channel [open $ofilename $mode]} errorstring]} {
+          puts " -E- skipping file '$filename' due to following error:"
+          puts " -E- $errorstring"
+          continue
+        }
+        puts $channel "# -------------------------------------------------------"
+        puts $channel [format {# Created on %s with csv2tbl} [clock format [clock seconds]] ]
+        puts $channel "# -------------------------------------------------------\n"
+      }
+      if {$usePrettyTable} {
+      	switch $alignment {
+      		right {
+            puts $channel "[$tbl print -format $table -align_right]\n"
+      		}
+      		default {
+            puts $channel "[$tbl print -format $table]\n"
+      		}
+      	}
+      } else {
+        puts $channel "[$tbl print]\n"
+      }
+      if {$outputMode == {multiple}} {
+      	close $channel
+      	set channel {}
+      }
     }
   }
 
   if {$merge} {
-    puts $channel [$tbl print]
+    if {$usePrettyTable} {
+    	switch $alignment {
+    		right {
+          puts $channel "[$tbl print -format $table -align_right]\n"
+    		}
+    		default {
+          puts $channel "[$tbl print -format $table]\n"
+    		}
+    	}
+    } else {
+      puts $channel "[$tbl print]\n"
+    }
   }
 
-  if {$channel != {stdout}} { close $channel }
+  if {($channel != {stdout}) && ($channel != {})} { close $channel }
 
   return -code ok
 }
