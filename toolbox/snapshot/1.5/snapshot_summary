@@ -15,13 +15,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.12.15
+## Version:        2015.12.16
 ## Description:    Example script to extract summary report from snapshot database
 ##
 ########################################################################################
 
 ########################################################################################
-## 2015.12.15 - Reformatted the script so that it can be used standalone or as a
+## 2015.12.16 - Reformatted the script so that it can be used standalone or as a
 ##              plugin to the command 'snapshot'
 ##            - Added support for -lean for lean table
 ## 2015.10.15 - Renamed congestion column: 'Congestion' -> 'N-S-E-W'
@@ -764,10 +764,10 @@ proc ::tb::snapshot::summary {args} {
 if {[file tail [info script]]!=[file tail $argv0]} {
   # This file is sourced to be used as a plugin of the command 'snapshot'
   # Nothing to be done beside loading the prettyTable package
-  if {[lsearch [package names] prettyTable] == -1} { package require prettyTable }
+  if {[catch {package present prettyTable}]} { package require prettyTable }
 } else {
   # This file is executed to be used as standalone
-  if {[lsearch [package names] toolbox] == -1} { package require toolbox }
+  if {[catch {package present toolbox}]} { package require toolbox }
   if {[catch {eval [concat ::tb::snapshot::summary -standalone $argv]} errorstring]} {
     puts $errorstring
     exit 1
