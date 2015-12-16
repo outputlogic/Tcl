@@ -30,6 +30,11 @@ exec tclsh "$0" "$@"
 # % snapshot_merge metrics.db -runtime
 # % snapshot merge metrics.db -runtime
 
+# Safely create namspaces
+namespace eval ::tb {
+}
+namespace eval ::tb::snapshot {
+}
 #------------------------------------------------------------------------
 # ::tb::snapshot::method:merge
 #------------------------------------------------------------------------
@@ -223,7 +228,7 @@ if {[file tail [info script]]!=[file tail $argv0]} {
   # Nothing to be done
 } else {
   # This file is executed to be used as standalone
-  package require toolbox
+  if {[lsearch [package names] toolbox] == -1} { package require toolbox }
   if {[catch {eval [concat ::tb::snapshot::merge -standalone $argv]} errorstring]} {
     puts $errorstring
     exit 1
