@@ -14,6 +14,7 @@ source [file join  [file dirname [info script]] snapshot_db2dir.tcl]
 source [file join  [file dirname [info script]] snapshot_ext.tcl]
 source [file join  [file dirname [info script]] snapshot_helpers.tcl]
 source [file join  [file dirname [info script]] snapshot_summary]
+source [file join  [file dirname [info script]] snapshot_merge]
 source [file join  [file dirname [info script]] extract.tcl]
 
 if {[info var ::__TOOLBOXVERBOSE__] != {}} {
