@@ -15,13 +15,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.12.16
+## Version:        2015.12.17
 ## Description:    Example script to merge multiple snapshot database
 ##
 ########################################################################################
 
 ########################################################################################
-## 2015.12.16 - Reformatted the script so that it can be used standalone or as a
+## 2015.12.17 - Reformatted the script so that it can be used standalone or as a
 ##              plugin to the command 'snapshot'
 ## 2014.10.27 - Initial release
 ########################################################################################
@@ -63,7 +63,6 @@ proc ::tb::snapshot::merge {args} {
   # Argument Usage:
   # Return Value:
 
-  variable summary
   variable params
   variable verbose
   variable debug

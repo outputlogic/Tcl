@@ -11,13 +11,14 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2014.07.11
+## Version:        2015.12.17
 ## Tool Version:   Vivado 2014.1
 ## Description:    Plugin for snapshot_core.tcl to export database to directory
 ##
 ########################################################################################
 
 ########################################################################################
+## 2015.12.17 - Minor code cleaning 
 ## 2014.07.11 - Reformated info message to number the snapshot being exported 
 ## 2014.06.24 - Added support to -top_metrics/-default_top_metrics to expose a 
 ##              list of snapshot metrics to the index page (-html only)
@@ -60,7 +61,6 @@ proc ::tb::snapshot::db2dir {args} {
   # Argument Usage:
   # Return Value:
 
-  variable summary
   variable params
   variable verbose
   variable debug

@@ -3,6 +3,7 @@
 exec tclsh "$0" "$@"
 
 ########################################################################################
+## 2015.12.17 - Added support for -rci/-ru
 ## 2015.12.15 - Minor fix to enable on-file timing reports to be used with a DCP
 ## 2015.12.14 - Added support for -nodcp/-rts/-rda/-rrs
 ## 2015.11.16 - Initial tracked release
@@ -296,6 +297,8 @@ set unplaceDesign 0
 set unrouteDesign 0
 set reportTimingSummary {}
 set reportDesignAnalysis {}
+set reportUtilization {}
+set reportClockInteraction {}
 set reportRouteStatus {}
 set standalone 0
 set verbose 0
@@ -394,6 +397,24 @@ while {[llength $::argv]} {
          	 incr error
         }
     }
+    -rci -
+    -clock_interaction -
+    -report_clock_interaction {
+         set reportClockInteraction [lshift ::argv]
+         if {![file exists $reportClockInteraction]} {
+         	 print error "file '$reportClockInteraction' does not exist"
+         	 incr error
+        }
+    }
+    -ru -
+    -report_utilization -
+    -report_utilization {
+         set reportUtilization [lshift ::argv]
+         if {![file exists $reportUtilization]} {
+         	 print error "file '$reportUtilization' does not exist"
+         	 incr error
+        }
+    }
     -rrs -
     -route_status -
     -report_route_status {
@@ -474,6 +495,8 @@ Usage: take_snapshot
             [-scr <filename>|-script <filename>]
             [-rts <filename>|-report_timing_summary <filename>]
             [-rda <filename>|-report_design_analysis <filename>]
+            [-rci <filename>|-report_clock_interaction <filename>]
+            [-ru <filename>|-report_utilization <filename>]
             [-rrs <filename>|-report_route_status <filename>]
             [-time <time_in_seconds>]
             [-timeout <seconds>]
@@ -584,6 +607,12 @@ if {$standalone} {
     if {$reportDesignAnalysis != {}} {
     	snapshot addfile report.design_analysis $reportDesignAnalysis
     }
+    if {$reportClockInteraction != {}} {
+    	snapshot addfile report.clock_interaction $reportClockInteraction
+    }
+    if {$reportUtilization != {}} {
+    	snapshot addfile report.utilization $reportUtilization
+    }
     if {$reportRouteStatus != {}} {
     	snapshot addfile report.route_status $reportRouteStatus
     }
@@ -618,10 +647,12 @@ set checkpoint {%s}
 
 # report_timing_summary report
 set rts {%s}
-
 # report_design_analysis report
 set rda {%s}
-
+# report_clock_interaction report
+set rci {%s}
+# report_utilization report
+set ru {%s}
 # report_route_status report
 set rrs {%s}
 
@@ -631,7 +662,15 @@ source /home/dpefour/git/scripts/toolbox/snapshot/snapshot
 # package require snapshot
 # package require extract
 # source /home/dpefour/git/scripts/wip/snapshot/snapshot
-} [clock format [clock seconds]] $cmdLineArguments $checkpoint [file normalize $reportTimingSummary] [file normalize $reportDesignAnalysis] [file normalize $reportRouteStatus] ]
+} [clock format [clock seconds]] \
+  $cmdLineArguments \
+  $checkpoint \
+  [file normalize $reportTimingSummary] \
+  [file normalize $reportDesignAnalysis] \
+  [file normalize $reportClockInteraction] \
+  [file normalize $reportUtilization] \
+  [file normalize $reportRouteStatus] \
+  ]
 
 if {$scripts != {}} {
   puts $FH [format {# Remove default metrics
@@ -668,6 +707,12 @@ puts $FH [format {if {[file exists $checkpoint]} {
   }
   if {[file exists $rda]} {
   	snapshot addfile report.design_analysis $rda
+  }
+  if {[file exists $rci]} {
+  	snapshot addfile report.clock_interaction $rci
+  }
+  if {[file exists $ru]} {
+  	snapshot addfile report.utilization $ru
   }
   if {[file exists $rrs]} {
   	snapshot addfile report.route_status $rrs

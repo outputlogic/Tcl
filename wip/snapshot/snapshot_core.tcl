@@ -15,13 +15,14 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.12.15
+## Version:        2015.12.17
 ## Tool Version:   Vivado 2014.1
 ## Description:    This utility provides a simple way to extract and save metrics
 ##
 ########################################################################################
 
 ########################################################################################
+## 2015.12.17 - Renamed namespace variable to prevent name collision with plugin
 ## 2015.12.15 - Added -noreset to 'take_snapshot'
 ##            - Minor reformatting (tabs->spaces)
 ## 2015.12.14 - Added -once to method 'set'
@@ -390,12 +391,12 @@ proc ::tb::snapshot::take_snapshot { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::snapshot {
-  variable version {2015.12.15}
+  variable version {2015.12.17}
   variable params
   variable metrics
   variable metricTypes
   variable metricRefs
-  variable summary
+  variable summaryMatrix
   variable snapshotlog [list]
   variable logFH {}
   variable logFile {}
@@ -2330,7 +2331,7 @@ proc ::tb::snapshot::method:reset {args} {
   variable metrics
   variable metricTypes
   variable metricRefs
-#   variable summary
+#   variable summaryMatrix
 #   variable verbose 0
 #   variable debug 0
   variable snapshotlog [list]
@@ -2538,7 +2539,7 @@ proc ::tb::snapshot::dbreport {args} {
   # Argument Usage:
   # Return Value:
 
-  variable summary
+  variable summaryMatrix
   variable params
   variable verbose
   variable debug
@@ -2679,10 +2680,10 @@ proc ::tb::snapshot::dbreport {args} {
 #   matrixFormat justify 2 center
 
   # Just in case: destroy previous matrix if it was not done before
-  catch {summary destroy}
-  struct::matrix summary
-  summary add columns 10
-  summary add row [list {id} {project} {release} {version} {experiment} {step} {run} {date} {time} {# metrics} ]
+  catch {summaryMatrix destroy}
+  struct::matrix summaryMatrix
+  summaryMatrix add columns 10
+  summaryMatrix add row [list {id} {project} {release} {version} {experiment} {step} {run} {date} {time} {# metrics} ]
 
   if {$verbose} {
     print info "<<<<<<<<<<<<<<< dbreport <<<<<<<<<<<<<<<"
@@ -2762,15 +2763,15 @@ proc ::tb::snapshot::dbreport {args} {
     # the incremental flow when snapshot metric can be re-taken for a snapshot
     set nummetrics [execSQL SQL "SELECT count(*) FROM ( SELECT DISTINCT name FROM metric WHERE (snapshotid = $id) AND (enabled == 1) )"]
 #     set nummetrics [SQL eval "SELECT count(name) FROM metric WHERE snapshotid = $id AND (enabled == 1)"]
-    summary add row [list $id $project $release $version $experiment $step $run $date $time $nummetrics ]
+    summaryMatrix add row [list $id $project $release $version $experiment $step $run $date $time $nummetrics ]
 
-#     summary add row [list $id $project $run $version $experiment $step $date $time ]
+#     summaryMatrix add row [list $id $project $run $version $experiment $step $date $time ]
   }
 
-#   print stdout [summary format 2string]
-  print stdout [summary format 2string matrixFormat]
-#   print stdout [matrixFormat printmatrix summary]
-  summary destroy
+#   print stdout [summaryMatrix format 2string]
+  print stdout [summaryMatrix format 2string matrixFormat]
+#   print stdout [matrixFormat printmatrix summaryMatrix]
+  summaryMatrix destroy
   matrixFormat destroy
 
   SQL close

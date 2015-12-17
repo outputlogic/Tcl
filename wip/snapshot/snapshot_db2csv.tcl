@@ -11,13 +11,14 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2014.06.03
+## Version:        2015.12.17
 ## Tool Version:   Vivado 2014.1
 ## Description:    Plugin for snapshot_core.tcl to export database to CSV file
 ##
 ########################################################################################
 
 ########################################################################################
+## 2015.12.17 - Renamed namespace variable to prevent name collision with plugin 
 ## 2014.06.03 - Splited from original snapshot.tcl
 ##            - Other enhancements and fixes
 ##            - Initial release
@@ -53,7 +54,7 @@ proc ::tb::snapshot::db2csv {args} {
   # Argument Usage:
   # Return Value:
 
-  variable summary
+  variable summaryMatrix
   variable params
   variable verbose
   variable debug
@@ -284,10 +285,10 @@ proc ::tb::snapshot::db2csv {args} {
 #   matrixFormat justify 2 center
 
   # Just in case: destroy previous matrix if it was not done before
-  catch {summary destroy}
-  struct::matrix summary
-  summary add columns [expr 10 + [llength $metrics]]
-  summary add row [concat [list {id} {project} {release} {version} {experiment} {step} {run} {description} {date} {time} ] $metrics ]
+  catch {summaryMatrix destroy}
+  struct::matrix summaryMatrix
+  summaryMatrix add columns [expr 10 + [llength $metrics]]
+  summaryMatrix add row [concat [list {id} {project} {release} {version} {experiment} {step} {run} {description} {date} {time} ] $metrics ]
 
   set numrow 0
   foreach id $snapshotids {
@@ -314,17 +315,17 @@ proc ::tb::snapshot::db2csv {args} {
       }
 
       incr numrow
-      summary add row
-      summary set cell 0 $numrow $id
-      summary set cell 1 $numrow $project
-      summary set cell 2 $numrow $release
-      summary set cell 3 $numrow $version
-      summary set cell 4 $numrow $experiment
-      summary set cell 5 $numrow $step
-      summary set cell 6 $numrow $run
-      summary set cell 7 $numrow $description
-      summary set cell 8 $numrow $date
-      summary set cell 9 $numrow $time
+      summaryMatrix add row
+      summaryMatrix set cell 0 $numrow $id
+      summaryMatrix set cell 1 $numrow $project
+      summaryMatrix set cell 2 $numrow $release
+      summaryMatrix set cell 3 $numrow $version
+      summaryMatrix set cell 4 $numrow $experiment
+      summaryMatrix set cell 5 $numrow $step
+      summaryMatrix set cell 6 $numrow $run
+      summaryMatrix set cell 7 $numrow $description
+      summaryMatrix set cell 8 $numrow $date
+      summaryMatrix set cell 9 $numrow $time
 
       # When a duplicate metric name is found for a snapshot, keep the last one only. This is to support
       # the incremental flow when snapshot metric can be re-taken for a snapshot
@@ -357,12 +358,12 @@ proc ::tb::snapshot::db2csv {args} {
         set metricname $metricinfo(name)
         set metricvalue $metricinfo(value)
         set numcol [expr 10 + [lsearch $metrics $metricname]]
-#         summary set cell $numcol $numrow $metricvalue
-#         summary set cell $numcol $numrow [list2csv [list [truncateText $metricvalue]] $csvdelimiter]
+#         summaryMatrix set cell $numcol $numrow $metricvalue
+#         summaryMatrix set cell $numcol $numrow [list2csv [list [truncateText $metricvalue]] $csvdelimiter]
         # TODO: Since the metric values that are binary or have multiple lines have been skiped, does the metric value need to be truncated?
-        summary set cell $numcol $numrow [truncateText $metricvalue]
-#         summary set cell $numcol $numrow [::csv::join [list [truncateText $metricvalue]] ,]
-#         summary set cell $numcol $numrow [::csv::join [list [truncateText $metricvalue]] $csvdelimiter]
+        summaryMatrix set cell $numcol $numrow [truncateText $metricvalue]
+#         summaryMatrix set cell $numcol $numrow [::csv::join [list [truncateText $metricvalue]] ,]
+#         summaryMatrix set cell $numcol $numrow [::csv::join [list [truncateText $metricvalue]] $csvdelimiter]
         if {$debug} {
           print debug "snapshotid=$id / name=$metricname / value='[truncateText $metricvalue]'"
         }
@@ -378,32 +379,32 @@ proc ::tb::snapshot::db2csv {args} {
     if {$verbose} {
       print info "Matrix transposed"
     }
-    summary transpose
+    summaryMatrix transpose
   }
 
-#   print stdout [summary format 2string matrixFormat]
-#   print stdout [matrixFormat printmatrix ::tb::snapshot::summary]
-#   csv::writematrix ::tb::snapshot::summary stdout $csvdelimiter
-# #   csv::writematrix matrixFormat ::tb::snapshot::summary stdout
+#   print stdout [summaryMatrix format 2string matrixFormat]
+#   print stdout [matrixFormat printmatrix ::tb::snapshot::summaryMatrix]
+#   csv::writematrix ::tb::snapshot::summaryMatrix stdout $csvdelimiter
+# #   csv::writematrix matrixFormat ::tb::snapshot::summaryMatrix stdout
 
   if {$csvfile == {}} {
-#     print stdout [csv::report printmatrix ::tb::snapshot::summary]
-    csv::writematrix ::tb::snapshot::summary stdout $csvdelimiter
-# #     csv::writematrix summary <chan> ,
-# #     csv::writematrix matrixFormat summary stdout
+#     print stdout [csv::report printmatrix ::tb::snapshot::summaryMatrix]
+    csv::writematrix ::tb::snapshot::summaryMatrix stdout $csvdelimiter
+# #     csv::writematrix summaryMatrix <chan> ,
+# #     csv::writematrix matrixFormat summaryMatrix stdout
   } else {
     set csvfile [file normalize $csvfile]
     set FH [open $csvfile $mode]
     puts $FH "# Created on [clock format [clock seconds]]"
     puts $FH "# Database: $db"
-#     puts $FH [csv::report printmatrix ::tb::snapshot::summary]
+#     puts $FH [csv::report printmatrix ::tb::snapshot::summaryMatrix]
 #     puts $FH {}
-    csv::writematrix ::tb::snapshot::summary $FH $csvdelimiter
+    csv::writematrix ::tb::snapshot::summaryMatrix $FH $csvdelimiter
     close $FH
     print stdout " File $csvfile has been created"
   }
 
-  summary destroy
+  summaryMatrix destroy
   matrixFormat destroy
 
   SQL close
