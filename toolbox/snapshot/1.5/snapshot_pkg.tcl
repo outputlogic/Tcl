@@ -13,10 +13,12 @@ source [file join  [file dirname [info script]] snapshot_db2csv.tcl]
 source [file join  [file dirname [info script]] snapshot_db2dir.tcl]
 source [file join  [file dirname [info script]] snapshot_ext.tcl]
 source [file join  [file dirname [info script]] snapshot_helpers.tcl]
-source [file join  [file dirname [info script]] snapshot_summary]
-source [file join  [file dirname [info script]] snapshot_merge]
-source [file join  [file dirname [info script]] snapshot_compare]
 source [file join  [file dirname [info script]] extract.tcl]
+
+# Do not source the pluging to prevent circular package dependency
+# source [file join  [file dirname [info script]] snapshot_summary]
+# source [file join  [file dirname [info script]] snapshot_merge]
+# source [file join  [file dirname [info script]] snapshot_compare]
 
 if {[info var ::__TOOLBOXVERBOSE__] != {}} {
   catch { puts -nonewline [format {     %-20s : %-40s (%s} \
