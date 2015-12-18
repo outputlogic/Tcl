@@ -20,6 +20,7 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
+## 2015.12.18 - Added support for -noheader
 ## 2015.12.16 - Added support for -lean/-classic/-format/-left/-right
 ##              When using those command line options, the script requires prettyTable
 ##              otherwise it reverts to default format
@@ -171,7 +172,7 @@ proc ::tb::csv2tbl::Table::do {self method args} { #-- Dispatcher with methods
         return 0
       }
       print {
-        eval ::tb::csv2tbl::Table::print $self
+        eval ::tb::csv2tbl::Table::print $self $args
       }
       length {
         return $numrows
@@ -210,7 +211,7 @@ proc ::tb::csv2tbl::Table::do {self method args} { #-- Dispatcher with methods
   }
 }
 
-proc ::tb::csv2tbl::Table::print {self} {
+proc ::tb::csv2tbl::Table::print {self {printHeader 1}} {
   # Summary :
   # Argument Usage:
   # Return Value:
@@ -252,8 +253,14 @@ proc ::tb::csv2tbl::Table::print {self} {
   # Generate the table header
   append res $head\n
   # Generate the table rows
-  set first 1
-  foreach row [concat [list $header] $table] {
+  if {$printHeader} {
+    set rows [concat [list $header] $table]
+    set first 1
+  } else {
+    set rows $table
+    set first 0
+  }
+  foreach row $rows {
       if {$row eq {%%SEPARATOR%%}} {
         append res $head\n
         continue
@@ -352,7 +359,7 @@ proc ::tb::csv2tbl::split-csv { str {sepChar ,} } {
 ##-----------------------------------------------------------------------
 ## Read CSV file and return a Table object
 ##-----------------------------------------------------------------------
-proc ::tb::csv2tbl::read-csv {&tbl filename {csvDelimiter ,}} {
+proc ::tb::csv2tbl::read-csv {&tbl filename {csvDelimiter ,} {parseHeader 1}} {
   variable VERBOSE
   variable channel
   if {![file exists $filename]} {
@@ -381,7 +388,16 @@ proc ::tb::csv2tbl::read-csv {&tbl filename {csvDelimiter ,}} {
           return 1
         }
       }
-      $tbl header $header
+      if {$parseHeader} {
+        $tbl header $header
+      } else {
+        # If the CSV file has no header, create an empty header with correct number
+        # of columns and add the first line as a row
+        set L [list] ; foreach el $header { lappend L {} }
+        $tbl header $L
+        $tbl addrow $header
+        incr count
+      }
       set first 0
     } else {
       $tbl addrow [split-csv $line $csvDelimiter]
@@ -425,6 +441,7 @@ proc ::tb::csv2tbl::csv2tbl {args} {
   set table {classic}
   set alignment {left}
   set usePrettyTable 0
+  set parseHeader 1
   if {[llength $args] == 0} {
     incr show_help
   }
@@ -464,6 +481,10 @@ proc ::tb::csv2tbl::csv2tbl {args} {
       -append -
       --append {
         set mode {a}
+      }
+      -noheader -
+      -noheader {
+          set parseHeader 0
       }
       -v -
       -verbose {
@@ -555,6 +576,7 @@ proc ::tb::csv2tbl::csv2tbl {args} {
                   [-stdout]
                   [-append|-a]
                   [-verbose|-v]
+                  [-noheader]
                   [-help|-h]
                   [-longhelp]
 
@@ -566,11 +588,13 @@ proc ::tb::csv2tbl::csv2tbl {args} {
         directory as the CSV file with .rpt
         
         Use -stdout to redirect output to stdout
+        
+        Use -noheader when the CSV file has no header
 
       Example:
          csv2tbl -csv file1.csv -delimiter ';'
          csv2tbl -csv *.csv -out result.rpt -merge
-         csv2tbl -csv *.csv
+         csv2tbl -csv *.csv -noheader
 
     } $SCRIPT_VERSION ]
     # HELP -->
@@ -598,12 +622,12 @@ proc ::tb::csv2tbl::csv2tbl {args} {
   }
 
   if {($table == {lean}) || ($alignment == {right})} {
-  	if {[catch {package require prettyTable} errorstring]} {
-  		# The package prettyTable cannot be found
-  		puts " -W- package prettyTable cannot be found. Reverting to classic format and left alignment"
-  	} else {
-  		set usePrettyTable 1
-  	}
+    if {[catch {package require prettyTable} errorstring]} {
+      # The package prettyTable cannot be found
+      puts " -W- package prettyTable cannot be found. Reverting to classic format and left alignment"
+    } else {
+      set usePrettyTable 1
+    }
   }
 
   if {$error} {
@@ -612,15 +636,15 @@ proc ::tb::csv2tbl::csv2tbl {args} {
   }
   
   if {$stdout} {
-  	# Redirect to STDOUT
-  	set outputMode {stdout}
-  	set channel {stdout}
+    # Redirect to STDOUT
+    set outputMode {stdout}
+    set channel {stdout}
   } elseif {$ofilename == {}} {
-  	# Generate a report file for each CSV file
-  	set outputMode {multiple}
+    # Generate a report file for each CSV file
+    set outputMode {multiple}
   } else {
-  	# Generate a single report file for all the CSV files
-  	set outputMode {single}
+    # Generate a single report file for all the CSV files
+    set outputMode {single}
     if {[catch {set channel [open $ofilename $mode]} errorstring]} {
       error " -E- $errorstring"
 #       exit 1
@@ -631,10 +655,10 @@ proc ::tb::csv2tbl::csv2tbl {args} {
   }
 
   if {$usePrettyTable} {
-  	# Use prettyTable
+    # Use prettyTable
     set tbl [::tb::prettyTable]
   } else {
-  	# Use the table package provided with the script
+    # Use the table package provided with the script
     set tbl [::tb::csv2tbl::Table::Create]
   }
 
@@ -647,12 +671,12 @@ proc ::tb::csv2tbl::csv2tbl {args} {
       if {!$first} {
         $tbl separator
       }
-      read-csv tbl $filename $csvDelimiter
+      read-csv tbl $filename $csvDelimiter $parseHeader
       set first 0
     } else {
       $tbl reset
       $tbl title "CSV: [file normalize $filename]"
-      read-csv tbl $filename $csvDelimiter
+      read-csv tbl $filename $csvDelimiter $parseHeader
       if {$outputMode == {multiple}} {
         # Generate the report file
         set ofilename "[file rootname $filename].rpt"
@@ -666,36 +690,52 @@ proc ::tb::csv2tbl::csv2tbl {args} {
         puts $channel "# -------------------------------------------------------\n"
       }
       if {$usePrettyTable} {
-      	switch $alignment {
-      		right {
-            puts $channel "[$tbl print -format $table -align_right]\n"
-      		}
-      		default {
-            puts $channel "[$tbl print -format $table]\n"
-      		}
-      	}
+        switch $alignment {
+          right {
+            if {$parseHeader} {
+              puts $channel "[$tbl print -format $table -align_right]\n"
+            } else {
+              puts $channel "[$tbl print -format $table -align_right -noheader]\n"
+            }
+          }
+          default {
+            if {$parseHeader} {
+              puts $channel "[$tbl print -format $table]\n"
+            } else {
+              puts $channel "[$tbl print -format $table -noheader]\n"
+            }
+          }
+        }
       } else {
-        puts $channel "[$tbl print]\n"
+        puts $channel "[$tbl print $parseHeader]\n"
       }
       if {$outputMode == {multiple}} {
-      	close $channel
-      	set channel {}
+        close $channel
+        set channel {}
       }
     }
   }
 
   if {$merge} {
     if {$usePrettyTable} {
-    	switch $alignment {
-    		right {
-          puts $channel "[$tbl print -format $table -align_right]\n"
-    		}
-    		default {
-          puts $channel "[$tbl print -format $table]\n"
-    		}
-    	}
+      switch $alignment {
+        right {
+          if {$parseHeader} {
+            puts $channel "[$tbl print -format $table -align_right]\n"
+          } else {
+            puts $channel "[$tbl print -format $table -align_right -noheader]\n"
+          }
+        }
+        default {
+          if {$parseHeader} {
+            puts $channel "[$tbl print -format $table]\n"
+          } else {
+            puts $channel "[$tbl print -format $table -noheader]\n"
+          }
+        }
+      }
     } else {
-      puts $channel "[$tbl print]\n"
+      puts $channel "[$tbl print $parseHeader]\n"
     }
   }
 
