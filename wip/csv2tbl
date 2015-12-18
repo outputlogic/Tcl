@@ -41,7 +41,7 @@ namespace eval ::tb {}
 namespace eval ::tb::csv2tbl {
   namespace export csv2tbl
 
-  variable SCRIPT_VERSION {12-16-2015}
+  variable SCRIPT_VERSION {12-18-2015}
   variable VERBOSE 0
   variable DEBUG 0
   variable channel {}
