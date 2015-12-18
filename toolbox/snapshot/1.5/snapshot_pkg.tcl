@@ -15,7 +15,7 @@ source [file join  [file dirname [info script]] snapshot_ext.tcl]
 source [file join  [file dirname [info script]] snapshot_helpers.tcl]
 source [file join  [file dirname [info script]] extract.tcl]
 
-# Do not source the pluging to prevent circular package dependency
+# Do not source the plugins to prevent circular package dependency
 # source [file join  [file dirname [info script]] snapshot_summary]
 # source [file join  [file dirname [info script]] snapshot_merge]
 # source [file join  [file dirname [info script]] snapshot_compare]
