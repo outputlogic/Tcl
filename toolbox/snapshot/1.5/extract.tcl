@@ -1,7 +1,7 @@
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -14,13 +14,14 @@ proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.12.14
+## Version:        2016.01.11
 ## Tool Version:   Vivado 2014.1
 ## Description:    This file defined default metrics for snapshot.tcl
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.01.11 - Added metric report.design_analysis.congestion
 ## 2015.12.14 - Minor restructuring so that existing metrics are not overriden
 ##            - Moved parseRDACongestion to ::tb::snapshot::parseRDACongestion
 ##            - Added report_design_analysis metrics in non-Vivado flow
@@ -253,6 +254,15 @@ if {[package provide Vivado] != {}} {
         set congestion [::tb::snapshot::parseRDACongestion $report]
         snapshot set -once report.design_analysis.congestion.placer [lindex $congestion 0]
         snapshot set -once report.design_analysis.congestion.router [lindex $congestion 1]
+        # Adding metric report.design_analysis.congestion which is the congestion that is most
+        # relevant for current snapshot
+        if {[lindex $congestion 1] == {u-u-u-u}} {
+        	# If the router congestion is unset (u-u-u-u), then save the placer congestion
+          snapshot set -once report.design_analysis.congestion [lindex $congestion 0]
+        } else {
+        	# else, save the router congestion
+          snapshot set -once report.design_analysis.congestion [lindex $congestion 1]
+        }
       }
     }
   }
@@ -323,6 +333,15 @@ if {[package provide Vivado] != {}} {
         set congestion [::tb::snapshot::parseRDACongestion $report]
         snapshot set -once report.design_analysis.congestion.placer [lindex $congestion 0]
         snapshot set -once report.design_analysis.congestion.router [lindex $congestion 1]
+        # Adding metric report.design_analysis.congestion which is the congestion that is most
+        # relevant for current snapshot
+        if {[lindex $congestion 1] == {u-u-u-u}} {
+        	# If the router congestion is unset (u-u-u-u), then save the placer congestion
+          snapshot set -once report.design_analysis.congestion [lindex $congestion 0]
+        } else {
+        	# else, save the router congestion
+          snapshot set -once report.design_analysis.congestion [lindex $congestion 1]
+        }
         # Extract Vivado release from header:
         # | Tool Version : Vivado v.2014.3 (lin64) Build 1034051 Fri Oct  3 16:31:15 MDT 2014
         set report [split $report \n]
