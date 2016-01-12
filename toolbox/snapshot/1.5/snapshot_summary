@@ -5,7 +5,7 @@ exec tclsh "$0" "$@"
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -15,12 +15,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.12.17
+## Version:        2016.01.12
 ## Description:    Example script to extract summary report from snapshot database
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.01.12 - Improved the extraction of the congestion from database
 ## 2015.12.17 - Reformatted the script so that it can be used standalone or as a
 ##              plugin to the command 'snapshot'
 ##            - Added support for -lean for lean table
@@ -218,14 +219,15 @@ proc ::tb::snapshot::summary {args} {
 #     regexp -nocase -- {LUT as Shift Register\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_shift_register)
 #     regexp -nocase -- {Register as Flip Flop\s*\|\s*([\.0-9]+)\s*\|} $report_utilization -- metrics(lut_as_flip_flop)
 
-    set placerCong [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.design_analysis.congestion.placer}]]
-    set routerCong [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.design_analysis.congestion.router}]]
-    if {($routerCong != {u-u-u-u}) && ($routerCong != {})} {
-      set congestion $routerCong
-    } elseif {($placerCong != {u-u-u-u}) && ($placerCong != {})} {
-      set congestion $placerCong
-    } else {
-      set congestion {N/A}
+    set congestion [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.design_analysis.congestion}]]
+    if {$congestion == {}} {
+      set placerCong [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.design_analysis.congestion.placer}]]
+      set routerCong [::tb::get_metric_values -quiet -ids [::tb::get_metric_ids -ids $id -glob {report.design_analysis.congestion.router}]]
+      if {($routerCong != {u-u-u-u}) && ($routerCong != {})} {
+        set congestion $routerCong
+      } elseif {($placerCong != {u-u-u-u}) && ($placerCong != {})} {
+        set congestion $placerCong
+      }
     }
     if {$congestion == {}} {
       set congestion {N/A}
