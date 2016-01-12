@@ -6,14 +6,16 @@ set DEBUG 0
 
 proc init {} {
   # Checkpoint inside working directory
-  set CHECKPOINT {top.dcp}
+  # set CHECKPOINT {top.dcp}
+  set CHECKPOINT [pwd]/x_top.dcp
 
   # set VERSION [lindex [file split $::WDIR] end-1]
   set VERSION {Default}
   set PROJECT {Default}
   # set EXPERIMENT [lindex [file split $WDIR] end]
   set EXPERIMENT {Default}
-  set FLOORPLAN {pblocks.xdc}
+  # set FLOORPLAN {pblocks.xdc}
+  set FLOORPLAN [pwd]/pblocks.xdc
 
   set LSF_MEMORY 20000
   set RUN_SCRIPT_INCLUDE {}
@@ -48,6 +50,11 @@ proc init {} {
 proc main { {scriptname run.st} } {
   global WDIR
   global CONFIG_VARS
+  
+  if {![file exists $scriptname]} {
+  	puts " -E- File '$scriptname' does not exist"
+    return -code ok
+  }
 
   catch {unset CONFIG_VARS}
   set CONFIG_VARS(_) [list {} {}]
@@ -158,7 +165,7 @@ proc main { {scriptname run.st} } {
 if {[llength $argv] == 1} {
   set filename $argv
   if {![file exists $filename]} {
-    puts " -E- File '$filename' does not exists"
+    puts " -E- File '$filename' does not exist"
     exit 1
   }
   puts " -I- Using script $filename"

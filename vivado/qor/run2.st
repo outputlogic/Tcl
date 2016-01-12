@@ -19,8 +19,10 @@ set db                  $rootDir/metrics.db
 set project             {%{PROJECT}}
 set version             {%{VERSION}}
 set experiment          {%{EXPERIMENT}}
+# set checkpoint          {%{ROOTDIR}/%{CHECKPOINT}}
+# set checkpoint          $rootDir/%{CHECKPOINT}
 set checkpoint          {%{CHECKPOINT}}
-# set floorplan           {%{ROOTDIR}/%{FLOORPLAN}
+# set floorplan           {%{ROOTDIR}/%{FLOORPLAN}}
 # set floorplan           $rootDir/%{FLOORPLAN}
 set floorplan           {%{FLOORPLAN}}
 set optCmdLine          {%{OPT_CMDLINE}}
