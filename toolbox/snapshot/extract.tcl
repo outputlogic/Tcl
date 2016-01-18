@@ -14,13 +14,14 @@ proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.01.11
+## Version:        2016.01.17
 ## Tool Version:   Vivado 2014.1
 ## Description:    This file defined default metrics for snapshot.tcl
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.01.17 - Fixed error when extracting metrics from report_route_status
 ## 2016.01.11 - Added metric report.design_analysis.congestion
 ## 2015.12.14 - Minor restructuring so that existing metrics are not overriden
 ##            - Moved parseRDACongestion to ::tb::snapshot::parseRDACongestion
@@ -169,13 +170,13 @@ if {[package provide Vivado] != {}} {
 #       snapshot set report.route_status $report
       set report [snapshot get report.route_status]
       foreach line [split $report \n] {
-        if {[regexp {nets with routing errors.+\:\s*([0-9]+)\s*\:} $line - val]} {
+        if {[regexp {nets with routing errors[^\:]+\:\s*([0-9]+)\s*\:} $line - val]} {
           snapshot set -once report.route_status.errors $val
-        } elseif {[regexp {fully routed nets.+\:\s*([0-9]+)\s*\:} $line - val]} {
+        } elseif {[regexp {fully routed nets[^\:]+\:\s*([0-9]+)\s*\:} $line - val]} {
           snapshot set -once report.route_status.routed $val
-        } elseif {[regexp {nets with fixed routing.+\:\s*([0-9]+)\s*\:} $line - val]} {
+        } elseif {[regexp {nets with fixed routing[^\:]+\:\s*([0-9]+)\s*\:} $line - val]} {
           snapshot set -once report.route_status.fixed $val
-        } elseif {[regexp {routable nets.+\:\s*([0-9]+)\s*\:} $line - val]} {
+        } elseif {[regexp {routable nets[^\:]+\:\s*([0-9]+)\s*\:} $line - val]} {
           snapshot set -once report.route_status.nets $val
         } else {
         }
@@ -286,13 +287,13 @@ if {[package provide Vivado] != {}} {
       if {[snapshot exists report.route_status]} {
         set report [snapshot get report.route_status]
         foreach line [split $report \n] {
-          if {[regexp {nets with routing errors.+\:\s*([0-9]+)\s*\:} $line - val]} {
+          if {[regexp {nets with routing errors[^\:]+\:\s*([0-9]+)\s*\:} $line - val]} {
             snapshot set -once report.route_status.errors $val
-          } elseif {[regexp {fully routed nets.+\:\s*([0-9]+)\s*\:} $line - val]} {
+          } elseif {[regexp {fully routed nets[^\:]+\:\s*([0-9]+)\s*\:} $line - val]} {
             snapshot set -once report.route_status.routed $val
-          } elseif {[regexp {nets with fixed routing.+\:\s*([0-9]+)\s*\:} $line - val]} {
+          } elseif {[regexp {nets with fixed routing[^\:]+\:\s*([0-9]+)\s*\:} $line - val]} {
             snapshot set -once report.route_status.fixed $val
-          } elseif {[regexp {routable nets.+\:\s*([0-9]+)\s*\:} $line - val]} {
+          } elseif {[regexp {routable nets[^\:]+\:\s*([0-9]+)\s*\:} $line - val]} {
             snapshot set -once report.route_status.nets $val
           } elseif {[regexp -nocase {\|\s*Tool\s*Version\s*:\s*Vivado\s*(v\.)?([0-9\.]+)\s} $line - - val]} {
             # Extract Vivado release from header:
