@@ -1,0 +1,697 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    Timing constraints summary from XDC
+##
+########################################################################################
+
+########################################################################################
+## 2016.01.19 - Initial release
+########################################################################################
+
+# Example of report:
+
+namespace eval ::tb {
+  namespace export -force report_timing_constraints
+}
+
+namespace eval ::tb::utils {
+  namespace export -force report_timing_constraints
+}
+
+namespace eval ::tb::utils::report_timing_constraints {
+  namespace export -force report_timing_constraints
+  variable version {2016.01.19}
+  variable params
+  variable output {}
+  variable metrics
+  array set params [list format {table} verbose 0 debug 0]
+  array set metrics [list]
+}
+
+proc ::tb::utils::report_timing_constraints::lshift {inputlist} {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
+  variable reports
+  variable metrics
+  variable params
+  variable output
+  catch {unset metrics}
+  catch {unset reports}
+  set params(verbose) 0
+  set params(debug) 0
+  set params(format) {table}
+  set currentDesign 0
+  set ofilename {}
+  set ifilenames {}
+  set filemode {w}
+  set returnstring 0
+  set format {default}
+  set refColumn 0
+  set returnstring 0
+  set standalone 0
+  set error 0
+  set help 0
+  if {[llength $args] == 0} {
+    set help 1
+  }
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-cu(r(r(e(n(t(_(d(e(s(i(gn?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set currentDesign 1
+      }
+      {^-f(i(le?)?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-csv?$} {
+        set params(format) {csv}
+      }
+      {^-xdc?$} {
+      	foreach pattern [lshift args] {
+      		foreach file [glob -nocomplain $pattern] {
+      			if {![file exists $file]} {
+      				puts " -E- File '$file' does not exist"
+      				incr error
+      				continue
+      			}
+      			lappend ifilenames [file normalize $file]
+      		}
+      	}
+        set ifilenames [lsort -unique $ifilenames]
+      }
+      {^-ap(p(e(nd?)?)?)?$} {
+        set filemode {a}
+      }
+      {^-r(e(t(u(r(n(_(s(t(r(i(ng?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set returnstring 1
+      }
+      {^-standalone$} {
+      	# The script is run in standalone mode
+        set standalone 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-h(e(lp?)?)?$} {
+           set help 1
+      }
+      default {
+            if {[string match "-*" $name]} {
+              puts " -E- option '$name' is not a valid option."
+              incr error
+            } else {
+              puts " -E- option '$name' is not a valid option."
+              incr error
+            }
+      }
+    }
+  }
+
+  if {$help} {
+    puts [format {
+  Usage: report_timing_constraints
+              [-current_design]
+              [-xdc <filename>][-xdc <pattern>]
+              [-file <filename>]
+              [-append]
+              [-csv]
+              [-return_string]
+              [-verbose|-v]
+              [-help|-h]
+
+  Description: Timing constraints summary from XDC
+  
+  Example:
+     tb::report_timing_constraints -xdc '*xdc'
+     tb::report_timing_constraints -xdc '*xdc' -return_string
+     tb::report_timing_constraints -xdc '*xdc' -csv -file result.csv
+} ]
+    # HELP -->
+    return -code ok
+  }
+
+  if {($ofilename != {}) && $returnstring} {
+    puts " -E- cannot use -file & -return_string together"
+    incr error
+  }
+
+  if {[llength $ifilenames] && $currentDesign} {
+    puts " -E- cannot use -current_design & -xdc together"
+    incr error
+  }
+
+  if {$standalone && $currentDesign} {
+    puts " -E- cannot use -current_design in standalone mode"
+    incr error
+  }
+
+  if {$standalone && $returnstring} {
+    puts " -E- cannot use -current_design in standalone mode"
+    incr error
+  }
+
+  if {$error} {
+    error " -E- some error(s) happened. Cannot continue"
+  }
+
+  set startTime [clock seconds]
+  set output [list]
+  
+  if {$currentDesign} {
+  	# Generate XDC from current design
+    set xdc [file normalize [format {write_xdc.%s} [clock seconds]]]
+    write_xdc -quiet -exclude_physical -file $xdc
+    dputs " -D- writing XDC file '$xdc'"
+    set ifilenames $xdc
+  }
+
+  if {[catch {
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+    # All tracked timing constraints
+    set timCons [list create_clock \
+                      create_generated_clock \
+                      set_clock_latency \
+                      set_clock_uncertainty \
+                      set_clock_groups \
+                      set_clock_sense \
+                      set_input_jitter \
+                      set_system_jitter \
+                      set_external_delay \
+                      set_input_delay \
+                      set_output_delay \
+                      set_data_check \
+                      set_case_analysis \
+                      set_false_path \
+                      set_multicycle_path \
+                      set_max_delay \
+                      set_min_delay \
+                      group_path \
+                      set_disable_timing \
+                      set_bus_skew ]
+
+    set index -1
+    set numColumns [llength $ifilenames]
+    catch {unset metrics}
+    foreach file $ifilenames {
+    	dputs " -D- Processing $file"
+    	incr index
+      catch {unset commands}
+      catch {unset res}
+      foreach el $timCons {
+        set commands($el) 0
+      }
+      set res [getVivadoCommands $file]
+      array set commands $res
+
+      foreach el $timCons {
+        if {$commands($el) != 0} {
+        	set metrics(${index}:${el}) $commands($el)
+        }
+      }
+    }
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+#     set tbl [::tb::prettyTable {Design Summary}]
+    set tbl [::Table::Create {Timing Constraints Summary}]
+    $tbl indent 1
+    set header [list {Constraint}]
+    if {$currentDesign} {
+    	lappend header {<CURRENT_DESIGN>}
+    } else {
+      foreach file $ifilenames {
+      	lappend header [file tail $file]
+      }
+    }
+    $tbl header $header
+#     $tbl configure -indent 2
+    foreach constraint $timCons {
+    	set row [list $constraint]
+      for {set index 0} {$index < $numColumns} {incr index} {
+      	if {[info exists metrics(${index}:${constraint})]} {
+      		lappend row $metrics(${index}:${constraint})
+      	} else {
+      		lappend row 0
+      	}
+      }
+      if {[lsort -unique [lrange $row 1 end]] == {0}} {
+      	# If none of the XDC have this constraint, then skip it:
+      	# Eg: row = {set_clock_groups 0 0 0 0}
+      	continue
+      }
+      $tbl addrow $row
+    }
+
+#     set output [concat $output [split [$tbl export -format $params(format)] \n] ]
+    switch $params(format) {
+      table {
+        set output [concat $output [split [$tbl print] \n] ]
+      }
+      csv {
+        set output [concat $output [split [$tbl csv] \n] ]
+        if {$ofilename != {}} {
+          # Append a comment out version of the table
+          foreach line [split [$tbl print] \n] {
+          	lappend output [format {#  %s} $line]
+          }
+        }
+      }
+    }
+    catch {$tbl destroy}
+
+    if {$currentDesign} {
+    	# When -current_design has been used, do not generate the footer
+    	# with the filename
+    } else {
+      set prefix {}
+      if {$ofilename != {}} {
+      	# Comment out lines when writting into a file
+      	set prefix {# }
+      }
+      lappend output {}
+      foreach file $ifilenames {
+      	lappend output [format "%s  %s \t -> \t %s" $prefix [file tail $file] $file]
+      }
+    }
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+  } errorstring]} {
+    puts " -E- $errorstring"
+  }
+
+  if {$currentDesign} {
+    if {!$params(debug)} {
+      # Keep the file in debug mode
+      file delete $ifilenames
+    }
+  }
+
+  if {$params(debug)} {
+  }
+
+  set stopTime [clock seconds]
+#   puts " -I- report_timing_constraints completed in [expr $stopTime - $startTime] seconds"
+
+  if {$ofilename != {}} {
+    set FH [open $ofilename $filemode]
+    puts $FH "# ---------------------------------------------------------------------------------"
+    puts $FH [format {# Created on %s with report_timing_constraints (%s)} [clock format [clock seconds]] $::tb::utils::report_timing_constraints::version ]
+    puts $FH "# ---------------------------------------------------------------------------------\n"
+    puts $FH [join $output \n]
+    close $FH
+    puts " -I- Generated file [file normalize $ofilename]"
+    return -code ok
+  }
+
+  if {$returnstring} {
+    return [join $output \n]
+  } else {
+    puts [join $output \n]
+  }
+  return -code ok
+}
+
+########################################################################################
+##
+##
+##
+########################################################################################
+proc ::tb::utils::report_timing_constraints::presort_list {l1 l2} {
+  set l [list]
+  foreach el $l1 {
+    if {[lsearch $l2 $el] != -1} {
+      lappend l $el
+    }
+  }
+  foreach el $l2 {
+    if {[lsearch $l $el] == -1} {
+      lappend l $el
+    }
+  }
+  return $l
+}
+
+proc ::tb::utils::report_timing_constraints::dputs {args} {
+  variable params
+  if {$params(debug)} {
+    eval [concat puts $args]
+  }
+  return -code ok
+}
+
+# Generate a list of integers
+proc ::tb::utils::report_timing_constraints::iota {from to} {
+  set out [list]
+  if {$from <= $to} {
+    for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
+  } else {
+    for {set i $from} {$i >= $to} {incr i -1} {lappend out $i}
+  }
+  return $out
+}
+
+# Return a list of Vivado commands used in a Tcl script.
+# Format: <command> <number>
+# For example:
+#   get_nets 35 get_pins 242 set_false_path 162 set_multicycle_path 66 \
+#   create_generated_clock 67 set_clock_groups 292 current_instance 10 \
+#   set_case_analysis 15 get_cells 191 get_clocks 717 get_ports 26 create_clock 12
+
+proc ::tb::utils::report_timing_constraints::getVivadoCommands {filename} {
+  set slave [interp create]
+  $slave eval [format {
+    catch {unset commands}
+    global commands
+
+    proc unknown {args} {
+      global commands
+      set cmd [lindex $args 0]
+      if {[regexp {^[0-9]$} $cmd]} {
+        return -code ok
+      }
+      if {![info exists commands($cmd)]} {
+        set commands($cmd) 0
+      }
+      incr commands($cmd)
+      return -code ok
+    }
+
+    source %s
+  } $filename ]
+
+  set result [$slave eval array get commands]
+  interp delete $slave
+  return $result
+}
+
+namespace eval ::tb::utils {
+  namespace import -force ::tb::utils::report_timing_constraints::report_timing_constraints
+}
+
+namespace eval ::tb {
+  namespace import -force ::tb::utils::report_timing_constraints
+}
+
+###########################################################################
+##
+## Simple package to handle printing of tables
+##
+## %> set tbl [Table::Create {this is my title}]
+## %> $tbl header [list "name" "#Pins" "case_value" "user_case_value"]
+## %> $tbl addrow [list A/B/C/D/E/F 12 - -]
+## %> $tbl addrow [list A/B/C/D/E/F 24 1 -]
+## %> $tbl separator
+## %> $tbl addrow [list A/B/C/D/E/F 48 0 1]
+## %> $tbl indent 0
+## %> $tbl print
+## +-------------+-------+------------+-----------------+
+## | name        | #Pins | case_value | user_case_value |
+## +-------------+-------+------------+-----------------+
+## | A/B/C/D/E/F | 12    | -          | -               |
+## | A/B/C/D/E/F | 24    | 1          | -               |
+## +-------------+-------+------------+-----------------+
+## | A/B/C/D/E/F | 48    | 0          | 1               |
+## +-------------+-------+------------+-----------------+
+## %> $tbl indent 2
+## %> $tbl print
+##   +-------------+-------+------------+-----------------+
+##   | name        | #Pins | case_value | user_case_value |
+##   +-------------+-------+------------+-----------------+
+##   | A/B/C/D/E/F | 12    | -          | -               |
+##   | A/B/C/D/E/F | 24    | 1          | -               |
+##   +-------------+-------+------------+-----------------+
+##   | A/B/C/D/E/F | 48    | 0          | 1               |
+##   +-------------+-------+------------+-----------------+
+## %> $tbl sort {-index 1 -increasing} {-index 2 -dictionary}
+## %> $tbl print
+## %> $tbl destroy
+##
+###########################################################################
+
+# namespace eval Table { set n 0 }
+
+# Trick to silence the linter
+eval [list namespace eval ::Table {
+  set n 0
+} ]
+
+proc ::Table::Create { {title {}} } { #-- constructor
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable n
+  set instance [namespace current]::[incr n]
+  namespace eval $instance { variable tbl [list]; variable header [list]; variable indent 0; variable title {}; variable numrows 0 }
+  interp alias {} $instance {} ::Table::do $instance
+  # Set the title
+  $instance title $title
+  set instance
+}
+
+proc ::Table::do {self method args} { #-- Dispatcher with methods
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  upvar #0 ${self}::tbl tbl
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::numrows numrows
+  switch -- $method {
+      header {
+        set header [lindex $args 0]
+        return 0
+      }
+      addrow {
+        eval lappend tbl $args
+        incr numrows
+        return 0
+      }
+      separator {
+        eval lappend tbl {%%SEPARATOR%%}
+        return 0
+      }
+      title {
+        set ${self}::title [lindex $args 0]
+        return 0
+      }
+      indent {
+        set ${self}::indent $args
+        return 0
+      }
+      print {
+        eval ::Table::print $self
+      }
+      csv {
+        eval ::Table::printcsv $self
+      }
+      length {
+        return $numrows
+      }
+      sort {
+        # Each argument is a list of: <lsort arguments>
+        set command {}
+        while {[llength $args]} {
+          if {$command == {}} {
+            set command "lsort [[namespace parent]::lshift args] \$tbl"
+          } else {
+            set command "lsort [[namespace parent]::lshift args] \[$command\]"
+          }
+        }
+        if {[catch { set tbl [eval $command] } errorstring]} {
+          puts " -E- $errorstring"
+        } else {
+        }
+      }
+      reset {
+        set ${self}::tbl [list]
+        set ${self}::header [list]
+        set ${self}::indent 0
+        set ${self}::title {}
+        return 0
+      }
+      destroy {
+        set ${self}::tbl [list]
+        set ${self}::header [list]
+        set ${self}::indent 0
+        set ${self}::title {}
+        namespace delete $self
+        return 0
+      }
+      default {error "unknown method $method"}
+  }
+}
+
+proc ::Table::print {self} {
+   upvar #0 ${self}::tbl table
+   upvar #0 ${self}::header header
+   upvar #0 ${self}::indent indent
+   upvar #0 ${self}::title title
+   set maxs {}
+   foreach item $header {
+       lappend maxs [string length $item]
+   }
+   set numCols [llength $header]
+   foreach row $table {
+       if {$row eq {%%SEPARATOR%%}} { continue }
+       for {set j 0} {$j<$numCols} {incr j} {
+            set item [lindex $row $j]
+            set max [lindex $maxs $j]
+            if {[string length $item]>$max} {
+               lset maxs $j [string length $item]
+           }
+       }
+   }
+  set head " [string repeat " " [expr $indent * 4]]+"
+  foreach max $maxs {append head -[string repeat - $max]-+}
+
+  # Generate the title
+  if {$title ne {}} {
+    # The upper separator should something like +----...----+
+    append res " [string repeat " " [expr $indent * 4]]+[string repeat - [expr [string length [string trim $head]] -2]]+\n"
+    # Suports multi-lines title
+    foreach line [split $title \n] {
+      append res " [string repeat " " [expr $indent * 4]]| "
+      append res [format "%-[expr [string length [string trim $head]] -4]s" $line]
+      append res " |\n"
+    }
+  }
+
+  # Generate the table header
+  append res $head\n
+  # Generate the table rows
+  set first 1
+  set numsep 0
+  foreach row [concat [list $header] $table] {
+      if {$row eq {%%SEPARATOR%%}} {
+        incr numsep
+        if {$numsep == 1} { append res $head\n }
+        continue
+      } else {
+        set numsep 0
+      }
+      append res " [string repeat " " [expr $indent * 4]]|"
+      foreach item $row max $maxs {append res [format " %-${max}s |" $item]}
+      append res \n
+      if {$first} {
+        append res $head\n
+        set first 0
+        incr numsep
+      }
+  }
+  append res $head
+  set res
+}
+
+proc ::Table::printcsv {self args} {
+  upvar #0 ${self}::tbl table
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::title title
+
+  array set defaults [list \
+      -delimiter {,} \
+    ]
+  array set options [array get defaults]
+  array set options $args
+  set sepChar $options(-delimiter)
+
+  set res {}
+  # Support for multi-lines title
+  set first 1
+  foreach line [split $title \n] {
+    if {$first} {
+      set first 0
+      append res "# title${sepChar}[::Table::list2csv [list $line] $sepChar]\n"
+    } else {
+      append res "#      ${sepChar}[::Table::list2csv [list $line] $sepChar]\n"
+    }
+  }
+  append res "[::Table::list2csv $header $sepChar]\n"
+  set count 0
+  set numsep 0
+  foreach row $table {
+    incr count
+    if {$row eq {%%SEPARATOR%%}} {
+      incr numsep
+      if {$numsep == 1} {
+        append res "# [::Table::list2csv {++++++++++++++++++++++++++++++++++++++++++++++++++} $sepChar]\n"
+      } else {
+        set numsep 0
+      }
+      continue
+    }
+    append res "[::Table::list2csv $row $sepChar]\n"
+  }
+  return $res
+}
+
+proc ::Table::list2csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+########################################################################################
+##
+##
+##
+########################################################################################
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+} else {
+  if {[catch {eval [concat ::tb::utils::report_timing_constraints::report_timing_constraints -standalone $argv]} errorstring]} {
+    puts $errorstring
+    exit 1
+  }
+  exit 0
+}
