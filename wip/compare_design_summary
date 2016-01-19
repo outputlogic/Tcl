@@ -162,10 +162,10 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
     return -code ok
   }
 
-#   if {($filename != {}) && $returnstring} {
-#     puts " -E- cannot use -file & -return_string together"
-#     incr error
-#   }
+  if {($ofilename != {}) && $returnstring} {
+    puts " -E- cannot use -file & -return_string together"
+    incr error
+  }
 
   if {[lsearch [list default diff percent diffpercent] $format] == -1} {
     puts " -E- invalid format '$format'. Expected values: default diff percent diffpercent"
