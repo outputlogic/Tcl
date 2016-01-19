@@ -1,7 +1,7 @@
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -14,13 +14,15 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.10.26
+## Version:        2016.01.19
 ## Tool Version:   Vivado 2014.1
 ## Description:    This package provides a simple utility for macro creation
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.01.19 - Fixed issue when unrecognized objects were not skipped
+##            - Added support for clock objects
 ## 2015.10.26 - Initial release
 ########################################################################################
 
@@ -71,7 +73,7 @@ proc ::tb::mac { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::mac {
-  variable version {2015.10.26}
+  variable version {2016.01.19}
   variable params
   variable macros [list]
   catch {unset params}
@@ -629,6 +631,9 @@ proc ::tb::mac::o2c { objs } {
       net {
         set cmd [format {get_nets -quiet {%s}} $obj]
       }
+      clock {
+        set cmd [format {get_clocks -quiet {%s}} $obj]
+      }
       site {
         set cmd [format {get_sites -quiet {%s}} $obj]
       }
@@ -647,6 +652,7 @@ proc ::tb::mac::o2c { objs } {
       }
       default {
         puts " -W- skipping object $obj"
+        continue
       }
     }
     # Convert {{->{ and }}->}
