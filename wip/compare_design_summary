@@ -1,0 +1,802 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    Compare design summary reports
+##
+########################################################################################
+
+########################################################################################
+## 2016.01.18 - Initial release
+########################################################################################
+
+# Example of report:
+
+namespace eval ::tb {
+  namespace export -force compare_design_summary
+}
+
+namespace eval ::tb::utils {
+  namespace export -force compare_design_summary
+}
+
+namespace eval ::tb::utils::compare_design_summary {
+  namespace export -force compare_design_summary
+  variable version {2016.01.18}
+  variable params
+  variable output {}
+  variable reports
+  variable metrics
+  array set params [list format {table} verbose 0 debug 0]
+  array set reports [list]
+  array set metrics [list]
+}
+
+proc ::tb::utils::compare_design_summary::lshift {inputlist} {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
+  variable reports
+  variable metrics
+  variable params
+  variable output
+  catch {unset metrics}
+  catch {unset reports}
+  set params(verbose) 0
+  set params(debug) 0
+  set params(format) {table}
+  set sections {default}
+  set ofilename {}
+  set ifilenames {}
+  set filemode {w}
+  set returnstring 0
+  set format {default}
+  set refColumn 0
+  set returnstring 0
+  set error 0
+  set help 0
+  if {[llength $args] == 0} {
+    set help 1
+  }
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-f(i(le?)?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-csv?$} {
+        set params(format) {csv}
+      }
+      {^-input$} -
+      {^-in(p(ut?)?)?$} {
+      	foreach pattern [lshift args] {
+      		foreach file [glob -nocomplain $pattern] {
+      			if {![file exists $file]} {
+      				puts " -E- File '$file' does not exist"
+      				incr error
+      				continue
+      			}
+      			lappend ifilenames [file normalize $file]
+      		}
+      	}
+        set ifilenames [lsort -unique $ifilenames]
+      }
+      {^-format$} -
+      {^-fo(r(m(a(t?)?)?)?)?$} {
+        set format [string tolower [lshift args]]
+      }
+      {^-reference$} -
+      {^-re(f(e(r(e(n(ce?)?)?)?)?)?)?$} {
+        set refColumn [lshift args]
+      }
+      {^-ap(p(e(nd?)?)?)?$} {
+        set filemode {a}
+      }
+      {^-r(e(t(u(r(n(_(s(t(r(i(ng?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set returnstring 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-h(e(lp?)?)?$} {
+           set help 1
+      }
+      default {
+            if {[string match "-*" $name]} {
+              puts " -E- option '$name' is not a valid option."
+              incr error
+            } else {
+              puts " -E- option '$name' is not a valid option."
+              incr error
+            }
+      }
+    }
+  }
+
+  if {$help} {
+    puts [format {
+  Usage: compare_design_summary
+              [-input <filename>][-input <pattern>]
+              [-format <default|diff|percent|diffpercent>]
+              [-reference <column>]
+              [-file <filename>]
+              [-append]
+              [-csv]
+              [-return_string]
+              [-verbose|-v]
+              [-help|-h]
+
+  Description: Compare a design summary reports
+  
+    Use -reference to select the reference column. To be used with -format
+
+  Example:
+     tb::compare_design_summary -input *_sum.csv
+     tb::compare_design_summary -input *.csv -return_string
+     tb::compare_design_summary -input *.csv -format percent -reference 1 -file compare.csv -csv
+} ]
+    # HELP -->
+    return -code ok
+  }
+
+#   if {($filename != {}) && $returnstring} {
+#     puts " -E- cannot use -file & -return_string together"
+#     incr error
+#   }
+
+  if {[lsearch [list default diff percent diffpercent] $format] == -1} {
+    puts " -E- invalid format '$format'. Expected values: default diff percent diffpercent"
+    incr error
+  }
+
+  if {![regexp {^[0-9]+$} $refColumn]} {
+    puts " -E- invalid -column '$refColumn'"
+    incr error
+  }
+
+  if {$error} {
+    error " -E- some error(s) happened. Cannot continue"
+  }
+
+  set startTime [clock seconds]
+  set output [list]
+
+  if {[catch {
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+    set allIds [list]
+    set index -1
+    set numColumns [llength $ifilenames]
+    catch {unset metrics}
+    catch {unset metricNames}
+    catch {unset descriptions}
+    foreach file $ifilenames {
+    	dputs " -D- Processing $file"
+    	incr index
+    	set res [readcsv $file {,}]
+    	set header [list] ; set rows [list] ; set ids [list]
+    	foreach [list header rows ids] $res { break }
+    	foreach row $rows {
+    		set id [lindex $row 0]
+    		set description [lindex $row 1]
+    		set value [lindex $row 2]
+    		# Saving metric value
+    		set metrics(${index}:${id}) $value
+    		# Saving metric description
+    		set descriptions($id) $description
+    		set metricNames($id) {}
+    	}
+    	set allIds [lsort -unique [concat $allIds $ids]]
+    }
+    
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+    set categories [list]
+    foreach el $allIds {
+    	# id: design.cells.blackbox
+    	# => category: design
+    	lappend categories [lindex [split $el .] 0]
+    }
+    set categories [lsort -unique $categories]
+    dputs " -D- Categories: $categories"
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+#     set tbl [::tb::prettyTable {Design Summary}]
+    set tbl [::Table::Create {Design Summary Comparaison}]
+    $tbl indent 1
+#     $tbl configure -indent 2
+    $tbl header [concat [list {Id} {Description} ] [iota 0 [expr $numColumns -1]] ]
+    foreach category [presort_list [list tag \
+                                         vivado \
+                                         design \
+                                         utilization \
+                                         timing \
+                                         clkinteraction \
+                                         checktiming \
+                                         congestion \
+                                         route \
+                                         constraints \
+                                   ] $categories] {
+      switch $category {
+        xxx {
+          continue
+        }
+        default {
+        }
+      }
+      $tbl separator
+      foreach id [lsort [array names metricNames $category.*]] {
+        # id = 'design.ram.blockram'
+        set row [list]
+        for {set index 0} {$index < $numColumns} {incr index} {
+        	if {![info exists metrics(${index}:${id})]} {
+        		lappend row {n/a}
+        	} else {
+        		lappend row $metrics(${index}:${id})
+          }
+        }
+        # id = 'design.ram.blockram'
+        switch -regexp -- $id {
+          ^vivado\.  -
+          ^tag\.  {
+          	# Ids vivado.* and tag.* don't need to be reformated
+            $tbl addrow [concat [list $id $descriptions($id)] $row]
+          }
+          default {
+            $tbl addrow [concat [list $id $descriptions($id)] [format_list $row $format $refColumn]]
+          }
+        }
+      }
+    }
+    switch $params(format) {
+      table {
+        set output [concat $output [split [$tbl print] \n] ]
+      }
+      csv {
+        set output [concat $output [split [$tbl csv] \n] ]
+        if {$ofilename != {}} {
+          # Append a comment out version of the table
+          foreach line [split [$tbl print] \n] {
+          	lappend output [format {#  %s} $line]
+          }
+        }
+      }
+    }
+    catch {$tbl destroy}
+
+    set prefix {}
+    if {$ofilename != {}} {
+    	# Comment out lines when writting into a file
+    	set prefix {# }
+    }
+    set index -1
+    lappend output "\n${prefix}  Design Summary Files:"
+    foreach file $ifilenames {
+    	incr index
+    	lappend output "${prefix}     $index - $file"
+    }
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+  } errorstring]} {
+    puts " -E- $errorstring"
+  }
+
+  if {$params(debug)} {
+  }
+
+  set stopTime [clock seconds]
+#   puts " -I- compare_design_summary completed in [expr $stopTime - $startTime] seconds"
+
+  if {$ofilename != {}} {
+    set FH [open $ofilename $filemode]
+    puts $FH "# ---------------------------------------------------------------------------------"
+    puts $FH [format {# Created on %s with compare_design_summary (%s)} [clock format [clock seconds]] $::tb::utils::compare_design_summary::version ]
+    puts $FH "# ---------------------------------------------------------------------------------\n"
+    puts $FH [join $output \n]
+    close $FH
+    puts " -I- Generated file [file normalize $ofilename]"
+    return -code ok
+  }
+
+  if {$returnstring} {
+    return [join $output \n]
+  } else {
+    puts [join $output \n]
+  }
+  return -code ok
+}
+
+########################################################################################
+##
+##
+##
+########################################################################################
+proc ::tb::utils::compare_design_summary::presort_list {l1 l2} {
+  set l [list]
+  foreach el $l1 {
+    if {[lsearch $l2 $el] != -1} {
+      lappend l $el
+    }
+  }
+  foreach el $l2 {
+    if {[lsearch $l $el] == -1} {
+      lappend l $el
+    }
+  }
+  return $l
+}
+
+proc ::tb::utils::compare_design_summary::dputs {args} {
+  variable params
+  if {$params(debug)} {
+    eval [concat puts $args]
+  }
+  return -code ok
+}
+
+# Generate a list of integers
+proc ::tb::utils::compare_design_summary::iota {from to} {
+  set out [list]
+  if {$from <= $to} {
+    for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
+  } else {
+    for {set i $from} {$i >= $to} {incr i -1} {lappend out $i}
+  }
+  return $out
+}
+
+##-----------------------------------------------------------------------
+## splitcsv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc ::tb::utils::compare_design_summary::splitcsv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## readcsv
+##-----------------------------------------------------------------------
+## Read CSV file and return a Table object
+##-----------------------------------------------------------------------
+proc ::tb::utils::compare_design_summary::readcsv {filename {csvDelimiter ,}} {
+  if {![file exists $filename]} {
+    error " -E- file '$filename' does not exist"
+  }
+  set header [list]
+  set rows [list]
+  set ids [list]
+  set FH [open $filename]
+  set first 1
+  set count 0
+  while {![eof $FH]} {
+    gets $FH line
+    # Skip comments and empty lines
+    if {[regexp {^\s*#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    if {$first} {
+      set header [splitcsv $line $csvDelimiter]
+      set first 0
+    } else {
+    	set row [splitcsv $line $csvDelimiter]
+      lappend rows $row
+      lappend ids [lindex $row 0]
+      incr count
+    }
+  }
+  close $FH
+  dputs " -D- Filename: $filename"
+  dputs " -D- Header: $header"
+  dputs " -D- IDs: $ids"
+  dputs " -D- Number of imported row(s): $count"
+  return [list $header $rows $ids]
+}
+
+proc ::tb::utils::compare_design_summary::format_list { list { format default } { reference 0 } } {
+  if {$format == {default}} { return $list }
+  if {($reference <0) || ($reference >= [llength $list])} {
+    set reference 0
+#     return $list
+  }
+  set l [list]
+  if {[llength $list] < 2} { return $list }
+  # Get the reference value
+  set ref [lindex $list $reference]
+  # If the reference value is not a valid number, then do nothing
+  if {![string is double $ref]} { return $list }
+  if {$ref == {}} { return $list }
+#   foreach el $list {
+#     if {![string is double $el]} { return $list }
+#     if {$el == {}} { return $list }
+#   }
+  for {set i 0} {$i < [llength $list]} {incr i} {
+    set el [lindex $list $i]
+    # Do not transform the reference column
+    if {$i == $reference} {
+      lappend l $el
+      continue
+    }
+    # If the column value is not a valid number, then don't transform it
+    if {![string is double $el]} { lappend l $el ; continue }
+    if {$el == {}} { lappend l $el ; continue }
+    # Transform column value
+    switch $format {
+      percent {
+        # Percent of the reference column
+        if {[catch {lappend l [format {%.2f%%} [expr $el / double($ref) * 100] ]} errorstring]} {
+#           lappend l {N/A}
+          lappend l "($el)"
+        }
+      }
+      diff {
+        # Difference with the reference column
+        set diff [expr $el - $ref]
+        if {$el == $ref} {
+          lappend l [format {+%s} $diff]
+        } elseif {$el > $ref} {
+          lappend l [format {+%s} $diff]
+        } else {
+          lappend l $diff
+        }
+      }
+      diffpercent {
+        # Percent of the difference with the reference column
+        set diff [expr $el - $ref]
+        if {[catch {set diffperc [format {%.2f%%} [expr $diff / double(abs($ref)) * 100] ]} errorstring]} {
+#           set diffperc {N/A}
+          set diffperc "($el)"
+          lappend l $diffperc
+          continue
+        }
+        if {$el == $ref} {
+          set diffperc {0%}
+          lappend l [format {+%s} $diffperc]
+        } elseif {$el > $ref} {
+#           lappend l [format {+%s} "$diffperc ($diff)($el)"]
+          lappend l [format {+%s} $diffperc]
+        } else {
+#           lappend l "$diffperc ($diff)($el)"
+          lappend l $diffperc
+        }
+      }
+      default {
+      }
+    }
+  }
+  return $l
+}
+
+namespace eval ::tb::utils {
+  namespace import -force ::tb::utils::compare_design_summary::compare_design_summary
+}
+
+namespace eval ::tb {
+  namespace import -force ::tb::utils::compare_design_summary
+}
+
+###########################################################################
+##
+## Simple package to handle printing of tables
+##
+## %> set tbl [Table::Create {this is my title}]
+## %> $tbl header [list "name" "#Pins" "case_value" "user_case_value"]
+## %> $tbl addrow [list A/B/C/D/E/F 12 - -]
+## %> $tbl addrow [list A/B/C/D/E/F 24 1 -]
+## %> $tbl separator
+## %> $tbl addrow [list A/B/C/D/E/F 48 0 1]
+## %> $tbl indent 0
+## %> $tbl print
+## +-------------+-------+------------+-----------------+
+## | name        | #Pins | case_value | user_case_value |
+## +-------------+-------+------------+-----------------+
+## | A/B/C/D/E/F | 12    | -          | -               |
+## | A/B/C/D/E/F | 24    | 1          | -               |
+## +-------------+-------+------------+-----------------+
+## | A/B/C/D/E/F | 48    | 0          | 1               |
+## +-------------+-------+------------+-----------------+
+## %> $tbl indent 2
+## %> $tbl print
+##   +-------------+-------+------------+-----------------+
+##   | name        | #Pins | case_value | user_case_value |
+##   +-------------+-------+------------+-----------------+
+##   | A/B/C/D/E/F | 12    | -          | -               |
+##   | A/B/C/D/E/F | 24    | 1          | -               |
+##   +-------------+-------+------------+-----------------+
+##   | A/B/C/D/E/F | 48    | 0          | 1               |
+##   +-------------+-------+------------+-----------------+
+## %> $tbl sort {-index 1 -increasing} {-index 2 -dictionary}
+## %> $tbl print
+## %> $tbl destroy
+##
+###########################################################################
+
+# namespace eval Table { set n 0 }
+
+# Trick to silence the linter
+eval [list namespace eval ::Table {
+  set n 0
+} ]
+
+proc ::Table::Create { {title {}} } { #-- constructor
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable n
+  set instance [namespace current]::[incr n]
+  namespace eval $instance { variable tbl [list]; variable header [list]; variable indent 0; variable title {}; variable numrows 0 }
+  interp alias {} $instance {} ::Table::do $instance
+  # Set the title
+  $instance title $title
+  set instance
+}
+
+proc ::Table::do {self method args} { #-- Dispatcher with methods
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  upvar #0 ${self}::tbl tbl
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::numrows numrows
+  switch -- $method {
+      header {
+        set header [lindex $args 0]
+        return 0
+      }
+      addrow {
+        eval lappend tbl $args
+        incr numrows
+        return 0
+      }
+      separator {
+        eval lappend tbl {%%SEPARATOR%%}
+        return 0
+      }
+      title {
+        set ${self}::title [lindex $args 0]
+        return 0
+      }
+      indent {
+        set ${self}::indent $args
+        return 0
+      }
+      print {
+        eval ::Table::print $self
+      }
+      csv {
+        eval ::Table::printcsv $self
+      }
+      length {
+        return $numrows
+      }
+      sort {
+        # Each argument is a list of: <lsort arguments>
+        set command {}
+        while {[llength $args]} {
+          if {$command == {}} {
+            set command "lsort [[namespace parent]::lshift args] \$tbl"
+          } else {
+            set command "lsort [[namespace parent]::lshift args] \[$command\]"
+          }
+        }
+        if {[catch { set tbl [eval $command] } errorstring]} {
+          puts " -E- $errorstring"
+        } else {
+        }
+      }
+      reset {
+        set ${self}::tbl [list]
+        set ${self}::header [list]
+        set ${self}::indent 0
+        set ${self}::title {}
+        return 0
+      }
+      destroy {
+        set ${self}::tbl [list]
+        set ${self}::header [list]
+        set ${self}::indent 0
+        set ${self}::title {}
+        namespace delete $self
+        return 0
+      }
+      default {error "unknown method $method"}
+  }
+}
+
+proc ::Table::print {self} {
+   upvar #0 ${self}::tbl table
+   upvar #0 ${self}::header header
+   upvar #0 ${self}::indent indent
+   upvar #0 ${self}::title title
+   set maxs {}
+   foreach item $header {
+       lappend maxs [string length $item]
+   }
+   set numCols [llength $header]
+   foreach row $table {
+       if {$row eq {%%SEPARATOR%%}} { continue }
+       for {set j 0} {$j<$numCols} {incr j} {
+            set item [lindex $row $j]
+            set max [lindex $maxs $j]
+            if {[string length $item]>$max} {
+               lset maxs $j [string length $item]
+           }
+       }
+   }
+  set head " [string repeat " " [expr $indent * 4]]+"
+  foreach max $maxs {append head -[string repeat - $max]-+}
+
+  # Generate the title
+  if {$title ne {}} {
+    # The upper separator should something like +----...----+
+    append res " [string repeat " " [expr $indent * 4]]+[string repeat - [expr [string length [string trim $head]] -2]]+\n"
+    # Suports multi-lines title
+    foreach line [split $title \n] {
+      append res " [string repeat " " [expr $indent * 4]]| "
+      append res [format "%-[expr [string length [string trim $head]] -4]s" $line]
+      append res " |\n"
+    }
+  }
+
+  # Generate the table header
+  append res $head\n
+  # Generate the table rows
+  set first 1
+  set numsep 0
+  foreach row [concat [list $header] $table] {
+      if {$row eq {%%SEPARATOR%%}} {
+        incr numsep
+        if {$numsep == 1} { append res $head\n }
+        continue
+      } else {
+        set numsep 0
+      }
+      append res " [string repeat " " [expr $indent * 4]]|"
+      foreach item $row max $maxs {append res [format " %-${max}s |" $item]}
+      append res \n
+      if {$first} {
+        append res $head\n
+        set first 0
+        incr numsep
+      }
+  }
+  append res $head
+  set res
+}
+
+proc ::Table::printcsv {self args} {
+  upvar #0 ${self}::tbl table
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::title title
+
+  array set defaults [list \
+      -delimiter {,} \
+    ]
+  array set options [array get defaults]
+  array set options $args
+  set sepChar $options(-delimiter)
+
+  set res {}
+  # Support for multi-lines title
+  set first 1
+  foreach line [split $title \n] {
+    if {$first} {
+      set first 0
+      append res "# title${sepChar}[::Table::list2csv [list $line] $sepChar]\n"
+    } else {
+      append res "#      ${sepChar}[::Table::list2csv [list $line] $sepChar]\n"
+    }
+  }
+  append res "[::Table::list2csv $header $sepChar]\n"
+  set count 0
+  set numsep 0
+  foreach row $table {
+    incr count
+    if {$row eq {%%SEPARATOR%%}} {
+      incr numsep
+      if {$numsep == 1} {
+        append res "# [::Table::list2csv {++++++++++++++++++++++++++++++++++++++++++++++++++} $sepChar]\n"
+      } else {
+        set numsep 0
+      }
+      continue
+    }
+    append res "[::Table::list2csv $row $sepChar]\n"
+  }
+  return $res
+}
+
+proc ::Table::list2csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+########################################################################################
+##
+##
+##
+########################################################################################
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+} else {
+  if {[catch {eval [concat ::tb::utils::compare_design_summary::compare_design_summary $argv]} errorstring]} {
+    puts $errorstring
+    exit 1
+  }
+  exit 0
+}
