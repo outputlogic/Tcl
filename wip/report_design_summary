@@ -1,0 +1,476 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+########################################################################################
+## 2016.01.19 - Initial release
+########################################################################################
+
+proc print_help {} {
+
+set help_message [format {
+#########################################################################
+#########################################################################
+##
+## report_design_summary
+##
+## Example:
+##    report_design_summary -step place_design
+##
+## Description:
+##   Use report_design_summary to extract a design summary report.
+##   
+## Options:
+##   
+##   --project                Project name
+##
+##
+##   Other command line arguments:
+##
+##   --log-dir                Location to save the script log file as well as the
+##                            compressor log file.
+##                            Default: .
+##
+#########################################################################
+#########################################################################
+} ]
+
+  foreach line [split $help_message "\n"] {
+    regsub {##} $line {  } line
+    print stdout $line
+  }
+
+}
+
+catch {unset data}
+
+#########################################################################
+#########################################################################
+##
+## Various support functions
+##
+#########################################################################
+#########################################################################
+
+##-----------------------------------------------------------------------
+## pop
+## push
+## lshift
+##-----------------------------------------------------------------------
+## Various stack processing functions.
+##-----------------------------------------------------------------------
+
+interp alias {} push {} lappend  
+
+proc pop { name } {
+  upvar 1 $name stack
+  set res [lindex $stack end]
+  set stack [lrange $stack 0 end-1]
+  set res
+}
+
+proc lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+##-----------------------------------------------------------------------
+## print
+##-----------------------------------------------------------------------
+## Print message to stdout.
+## Example:
+##      print stdout "..."
+##      print error "..."
+##-----------------------------------------------------------------------
+
+proc print { type message {nonewline ""} } {
+  global data
+  set callerName [lindex [info level [expr [info level] -1]] 0]
+  set type [string tolower $type]
+  set msg ""
+  switch -exact $type {
+    "stdout" {
+      set msg $message
+    }
+    "fatal" {
+      set msg "  FATAL ERROR: $message"
+    }
+    "error" {
+      set msg "  ERROR: $message"
+    }
+    "warning" {
+      set msg "  WARNING: $message"
+    }
+    "info" {
+      set msg "  INFO: $message"
+    }
+    "log" {
+      set msg "  LOG: $message"
+      #-------------------------------------------------------
+      # Log message.
+      #-------------------------------------------------------
+      if {$data(log_fh) != {}} {
+        if {$nonewline != ""} {
+          puts -nonewline $data(log_fh) $msg
+        } else {
+          puts $data(log_fh) $msg
+        }
+        flush $data(log_fh)
+      }
+      #-------------------------------------------------------
+      # Exit.
+      #-------------------------------------------------------
+      return 0
+    }
+   default {}
+  }
+  #-------------------------------------------------------
+  # Print message.
+  #-------------------------------------------------------
+  if {$nonewline != ""} {
+    puts -nonewline stdout $msg
+  } else {
+    puts stdout $msg
+  }
+  flush stdout
+  #-------------------------------------------------------
+  # Log message.
+  #-------------------------------------------------------
+  if {$data(log_fh) != {}} {
+    if {$nonewline != ""} {
+      puts -nonewline $data(log_fh) $msg
+    } else {
+      puts $data(log_fh) $msg
+    }
+    flush $data(log_fh)
+  }
+  #-------------------------------------------------------
+  # Exit.
+  #-------------------------------------------------------
+  return 0
+}
+
+##-----------------------------------------------------------------------
+## duration
+##-----------------------------------------------------------------------
+## Convert a number of seconds in a human readable string.
+## Example:
+##      set startTime [clock seconds]
+##      ...
+##      set endTime [clock seconds]
+##      puts "The runtime is: [duration [expr $endTime - startTime]]"
+##-----------------------------------------------------------------------
+
+proc duration { int_time } {
+   set timeList [list]
+   if {$int_time == 0} { return "0 sec" }
+   foreach div {86400 3600 60 1} mod {0 24 60 60} name {day hr min sec} {
+     set n [expr {$int_time / $div}]
+     if {$mod > 0} {set n [expr {$n % $mod}]}
+     if {$n > 1} {
+       lappend timeList "$n ${name}s"
+     } elseif {$n == 1} {
+       lappend timeList "$n $name"
+     }
+   }
+   return [join $timeList]
+}
+
+##-----------------------------------------------------------------------
+## execpipe
+##-----------------------------------------------------------------------
+## Execute a process under UNIX.
+##-----------------------------------------------------------------------
+
+proc system {COMMAND} {
+
+ if { [catch {open "| $COMMAND 2>@stdout"} FILEHANDLE] } {
+
+   return "Can't open pipe for '$COMMAND'"
+
+ }
+
+ set PIPE $FILEHANDLE
+ fconfigure $PIPE -buffering none
+
+ set OUTPUT ""
+
+ while { [gets $PIPE DATA] >= 0 } {
+   puts $DATA
+   append OUTPUT $DATA "\n"
+ }
+
+ if { [catch {close $PIPE} ERRORMSG] } {
+
+   if { [string compare "$ERRORMSG" "child process exited abnormally"] == 0 } {
+
+     # this error means there was nothing on stderr (which makes sense) and
+     # there was a non-zero exit code - this is OK as we intentionally send
+     # stderr to stdout, so we just do nothing here (and return the output)
+
+   } else {
+
+     return "Error '$ERRORMSG' on closing pipe for '$COMMAND'"
+
+   }
+
+ }
+
+ regsub -all -- "\n$" $OUTPUT "" STRIPPED_STRING
+ return "$STRIPPED_STRING"
+
+}
+ 
+#########################################################################
+#########################################################################
+##
+## Main
+##
+#########################################################################
+#########################################################################
+
+catch {unset data}
+set data(log_fh) {}
+
+# Find the directory where the current script is (i.e trace back links)
+set sfile [info script]
+while {[file type $sfile] eq "link"} {
+    set sfile [file readlink $sfile]
+}
+set dir [file dirname $sfile]
+
+# Set path to report_design_summary.tcl
+set reportDesignSummaryScript [file join $dir report_design_summary.tcl]
+
+#-------------------------------------------------------
+# Process command line arguments for report_design_summary
+#-------------------------------------------------------
+
+set checkpoint {}
+set dryrun 0
+# set nolog 0
+set reset 0
+set LSFQueue {medium}
+set LSFMemory {8000}
+set LSFCmd [format {bsub -app sil_rhel5 -q %%queue -R {rusage[mem=%%mem]} }]
+set mode {localhost}
+set ofilename {}
+set project {}
+set experiment {}
+set version {}
+set step {}
+set error 0
+set help 0
+set show_long_help 0
+set cmdLineArguments $::argv
+if {[llength $::argv] == 0} {
+  set help 1
+}
+while {[llength $::argv]} {
+  set name [lshift ::argv]
+  switch -exact -- $name {
+    -dcp -
+    -checkpoint {
+         set checkpoint [lshift ::argv]
+    }
+    -f -
+    -file {
+         set ofilename [file normalize [lshift ::argv]]
+    }
+    -dry -
+    -dry-run {
+         set dryrun 1
+    }
+    -p -
+    -project {
+         set project [lshift ::argv]
+    }
+    -v -
+    -version {
+         set version [lshift ::argv]
+    }
+    -e -
+    -experiment {
+         set experiment [lshift ::argv]
+    }
+    -s -
+    -step {
+         set step [lshift ::argv]
+    }
+    -lsf {
+         set mode {lsf}
+    }
+    -lsf-queue {
+         set LSFQueue [lshift ::argv]
+    }
+    -lsf-mem {
+         set LSFMemory [lshift ::argv]
+    }
+    -lsf-cmd {
+         set LSFCmd [lshift ::argv]
+    }
+    -h -
+    -help {
+         set help 1
+    }
+    -longhelp {
+         set show_long_help 1
+    }
+    default {
+          if {[string match "-*" $name]} {
+            print error "option '$name' is not a valid option."
+            incr error
+          } else {
+            print error "option '$name' is not a valid option."
+            incr error
+          }
+    }
+  }
+}
+
+if {$help} {
+  print stdout [format {
+Usage: report_design_summary
+            -dcp <filename>
+            [-file|-f <filename>]
+            [-project|-p <string>]
+            [-version|-v <string>]
+            [-experiment|-e <string>]
+            [-step|-s <string>]
+            [-lsf]
+            [-lsf-mem <number>]
+            [-lsf-queue <string>]
+            [-lsf-cmd <string>]
+            [-dry-run|-dry]
+            [-help|-h]
+
+Description: Extract design summary from checkpoint
+
+  -file : output CSV file. If not specified, the default file is <checkpoint>_sum.csv
+  -project/-version/-experiments/-step are just strings saved inside CSV file for
+  tagging purpose. This make the comparaison between summary files easier.
+
+Example:
+   report_design_summary -dcp post_route.dcp -step route_design
+   report_design_summary -dcp post_route.dcp -file summary.csv -step route_design -lsf -lsf-mem 12000 -lsf-queue long
+} ]
+  # HELP -->
+
+  if {$show_long_help} { print_help }
+
+  print stdout ""
+  exit 0
+}
+
+if {![file exists $reportDesignSummaryScript]} {
+  print error "cannot find script '$reportDesignSummaryScript'."
+  print error "make sure that report_design_summary and report_design_summary.tcl are in the same directory."
+  incr error
+}
+
+if {$checkpoint == {}} {
+  print error "no checkpoint provided (-dcp)"
+  incr error
+}
+
+if {$error} {
+  print fatal "some error(s) happened. Cannot continue.\n"
+  exit 1
+}
+
+if {$ofilename == {}} {
+	set ofilename [format {%s%s} [file rootname [file normalize $checkpoint]] {_sum.csv}]
+}
+
+set cmdLine [list -all -csv -file $ofilename -details]
+if {$project != {}} { set cmdLine [concat $cmdLine -project [list $project] ] }
+if {$version != {}} { set cmdLine [concat $cmdLine -version [list $version] ] }
+if {$experiment != {}} { set cmdLine [concat $cmdLine -experiment [list $experiment] ] }
+if {$step != {}} { set cmdLine [concat $cmdLine -step [list $step] ] }
+
+#-------------------------------------------------------
+# Vivado mode (DCP)
+#-------------------------------------------------------
+
+set vivadoCmdLine [list vivado -log vivado.log.[pid] -journal vivado.jou.[pid] -notrace -mode batch -source report_design_summary.tmp.[pid]]
+
+# set FH [open report_design_summary.tmp {w}]
+set FH [open report_design_summary.tmp.[pid] {w}]
+puts $FH [format {#########################################################################
+# Script generated on %s
+# Command: report_design_summary %s
+#########################################################################
+
+# checkpoint
+set checkpoint {%s}
+
+# Load main script
+# lappend auto_path /home/dpefour/git/scripts/toolbox
+# package require toolbox
+# source /home/dpefour/git/scripts/wip/report_design_summary.tcl
+source %s
+
+if {[file exists $checkpoint]} {
+  # Get file timestamp
+  set timestamp [file mtime $checkpoint]
+
+  # Open checkpoint
+  open_checkpoint $checkpoint
+  
+  # Extract metrics and save results into CSV file
+  if {[catch {tb::report_design_summary %s } errorstring]} {
+    set FH [open "[file normalize [info script]].FAILED" {a}]
+    puts $FH $errorstring
+    close $FH
+  } else {
+    set FH [open "[file normalize [info script]].OK" {a}]
+    close $FH
+  }
+  
+  # Close current design
+  close_design
+}
+} [clock format [clock seconds]] \
+  $cmdLineArguments \
+  [file normalize $checkpoint] \
+  $reportDesignSummaryScript \
+  $cmdLine \
+  ]
+  
+close $FH
+
+if {!$dryrun} {
+  set clock_start [clock seconds]
+  switch $mode {
+    localhost {
+      print info "Running Vivado on localhost"
+      print info "Job: $vivadoCmdLine"
+      set msg [system $vivadoCmdLine]
+    }
+    lsf {
+      set LSFCmd [regsub -all {%queue} $LSFCmd $LSFQueue]
+      set LSFCmd [regsub -all {%mem} $LSFCmd $LSFMemory]
+      print info "Running Vivado on LSF"
+      print info "Job: $LSFCmd $vivadoCmdLine"
+      system [concat $LSFCmd $vivadoCmdLine]
+    }
+    default {
+      print error "Unknown mode '$mode'"
+    }
+  }
+  set clock_stop [clock seconds]
+  
+  if {$::errorCode != {NONE}} {
+    print error "Some error(s) occured during the execution of the report_design_summary ($::errorCode)"
+    incr error
+  }
+  
+  print info "Duration: [duration [expr $clock_stop - $clock_start]]"
+}
+
+#-------------------------------------------------------
+# Done.
+#-------------------------------------------------------
+exit 0
