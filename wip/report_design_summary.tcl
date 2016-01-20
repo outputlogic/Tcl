@@ -6,8 +6,8 @@
 # HEADER_END
 ####################################################################################################
 
-proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
-proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 ########################################################################################
 ##
@@ -146,7 +146,7 @@ proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 #   +----------------------------------------------+-------------------------------------------------+----------------------+
 
 namespace eval ::tb {
-  namespace export -force report_design_summary
+#   namespace export -force report_design_summary
 }
 
 namespace eval ::tb::utils {
@@ -1162,7 +1162,7 @@ namespace eval ::tb::utils {
 }
 
 namespace eval ::tb {
-  namespace import -force ::tb::utils::report_design_summary
+#   namespace import -force ::tb::utils::report_design_summary
 }
 
 ###########################################################################

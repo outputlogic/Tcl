@@ -6,6 +6,13 @@ exec tclsh "$0" "$@"
 ## 2016.01.19 - Initial release
 ########################################################################################
 
+# Do nothing if this file is sourced
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  return
+} else {
+}
+
 proc print_help {} {
 
 set help_message [format {
