@@ -181,7 +181,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     return -code ok
   }
   
-  if {[llength $ifilenames] == 0} {
+  if {([llength $ifilenames] == 0) && !$currentDesign} {
     puts " -E- no valid input file. Use -xdc to specify XDC(s)"
     incr error
   }
