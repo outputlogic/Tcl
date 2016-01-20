@@ -23,6 +23,8 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
+## 2016.01.20 - Added support for 'set_max_delay -datapath_only' as separate constraint
+##            - Misc enhancements
 ## 2016.01.19 - Initial release
 ########################################################################################
 
@@ -38,8 +40,9 @@ exec tclsh "$0" "$@"
 #      | set_false_path      | 55        |
 #      | set_multicycle_path | 10        |
 #      | set_max_delay       | 35        |
+#      | set_max_delay (DPO) | 4         |
 #      +---------------------+-----------+
-# 
+#
 #   step3.xdc      ->      /wrk/xsjhdnobkup2/dpefour/bugcases/932532/step3.xdc
 
 
@@ -53,7 +56,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_timing_constraints {
   namespace export -force report_timing_constraints
-  variable version {2016.01.19}
+  variable version {2016.01.20}
   variable params
   variable output {}
   variable metrics
@@ -105,16 +108,16 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
         set params(format) {csv}
       }
       {^-xdc?$} {
-      	foreach pattern [lshift args] {
-      		foreach file [glob -nocomplain $pattern] {
-      			if {![file exists $file]} {
-      				puts " -E- File '$file' does not exist"
-      				incr error
-      				continue
-      			}
-      			lappend ifilenames [file normalize $file]
-      		}
-      	}
+        foreach pattern [lshift args] {
+          foreach file [glob -nocomplain $pattern] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
+              incr error
+              continue
+            }
+            lappend ifilenames [file normalize $file]
+          }
+        }
         set ifilenames [lsort -unique $ifilenames]
       }
       {^-ap(p(e(nd?)?)?)?$} {
@@ -124,7 +127,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
         set returnstring 1
       }
       {^-standalone$} {
-      	# The script is run in standalone mode
+        # The script is run in standalone mode
         set standalone 1
       }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
@@ -134,16 +137,23 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
         set params(debug) 1
       }
       {^-h(e(lp?)?)?$} {
-           set help 1
+        set help 1
       }
       default {
-            if {[string match "-*" $name]} {
-              puts " -E- option '$name' is not a valid option."
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          foreach file [glob -nocomplain $name] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
               incr error
-            } else {
-              puts " -E- option '$name' is not a valid option."
-              incr error
+              continue
             }
+            lappend ifilenames [file normalize $file]
+          }
+          set ifilenames [lsort -unique $ifilenames]
+        }
       }
     }
   }
@@ -151,8 +161,8 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
   if {$help} {
     puts [format {
   Usage: report_timing_constraints
+              [<pattern>][-xdc <filename>][-xdc <pattern>]
               [-current_design]
-              [-xdc <filename>][-xdc <pattern>]
               [-file <filename>]
               [-append]
               [-csv]
@@ -161,7 +171,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
               [-help|-h]
 
   Description: Timing constraints summary from XDC
-  
+
   Example:
      tb::report_timing_constraints -current_design
      tb::report_timing_constraints -xdc '*xdc' -return_string
@@ -169,6 +179,11 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
 } ]
     # HELP -->
     return -code ok
+  }
+  
+  if {[llength $ifilenames] == 0} {
+    puts " -E- no valid input file. Use -xdc to specify XDC(s)"
+    incr error
   }
 
   if {($ofilename != {}) && $returnstring} {
@@ -187,7 +202,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
   }
 
   if {$standalone && $returnstring} {
-    puts " -E- cannot use -current_design in standalone mode"
+    puts " -E- cannot use -return_string in standalone mode"
     incr error
   }
 
@@ -197,9 +212,9 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
 
   set startTime [clock seconds]
   set output [list]
-  
+
   if {$currentDesign} {
-  	# Generate XDC from current design
+    # Generate XDC from current design
     set xdc [file normalize [format {write_xdc.%s} [clock seconds]]]
     write_xdc -quiet -exclude_physical -file $xdc
     dputs " -D- writing XDC file '$xdc'"
@@ -231,6 +246,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
                       set_false_path \
                       set_multicycle_path \
                       set_max_delay \
+                      set_max_delay_DPO \
                       set_min_delay \
                       group_path \
                       set_disable_timing \
@@ -240,8 +256,8 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     set numColumns [llength $ifilenames]
     catch {unset metrics}
     foreach file $ifilenames {
-    	dputs " -D- Processing $file"
-    	incr index
+      dputs " -D- Processing $file"
+      incr index
       catch {unset commands}
       catch {unset res}
       foreach el $timCons {
@@ -252,7 +268,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
 
       foreach el $timCons {
         if {$commands($el) != 0} {
-        	set metrics(${index}:${el}) $commands($el)
+          set metrics(${index}:${el}) $commands($el)
         }
       }
     }
@@ -268,27 +284,38 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     $tbl indent 1
     set header [list {Constraint}]
     if {$currentDesign} {
-    	lappend header {<CURRENT_DESIGN>}
+      lappend header {<CURRENT_DESIGN>}
     } else {
+      set index -1
       foreach file $ifilenames {
-      	lappend header [file tail $file]
+        incr index
+        lappend header [format {%s (%d)} [file tail $file] $index]
       }
     }
     $tbl header $header
 #     $tbl configure -indent 2
     foreach constraint $timCons {
-    	set row [list $constraint]
+      switch $constraint {
+        set_max_delay_DPO {
+          # Format name in table
+          set row [list {set_max_delay (DPO)}]
+        }
+        default {
+          set row [list $constraint]
+        }
+      }
+#       set row [list $constraint]
       for {set index 0} {$index < $numColumns} {incr index} {
-      	if {[info exists metrics(${index}:${constraint})]} {
-      		lappend row $metrics(${index}:${constraint})
-      	} else {
-      		lappend row 0
-      	}
+        if {[info exists metrics(${index}:${constraint})]} {
+          lappend row $metrics(${index}:${constraint})
+        } else {
+          lappend row 0
+        }
       }
       if {[lsort -unique [lrange $row 1 end]] == {0}} {
-      	# If none of the XDC have this constraint, then skip it:
-      	# Eg: row = {set_clock_groups 0 0 0 0}
-      	continue
+        # If none of the XDC have this constraint, then skip it:
+        # Eg: row = {set_clock_groups 0 0 0 0}
+        continue
       }
       $tbl addrow $row
     }
@@ -303,7 +330,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
         if {$ofilename != {}} {
           # Append a comment out version of the table
           foreach line [split [$tbl print] \n] {
-          	lappend output [format {#  %s} $line]
+            lappend output [format {#  %s} $line]
           }
         }
       }
@@ -311,17 +338,19 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     catch {$tbl destroy}
 
     if {$currentDesign} {
-    	# When -current_design has been used, do not generate the footer
-    	# with the filename
+      # When -current_design has been used, do not generate the footer
+      # with the filename
     } else {
       set prefix {}
       if {($params(format) == {csv}) || ($ofilename != {})} {
-      	# Comment out lines when writting into a file
-      	set prefix {# }
+        # Comment out lines when writting into a file
+        set prefix {# }
       }
       lappend output {}
+      set index -1
       foreach file $ifilenames {
-      	lappend output [format "%s  %s \t -> \t %s" $prefix [file tail $file] $file]
+        incr index
+        lappend output [format "%s  %s (%d) \t -> \t %s" $prefix [file tail $file] $index $file]
       }
     }
 
@@ -424,6 +453,11 @@ proc ::tb::utils::report_timing_constraints::getVivadoCommands {filename} {
       set cmd [lindex $args 0]
       if {[regexp {^[0-9]$} $cmd]} {
         return -code ok
+      }
+      if {($cmd == {set_max_delay}) && ([lsearch -exact $args {-datapath_only}] != -1)} {
+        set cmd {set_max_delay_DPO}
+      } elseif {($cmd == {set_max_delay}) && ([lsearch -regexp $args {-datapath}] != -1)} {
+        set cmd {set_max_delay_DPO}
       }
       if {![info exists commands($cmd)]} {
         set commands($cmd) 0
