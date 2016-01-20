@@ -18,10 +18,13 @@ if {![package vsatisfies [package provide Vivado] 1.2014.1]} {
 
 package require Vivado 1.2014.1
 
-foreach _file_ [lsort -dictionary [glob -nocomplain [file join  [file dirname [info script]] *.tcl]] ] {
+# foreach _file_ [lsort -dictionary [glob -nocomplain [file join  [file dirname [info script]] *.tcl]] ] {}
+# Take all files, not only the .tcl files (e.g take shell scripts)
+foreach _file_ [lsort -dictionary [glob -nocomplain [file join  [file dirname [info script]] *]] ] {
   if {([file tail $_file_] == {pkgIndex.tcl}) || [regexp {_pkg.tcl$} [file tail $_file_]] } {
     continue
   }
+  if {$file == {tclIndex}} { continue }
   source $_file_
 }
 unset _file_
