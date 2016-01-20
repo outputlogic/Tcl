@@ -304,7 +304,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-help|-h]
 
   Description: Generate a design summary report
-  
+
     Use -details with -file to append full reports
     Use -project/-version/-experiment/-step to save informative tags
 
@@ -633,15 +633,15 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 #         lappend clockPairs [list $fromClock $toClock]
         dputs " -D- Processing report_clock_interaction \[$n/[expr [llength $clock_interaction_table] -1]\]: $fromClock -> $toClock \t ($interClockConstraints)"
         if {![info exists clockInteractionReport($interClockConstraints)]} {
-        	set clockInteractionReport($interClockConstraints) 0
+          set clockInteractionReport($interClockConstraints) 0
         }
         incr clockInteractionReport($interClockConstraints)
       }
-      
+
       foreach name [array names clockInteractionReport] {
-      	regsub -all { } [string tolower $name] {_} string
-      	regsub -all {\(} $string {} string
-      	regsub -all {\)} $string {} string
+        regsub -all { } [string tolower $name] {_} string
+        regsub -all {\(} $string {} string
+        regsub -all {\)} $string {} string
         addMetric clkinteraction.$string    [format {Clock Interaction (%s)} $name]
         setMetric clkinteraction.$string    $clockInteractionReport($name)
       }
@@ -987,7 +987,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         if {$filename != {}} {
           # Append a comment out version of the table
           foreach line [split [$tbl print] \n] {
-          	lappend output [format {#  %s} $line]
+            lappend output [format {#  %s} $line]
           }
         }
       }
@@ -1017,28 +1017,28 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     puts $FH "# ---------------------------------------------------------------------------------\n"
     puts $FH [join $output \n]
     if {$showdetails} {
-    	# Dump full reports inside file
-    	foreach name [list report_utilization \
-    	                   report_ram_utilization \
-    	                   report_timing_summary \
-    	                   WNS \
-    	                   WHS \
-    	                   report_clock_interaction \
-    	                   check_timing \
-    	                   report_design_analysis \
-    	                   report_route_status \
-    	             ] {
-    	  if {[info exists reports($name)]} {
-    	  	set report $reports($name)
-    	  	puts $FH "\n########################################################################################"
-    	  	puts $FH "## Vivado report: $name"
-    	  	puts $FH "########################################################################################"
-    	  	puts $FH "#"
-    	  	foreach line [split $report \n] {
-    	  		puts $FH [format {#  %s} $line]
-    	  	}
-    	  }
-    	}
+      # Dump full reports inside file
+      foreach name [list report_utilization \
+                         report_ram_utilization \
+                         report_timing_summary \
+                         WNS \
+                         WHS \
+                         report_clock_interaction \
+                         check_timing \
+                         report_design_analysis \
+                         report_route_status \
+                   ] {
+        if {[info exists reports($name)]} {
+          set report $reports($name)
+          puts $FH "\n########################################################################################"
+          puts $FH "## Vivado report: $name"
+          puts $FH "########################################################################################"
+          puts $FH "#"
+          foreach line [split $report \n] {
+            puts $FH [format {#  %s} $line]
+          }
+        }
+      }
     }
     close $FH
     puts " -I- Generated file [file normalize $filename]"

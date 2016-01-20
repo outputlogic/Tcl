@@ -26,9 +26,9 @@ set help_message [format {
 ##
 ## Description:
 ##   Use report_design_summary to extract a design summary report.
-##   
+##
 ## Options:
-##   
+##
 ##   --project                Project name
 ##
 ##
@@ -67,7 +67,7 @@ catch {unset data}
 ## Various stack processing functions.
 ##-----------------------------------------------------------------------
 
-interp alias {} push {} lappend  
+interp alias {} push {} lappend
 
 proc pop { name } {
   upvar 1 $name stack
@@ -229,7 +229,7 @@ proc system {COMMAND} {
  return "$STRIPPED_STRING"
 
 }
- 
+
 #########################################################################
 #########################################################################
 ##
@@ -388,7 +388,7 @@ if {$error} {
 }
 
 if {$ofilename == {}} {
-	set ofilename [format {%s%s} [file rootname [file normalize $checkpoint]] {_sum.csv}]
+  set ofilename [format {%s%s} [file rootname [file normalize $checkpoint]] {_sum.csv}]
 }
 
 set cmdLine [list -all -csv -file $ofilename -details]
@@ -425,7 +425,7 @@ if {[file exists $checkpoint]} {
 
   # Open checkpoint
   open_checkpoint $checkpoint
-  
+
   # Extract metrics and save results into CSV file
   if {[catch {tb::report_design_summary %s } errorstring]} {
     set FH [open "[file normalize [info script]].FAILED" {a}]
@@ -435,7 +435,7 @@ if {[file exists $checkpoint]} {
     set FH [open "[file normalize [info script]].OK" {a}]
     close $FH
   }
-  
+
   # Close current design
   close_design
 }
@@ -445,7 +445,7 @@ if {[file exists $checkpoint]} {
   $reportDesignSummaryScript \
   $cmdLine \
   ]
-  
+
 close $FH
 
 if {!$dryrun} {
@@ -468,12 +468,12 @@ if {!$dryrun} {
     }
   }
   set clock_stop [clock seconds]
-  
+
   if {$::errorCode != {NONE}} {
     print error "Some error(s) occured during the execution of the report_design_summary ($::errorCode)"
     incr error
   }
-  
+
   print info "Duration: [duration [expr $clock_stop - $clock_start]]"
 }
 

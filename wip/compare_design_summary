@@ -89,16 +89,16 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
       }
       {^-input$} -
       {^-in(p(ut?)?)?$} {
-      	foreach pattern [lshift args] {
-      		foreach file [glob -nocomplain $pattern] {
-      			if {![file exists $file]} {
-      				puts " -E- File '$file' does not exist"
-      				incr error
-      				continue
-      			}
-      			lappend ifilenames [file normalize $file]
-      		}
-      	}
+        foreach pattern [lshift args] {
+          foreach file [glob -nocomplain $pattern] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
+              incr error
+              continue
+            }
+            lappend ifilenames [file normalize $file]
+          }
+        }
         set ifilenames [lsort -unique $ifilenames]
       }
       {^-format$} -
@@ -150,7 +150,7 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
               [-help|-h]
 
   Description: Compare a design summary reports
-  
+
     Use -reference to select the reference column. To be used with -format
 
   Example:
@@ -199,24 +199,24 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
     catch {unset metricNames}
     catch {unset descriptions}
     foreach file $ifilenames {
-    	dputs " -D- Processing $file"
-    	incr index
-    	set res [readcsv $file {,}]
-    	set header [list] ; set rows [list] ; set ids [list]
-    	foreach [list header rows ids] $res { break }
-    	foreach row $rows {
-    		set id [lindex $row 0]
-    		set description [lindex $row 1]
-    		set value [lindex $row 2]
-    		# Saving metric value
-    		set metrics(${index}:${id}) $value
-    		# Saving metric description
-    		set descriptions($id) $description
-    		set metricNames($id) {}
-    	}
-    	set allIds [lsort -unique [concat $allIds $ids]]
+      dputs " -D- Processing $file"
+      incr index
+      set res [readcsv $file {,}]
+      set header [list] ; set rows [list] ; set ids [list]
+      foreach [list header rows ids] $res { break }
+      foreach row $rows {
+        set id [lindex $row 0]
+        set description [lindex $row 1]
+        set value [lindex $row 2]
+        # Saving metric value
+        set metrics(${index}:${id}) $value
+        # Saving metric description
+        set descriptions($id) $description
+        set metricNames($id) {}
+      }
+      set allIds [lsort -unique [concat $allIds $ids]]
     }
-    
+
     ########################################################################################
     ##
     ##
@@ -225,9 +225,9 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
 
     set categories [list]
     foreach el $allIds {
-    	# id: design.cells.blackbox
-    	# => category: design
-    	lappend categories [lindex [split $el .] 0]
+      # id: design.cells.blackbox
+      # => category: design
+      lappend categories [lindex [split $el .] 0]
     }
     set categories [lsort -unique $categories]
     dputs " -D- Categories: $categories"
@@ -266,17 +266,17 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
         # id = 'design.ram.blockram'
         set row [list]
         for {set index 0} {$index < $numColumns} {incr index} {
-        	if {![info exists metrics(${index}:${id})]} {
-        		lappend row {n/a}
-        	} else {
-        		lappend row $metrics(${index}:${id})
+          if {![info exists metrics(${index}:${id})]} {
+            lappend row {n/a}
+          } else {
+            lappend row $metrics(${index}:${id})
           }
         }
         # id = 'design.ram.blockram'
         switch -regexp -- $id {
           ^vivado\.  -
           ^tag\.  {
-          	# Ids vivado.* and tag.* don't need to be reformated
+            # Ids vivado.* and tag.* don't need to be reformated
             $tbl addrow [concat [list $id $descriptions($id)] $row]
           }
           default {
@@ -294,7 +294,7 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
         if {$ofilename != {}} {
           # Append a comment out version of the table
           foreach line [split [$tbl print] \n] {
-          	lappend output [format {#  %s} $line]
+            lappend output [format {#  %s} $line]
           }
         }
       }
@@ -303,14 +303,14 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
 
     set prefix {}
     if {$ofilename != {}} {
-    	# Comment out lines when writting into a file
-    	set prefix {# }
+      # Comment out lines when writting into a file
+      set prefix {# }
     }
     set index -1
     lappend output "\n${prefix}  Design Summary Files:"
     foreach file $ifilenames {
-    	incr index
-    	lappend output "${prefix}     $index - $file"
+      incr index
+      lappend output "${prefix}     $index - $file"
     }
 
     ########################################################################################
@@ -442,7 +442,7 @@ proc ::tb::utils::compare_design_summary::readcsv {filename {csvDelimiter ,}} {
       set header [splitcsv $line $csvDelimiter]
       set first 0
     } else {
-    	set row [splitcsv $line $csvDelimiter]
+      set row [splitcsv $line $csvDelimiter]
       lappend rows $row
       lappend ids [lindex $row 0]
       incr count
