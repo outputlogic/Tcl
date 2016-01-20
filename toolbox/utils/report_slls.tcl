@@ -6,8 +6,8 @@
 # HEADER_END
 ####################################################################################################
 
-proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
-proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 ########################################################################################
 ##
@@ -21,6 +21,7 @@ proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 ########################################################################################
 
 ########################################################################################
+## 2016.01.20 - Changed the method to load xilinx::designutils to prevent warning        
 ## 2015.12.10 - Minor change when loading xilinx::designutils to prevent Error message
 ## 2015.10.08 - Removed dependency to internal package
 ##            - Fixed typo SSL -> SLL
@@ -82,7 +83,8 @@ proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 # Install 'designutils' to access the package for tables
 catch {
 	if {[lsearch [tclapp::list_apps] {xilinx::designutils}] == -1} {
-		tclapp::install designutils
+# 		tclapp::install designutils
+		tclapp::load xilinx::designutils
 	}
 }
 
@@ -96,7 +98,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_slls {
   namespace export -force report_slls get_sll_nets get_sll_nodes
-  variable version {2015.12.10}
+  variable version {2016.01.20}
   variable params
   variable output {}
   array set params [list format {table} verbose 0 debug 0]
