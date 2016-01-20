@@ -10,8 +10,8 @@ exec tclsh "$0" "$@"
 # HEADER_END
 ####################################################################################################
 
-proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
-proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 ########################################################################################
 ##
@@ -27,9 +27,24 @@ proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 ########################################################################################
 
 # Example of report:
+#      +---------------------------------+
+#      | Timing Constraints Summary      |
+#      +---------------------+-----------+
+#      | Constraint          | step3.xdc |
+#      +---------------------+-----------+
+#      | create_clock        | 5         |
+#      | set_clock_groups    | 3         |
+#      | set_input_jitter    | 1         |
+#      | set_false_path      | 55        |
+#      | set_multicycle_path | 10        |
+#      | set_max_delay       | 35        |
+#      +---------------------+-----------+
+# 
+#   step3.xdc      ->      /wrk/xsjhdnobkup2/dpefour/bugcases/932532/step3.xdc
+
 
 namespace eval ::tb {
-  namespace export -force report_timing_constraints
+#   namespace export -force report_timing_constraints
 }
 
 namespace eval ::tb::utils {
@@ -74,7 +89,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
   set standalone 0
   set error 0
   set help 0
-  if {[llength $args] == 0} {
+  if {([llength $args] == 0) || ($args == {-standalone})} {
     set help 1
   }
   while {[llength $args]} {
@@ -148,7 +163,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
   Description: Timing constraints summary from XDC
   
   Example:
-     tb::report_timing_constraints -xdc '*xdc'
+     tb::report_timing_constraints -current_design
      tb::report_timing_constraints -xdc '*xdc' -return_string
      tb::report_timing_constraints -xdc '*xdc' -csv -file result.csv
 } ]
@@ -300,7 +315,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     	# with the filename
     } else {
       set prefix {}
-      if {$ofilename != {}} {
+      if {($params(format) == {csv}) || ($ofilename != {})} {
       	# Comment out lines when writting into a file
       	set prefix {# }
       }
@@ -430,7 +445,7 @@ namespace eval ::tb::utils {
 }
 
 namespace eval ::tb {
-  namespace import -force ::tb::utils::report_timing_constraints
+#   namespace import -force ::tb::utils::report_timing_constraints
 }
 
 ###########################################################################
