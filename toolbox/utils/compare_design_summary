@@ -23,6 +23,9 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
+## 2016.01.21 - Added support for -suppress
+##            - Enable CSV files to be specified without -input
+##            - Changed table header to include filename
 ## 2016.01.18 - Initial release
 ########################################################################################
 
@@ -38,7 +41,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::compare_design_summary {
   namespace export -force compare_design_summary
-  variable version {2016.01.18}
+  variable version {2016.01.21}
   variable params
   variable output {}
   variable reports
@@ -69,13 +72,15 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
   set ofilename {}
   set ifilenames {}
   set filemode {w}
+  set suppress 0
   set returnstring 0
   set format {default}
   set refColumn 0
   set returnstring 0
+  set standalone 0
   set error 0
   set help 0
-  if {[llength $args] == 0} {
+  if {([llength $args] == 0) || ($args == {-standalone})} {
     set help 1
   }
   while {[llength $args]} {
@@ -86,6 +91,10 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
       }
       {^-csv?$} {
         set params(format) {csv}
+      }
+      {^-su(p(p(r(e(ss?)?)?)?)?)?$} -
+      {^-suppress$} {
+        set suppress 1
       }
       {^-input$} -
       {^-in(p(ut?)?)?$} {
@@ -115,6 +124,10 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
       {^-r(e(t(u(r(n(_(s(t(r(i(ng?)?)?)?)?)?)?)?)?)?)?)?$} {
         set returnstring 1
       }
+      {^-standalone$} {
+        # The script is run in standalone mode
+        set standalone 1
+      }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
       }
@@ -125,13 +138,20 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
            set help 1
       }
       default {
-            if {[string match "-*" $name]} {
-              puts " -E- option '$name' is not a valid option."
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          foreach file [glob -nocomplain $name] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
               incr error
-            } else {
-              puts " -E- option '$name' is not a valid option."
-              incr error
+              continue
             }
+            lappend ifilenames [file normalize $file]
+          }
+          set ifilenames [lsort -unique $ifilenames]
+        }
       }
     }
   }
@@ -139,9 +159,10 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
   if {$help} {
     puts [format {
   Usage: compare_design_summary
-              [-input <filename>][-input <pattern>]
+              [<pattern>][-input <filename>][-input <pattern>]
               [-format <default|diff|percent|diffpercent>]
               [-reference <column>]
+              [-suppress]
               [-file <filename>]
               [-append]
               [-csv]
@@ -149,13 +170,15 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
               [-verbose|-v]
               [-help|-h]
 
-  Description: Compare a design summary reports
+  Description: Compare design summary reports
 
     Use -reference to select the reference column. To be used with -format
+    Use -suppress to suppress rows that have identical values accross all
+    summary files
 
   Example:
-     tb::compare_design_summary -input *_sum.csv
-     tb::compare_design_summary -input *.csv -return_string
+     tb::compare_design_summary *_sum.csv
+     tb::compare_design_summary *.csv -suppress -return_string
      tb::compare_design_summary -input *.csv -format percent -reference 1 -file compare.csv -csv
 } ]
     # HELP -->
@@ -174,6 +197,11 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
 
   if {![regexp {^[0-9]+$} $refColumn]} {
     puts " -E- invalid -column '$refColumn'"
+    incr error
+  }
+
+  if {$standalone && $returnstring} {
+    puts " -E- cannot use -return_string in standalone mode"
     incr error
   }
 
@@ -242,7 +270,14 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
     set tbl [::Table::Create {Design Summary Comparaison}]
     $tbl indent 1
 #     $tbl configure -indent 2
-    $tbl header [concat [list {Id} {Description} ] [iota 0 [expr $numColumns -1]] ]
+    set header [list {Id} {Description}]
+    set index -1
+    foreach file $ifilenames {
+      incr index
+      lappend header [format {%s (%d)} [file tail $file] $index]
+    }
+    $tbl header $header
+#     $tbl header [concat [list {Id} {Description} ] [iota 0 [expr $numColumns -1]] ]
     foreach category [presort_list [list tag \
                                          vivado \
                                          design \
@@ -274,12 +309,27 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
         }
         # id = 'design.ram.blockram'
         switch -regexp -- $id {
-          ^vivado\.  -
-          ^tag\.  {
+          ^tag\. {
+            # Ids vivado.* and tag.* don't need to be reformated
+            $tbl addrow [concat [list $id $descriptions($id)] $row]
+          }
+          ^vivado\. {
+            if {$suppress} {
+              # Skip row if:
+              #   1- More than 1 file is being compared
+              #   2- all the metric values are the same from all the files
+              if {([llength $ifilenames] >= 2) && ([llength [lsort -unique $row]] == 1)} { continue }
+            }
             # Ids vivado.* and tag.* don't need to be reformated
             $tbl addrow [concat [list $id $descriptions($id)] $row]
           }
           default {
+            if {$suppress} {
+              # Skip row if:
+              #   1- More than 1 file is being compared
+              #   2- all the metric values are the same from all the files
+              if {([llength $ifilenames] >= 2) && ([llength [lsort -unique $row]] == 1)} { continue }
+            }
             $tbl addrow [concat [list $id $descriptions($id)] [format_list $row $format $refColumn]]
           }
         }
@@ -307,10 +357,11 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
       set prefix {# }
     }
     set index -1
-    lappend output "\n${prefix}  Design Summary Files:"
+    lappend output "\n${prefix}  Design Summary Files:\n"
     foreach file $ifilenames {
       incr index
-      lappend output "${prefix}     $index - $file"
+#       lappend output "${prefix}     $index - $file"
+      lappend output [format "%s  %s (%d) \t -> \t %s" $prefix [file tail $file] $index $file]
     }
 
     ########################################################################################
@@ -794,7 +845,7 @@ proc ::Table::list2csv { list {sepChar ,} } {
 if {[file tail [info script]]!=[file tail $argv0]} {
   # This file is sourced
 } else {
-  if {[catch {eval [concat ::tb::utils::compare_design_summary::compare_design_summary $argv]} errorstring]} {
+  if {[catch {eval [concat ::tb::utils::compare_design_summary::compare_design_summary -standalone $argv]} errorstring]} {
     puts $errorstring
     exit 1
   }
