@@ -1162,7 +1162,7 @@ namespace eval ::tb::utils {
 }
 
 namespace eval ::tb {
-#   namespace import -force ::tb::utils::report_design_summary
+  namespace import -force ::tb::utils::report_design_summary
 }
 
 ###########################################################################

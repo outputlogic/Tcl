@@ -535,7 +535,7 @@ namespace eval ::tb::utils {
 }
 
 namespace eval ::tb {
-#   namespace import -force ::tb::utils::compare_design_summary
+  namespace import -force ::tb::utils::compare_design_summary
 }
 
 ###########################################################################
