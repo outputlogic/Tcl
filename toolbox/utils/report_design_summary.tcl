@@ -19,6 +19,7 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.01.20 - Updated label for congestion metrics
 ## 2016.01.18 - Added tag metrics
 ##            - Added congestion metrics
 ##            - Added constraints metrics
@@ -115,8 +116,8 @@
 #   | checktiming.pulse_width_clock                | check_timing (pulse_width_clock)                | 0                    |
 #   | checktiming.unconstrained_internal_endpoints | check_timing (unconstrained_internal_endpoints) | 0                    |
 #   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | congestion.placer                            | Placer Congestion                               | u-u-u-u              |
-#   | congestion.router                            | Router Congestion                               | u-u-u-u              |
+#   | congestion.placer                            | Placer Congestion (N-S-E-W)                     | u-u-u-u              |
+#   | congestion.router                            | Router Congestion (N-S-E-W)                     | u-u-u-u              |
 #   +----------------------------------------------+-------------------------------------------------+----------------------+
 #   | route.errors                                 | Nets with routing errors                        | 4880                 |
 #   | route.fixed                                  | Nets with fixed routing                         | n/a                  |
@@ -155,7 +156,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_design_summary {
   namespace export -force report_design_summary
-  variable version {2016.01.18}
+  variable version {2016.01.20}
   variable params
   variable output {}
   variable reports
@@ -656,8 +657,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     if {[lsearch $sections {congestion}] != -1} {
 
-      addMetric {congestion.placer}    {Placer Congestion}
-      addMetric {congestion.router}    {Router Congestion}
+      addMetric {congestion.placer}    {Placer Congestion (N-S-E-W)}
+      addMetric {congestion.router}    {Router Congestion (N-S-E-W)}
 
       set report [getReport {report_design_analysis} {-quiet -congestion -no_header}]
       set congestion [::tb::utils::report_design_summary::parseRDACongestion $report]
