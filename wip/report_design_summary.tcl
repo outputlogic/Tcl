@@ -19,6 +19,7 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.01.22 - Added support for -suppress
 ## 2016.01.20 - Updated label for congestion metrics
 ## 2016.01.18 - Added tag metrics
 ##            - Added congestion metrics
@@ -156,7 +157,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_design_summary {
   namespace export -force report_design_summary
-  variable version {2016.01.20}
+  variable version {2016.01.22}
   variable params
   variable output {}
   variable reports
@@ -186,6 +187,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set sections {default}
   set filename {}
   set filemode {w}
+  set suppress 0
   set returnstring 0
   set project {}
   set version {}
@@ -208,6 +210,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       }
       {^-csv?$} {
         set params(format) {csv}
+      }
+      {^-su(p(p(r(e(ss?)?)?)?)?)?$} -
+      {^-suppress$} {
+        set suppress 1
       }
       {^-a(ll?)?$} {
         set sections [concat $sections [list utilization \
@@ -297,6 +303,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-step <string>]
             +--------------------+
               [-details]
+              [-suppress]
               [-file <filename>]
               [-append]
               [-csv]
@@ -308,10 +315,11 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     Use -details with -file to append full reports
     Use -project/-version/-experiment/-step to save informative tags
+    Use -suppress to suppress metrics that have not been found
 
   Example:
      tb::report_design_summary -file myreport.rpt -details -all
-     tb::report_design_summary -timing -csv -return_string
+     tb::report_design_summary -timing -csv -return_string -suppress
 } ]
     # HELP -->
     return -code ok
@@ -551,6 +559,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       extractMetric {check_timing} {checktiming.partial_output_delay}         {\s+There are\s+([0-9\.]+)\s+ports with partial output delay specified}                   {n/a}
       extractMetric {check_timing} {checktiming.latch_loops}                  {\s+There are\s+([0-9\.]+)\s+combinational latch loops in the design through latch input} {n/a}
 
+      if {$suppress} {
+        # Cleaning: remove metrics that have values of 0 or n/a
+        delMetrics checktiming.* [list {n/a} 0]
+      }
     }
 
     ########################################################################################
@@ -665,6 +677,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       setMetric {congestion.placer}  [lindex $congestion 0]
       setMetric {congestion.router}  [lindex $congestion 1]
 
+      if {$suppress} {
+        # Cleaning: remove metrics that have values of u-u-u-u
+        delMetrics congestion.* [list {u-u-u-u}]
+      }
     }
 
     ########################################################################################
@@ -724,6 +740,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         setMetric constraints.$el    $commands($el)
       }
 
+      if {$suppress} {
+        # Cleaning: remove metrics that have values of 0
+        delMetrics constraints.* [list 0]
+      }
     }
 
     ########################################################################################
@@ -923,8 +943,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ##
     ########################################################################################
 
-#     parray ::tb::utils::report_design_summary::metrics
-#     parray ::tb::utils::report_design_summary::reports
+      if {$suppress} {
+        # Cleaning: remove metrics that have values of n/a
+#         delMetrics *.* [list {n/a}]
+      }
 
     ########################################################################################
     ##
@@ -1108,6 +1130,30 @@ proc ::tb::utils::report_design_summary::setMetric {name value} {
   return -code ok
 }
 
+proc ::tb::utils::report_design_summary::delMetrics {pattern {values {__UnSeT__}}} {
+  variable metrics
+  set names [array names metrics ${pattern}:def]
+  if {![llength $names]} {
+    puts " -E- metric '$pattern' does not exist"
+    return -code ok
+  }
+  foreach name $names {
+    regsub {:def} $name {} name
+    if {$values == {__UnSeT__}} {
+      dputs " -I- removing: $name"
+      array unset metrics ${name}:*
+    } else {
+      # If a list of values is passed to the proc, then unset the
+      # metric only if its value matches one of the provided values
+      if {[lsearch -exact $values $metrics(${name}:val)] != -1} {
+        dputs " -I- removing: $name (value='$metrics(${name}:val)')"
+        array unset metrics ${name}:*
+      }
+    }
+  }
+  return -code ok
+}
+
 proc ::tb::utils::report_design_summary::extractMetric {report name exp {notfound {n/a}} {save 1}} {
   variable metrics
   variable reports
@@ -1130,8 +1176,8 @@ proc ::tb::utils::report_design_summary::extractMetric {report name exp {notfoun
   }
   setMetric $name $value
 #   dputs " -I- setting: $name = $value"
-  set metrics(${name}:def) 2
-  set metrics(${name}:val) $value
+#   set metrics(${name}:def) 2
+#   set metrics(${name}:val) $value
   return -code ok
 }
 
