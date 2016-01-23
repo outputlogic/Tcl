@@ -18,11 +18,12 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Description:    Timing constraints summary from XDC
+## Description:    Timing constraints summary from XDC or DCP
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.01.22 - Added support for -dcp
 ## 2016.01.20 - Added support for 'set_max_delay -datapath_only' as separate constraint
 ##            - Misc enhancements
 ## 2016.01.19 - Initial release
@@ -45,6 +46,20 @@ exec tclsh "$0" "$@"
 #
 #   step3.xdc      ->      /wrk/xsjhdnobkup2/dpefour/bugcases/932532/step3.xdc
 
+#      +--------------------------------------------------------------------------------+
+#      | Timing Constraints Summary                                                     |
+#      +---------------------+---------------------+---------------+--------------------+
+#      | Constraint          | x_top_early.xdc (0) | x_top.xdc (1) | x_top_late.xdc (2) |
+#      +---------------------+---------------------+---------------+--------------------+
+#      | create_clock        | 3                   | 19            | 0                  |
+#      | set_clock_groups    | 0                   | 101           | 0                  |
+#      | set_input_jitter    | 1                   | 0             | 0                  |
+#      | set_case_analysis   | 15                  | 0             | 0                  |
+#      | set_false_path      | 50                  | 152           | 0                  |
+#      | set_max_delay (DPO) | 0                   | 44            | 4                  |
+#      | set_disable_timing  | 0                   | 0             | 2                  |
+#      +---------------------+---------------------+---------------+--------------------+
+
 
 namespace eval ::tb {
 #   namespace export -force report_timing_constraints
@@ -56,7 +71,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_timing_constraints {
   namespace export -force report_timing_constraints
-  variable version {2016.01.20}
+  variable version {2016.01.22}
   variable params
   variable output {}
   variable metrics
@@ -84,12 +99,14 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
   set currentDesign 0
   set ofilename {}
   set ifilenames {}
+  set checkpoint {}
   set filemode {w}
   set returnstring 0
   set format {default}
   set refColumn 0
   set returnstring 0
   set standalone 0
+  set tmpDir {}
   set error 0
   set help 0
   if {([llength $args] == 0) || ($args == {-standalone})} {
@@ -103,6 +120,9 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
       }
       {^-f(i(le?)?)?$} {
         set ofilename [lshift args]
+      }
+      {^-dcp?$} {
+        set checkpoint [lshift args]
       }
       {^-csv?$} {
         set params(format) {csv}
@@ -161,7 +181,8 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
   if {$help} {
     puts [format {
   Usage: report_timing_constraints
-              [<pattern>][-xdc <filename>][-xdc <pattern>]
+              [<pattern>][-xdc <pattern>]
+              [-dcp <checkpoint>]
               [-current_design]
               [-file <filename>]
               [-append]
@@ -170,19 +191,25 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
               [-verbose|-v]
               [-help|-h]
 
-  Description: Timing constraints summary from XDC
+  Description: Timing constraints summary from XDC or DCP
 
   Example:
      tb::report_timing_constraints -current_design
      tb::report_timing_constraints -xdc '*xdc' -return_string
      tb::report_timing_constraints -xdc '*xdc' -csv -file result.csv
+     tb::report_timing_constraints -dcp top.dcp -csv -file result.csv
 } ]
     # HELP -->
     return -code ok
   }
-  
-  if {([llength $ifilenames] == 0) && !$currentDesign} {
+
+  if {([llength $ifilenames] == 0) && !$currentDesign && ($checkpoint == {})} {
     puts " -E- no valid input file. Use -xdc to specify XDC(s)"
+    incr error
+  }
+
+  if {[llength $ifilenames] && ($checkpoint != {})} {
+    puts " -E- cannot use -xdc & -dcp together"
     incr error
   }
 
@@ -196,6 +223,11 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     incr error
   }
 
+  if {($checkpoint != {}) && $currentDesign} {
+    puts " -E- cannot use -current_design & -dcp together"
+    incr error
+  }
+
   if {$standalone && $currentDesign} {
     puts " -E- cannot use -current_design in standalone mode"
     incr error
@@ -204,6 +236,14 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
   if {$standalone && $returnstring} {
     puts " -E- cannot use -return_string in standalone mode"
     incr error
+  }
+
+  if {$checkpoint != {}} {
+    set checkpoint [file normalize $checkpoint]
+    if {![file exists $checkpoint]} {
+      puts " -E- checkpoint '$checkpoint' does not exist"
+      incr error
+    }
   }
 
   if {$error} {
@@ -219,6 +259,13 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     write_xdc -quiet -exclude_physical -file $xdc
     dputs " -D- writing XDC file '$xdc'"
     set ifilenames $xdc
+  }
+
+  if {$checkpoint != {}} {
+    set tmpDir [file normalize [format {report_timing_constraints.%s} [clock seconds]] ]
+    # Extract XDC inside temp directory
+    uplevel #0 [list exec unzip $checkpoint *.xdc -d $tmpDir ]
+    set ifilenames [glob -nocomplain $tmpDir/*xdc]
   }
 
   if {[catch {
@@ -340,6 +387,9 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     if {$currentDesign} {
       # When -current_design has been used, do not generate the footer
       # with the filename
+    } elseif {($checkpoint != {}) && !$params(debug)} {
+      # When -dcp has been used but not -debug, do not generate
+      # the footer with the filename
     } else {
       set prefix {}
       if {($params(format) == {csv}) || ($ofilename != {})} {
@@ -368,6 +418,13 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     if {!$params(debug)} {
       # Keep the file in debug mode
       file delete $ifilenames
+    }
+  }
+
+  if {$checkpoint != {}} {
+    if {!$params(debug)} {
+      # Keep the temp directory in debug mode
+      if {$tmpDir != {}} { file delete -force $tmpDir }
     }
   }
 
