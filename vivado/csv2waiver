@@ -1,0 +1,298 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+# Example of input CSV file:
+#   Severity,ID,Description,Depth,Exception,Source (From),Destination (To),Category,Source Clock (From),Destination Clock (To),,,,Waived
+#   Info,CDC-9,Asynchronous reset synchronized with ASYNC_REG property,8,Asynch Clock Groups,bb200_top_i/reiska_top/AURORA_IF_0/U0/AURORA_MASTER.AURORA_M0_IP/inst/aurora_64b66b_us_0_core_i/aurora_64b66b_us_0_wrapper_i/aurora_64b66b_us_0_multi_gt_i/aurora_64b66b_us_0_gt_i/inst/gen_gtwizard_gthe3_top.aurora_64b66b_us_0_gt_gtwizard_gthe3_inst/gen_gtwizard_gthe3.gen_reset_controller_internal.gen_single_instance.gtwiz_reset_inst/gtwiz_reset_tx_done_int_reg/C,bb200_top_i/reiska_top/AURORA_IF_0/U0/AURORA_MASTER.AURORA_M0_IP/inst/aurora_64b66b_us_0_core_i/aurora_64b66b_us_0_wrapper_i/aurora_64b66b_us_0_multi_gt_i/aurora_64b66b_us_0_gt_i/inst/gen_gtwizard_gthe3_top.aurora_64b66b_us_0_gt_gtwizard_gthe3_inst/gen_gtwizard_gthe3.gen_reset_controller_internal.gen_single_instance.gtwiz_reset_inst/reset_synchronizer_tx_done_inst/rst_in_meta_reg/CLR,Safe,axi_aclk,AURORA_IF_0_aur0_user_clk_out,,,,
+#   Warning,CDC-2,1-bit synchronized with missing ASYNC_REG property,3,Asynch Clock Groups,bb200_top_i/reiska_top/test_features_aurora_0/U0/test_features_aurora.rx_send_rdy_r1_reg/C,bb200_top_i/reiska_top/test_features_aurora_0/U0/test_features_aurora.rx_send_rdy_s1_reg/D,Safe,clk_153m6_out_cpri_ref_pll,AURORA_IF_0_aur0_user_clk_out,,,,
+#   Warning,CDC-2,1-bit synchronized with missing ASYNC_REG property,3,Asynch Clock Groups,bb200_top_i/reiska_top/test_features_aurora_1/U0/test_features_aurora.rx_capture_rdy_r1_reg/C,bb200_top_i/reiska_top/test_features_aurora_1/U0/test_features_aurora.rx_capture_rdy_s1_reg/D,Safe,clk_153m6_out_cpri_ref_pll,AURORA_IF_0_aur0_user_clk_out,,,,
+#   Warning,CDC-2,1-bit synchronized with missing ASYNC_REG property,3,Asynch Clock Groups,bb200_top_i/reiska_top/test_features_aurora_1/U0/test_features_aurora.rx_send_rdy_r1_reg/C,bb200_top_i/reiska_top/test_features_aurora_1/U0/test_features_aurora.rx_send_rdy_s1_reg/D,Safe,clk_153m6_out_cpri_ref_pll,AURORA_IF_0_aur0_user_clk_out,,,,
+#   Critical,CDC-4,Multi-bit unknown CDC circuitry,0,Asynch Clock Groups,bb200_top_i/reiska_top/test_features_aurora_0/U0/test_features_aurora.captured_rx_sb_reg[0][3:0]/C,bb200_top_i/reiska_top/test_features_aurora_0/U0/i_test_features_aurora_axi4_registers/reg_tst_rx_capture_sb_0_s_reg[3:0]/D,Unknown,clk_153m6_out_cpri_ref_pll,AURORA_IF_0_aur0_user_clk_out,,,,OK
+
+# Example of output script:
+#   set_msg_config -id {CDC-4} -suppress -string {{bb200_top_i/reiska_top/test_features_aurora_0/U0/test_features_aurora.captured_rx_sb_reg[0][3:0]/C} {bb200_top_i/reiska_top/test_features_aurora_0/U0/i_test_features_aurora_axi4_registers/reg_tst_rx_capture_sb_0_s_reg[3:0]/D}}
+#   set_msg_config -id {CDC-4} -suppress -string {{bb200_top_i/reiska_top/test_features_aurora_0/U0/test_features_aurora.captured_rx_sb_reg[1][3:0]/C} {bb200_top_i/reiska_top/test_features_aurora_0/U0/i_test_features_aurora_axi4_registers/reg_tst_rx_capture_sb_1_s_reg[3:0]/D}}
+#   set_msg_config -id {CDC-4} -suppress -string {{bb200_top_i/reiska_top/test_features_aurora_0/U0/test_features_aurora.captured_rx_sb_reg[2][3:0]/C} {bb200_top_i/reiska_top/test_features_aurora_0/U0/i_test_features_aurora_axi4_registers/reg_tst_rx_capture_sb_2_s_reg[3:0]/D}}
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  error " ERROR - this script is meant to be executed and not sourced.\n"
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## join-csv
+##-----------------------------------------------------------------------
+## Convert a Tcl list to a CSV-friedly string
+##-----------------------------------------------------------------------
+proc join-csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+#-----------------------------------------------------------------------
+## split-csv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc split-csv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## read-csv
+##-----------------------------------------------------------------------
+## Read CSV file and return a Table object
+##-----------------------------------------------------------------------
+proc read-csv {filename {csvDelimiter ,}} {
+  if {![file exists $filename]} {
+    error " -E- file '$filename' does not exist"
+  }
+  set result [list]
+  set FH [open $filename]
+  set first 1
+  set count 0
+  while {![eof $FH]} {
+    gets $FH line
+    # Skip comments and empty lines
+    if {[regexp {^\s*#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    lappend result [split-csv $line $csvDelimiter]
+    incr count
+  }
+  close $FH
+  if {$::VERBOSE} {
+    puts " -I- Header: [lindex $result 0]"
+    puts " -I- Number of imported row(s): $count"
+  }
+  return $result
+}
+
+##-----------------------------------------------------------------------
+## MAIN
+##-----------------------------------------------------------------------
+
+set VERBOSE 0
+set DEBUG 0
+
+# CSV file with column containing waiver information
+set ifilename {}
+# Output file name to waiver Tcl script
+set ofilename {waivers.tcl}
+set details 0
+set error 0
+set show_help 0
+set csvDelimiter {,}
+if {[llength $argv] == 0} {
+  incr show_help
+}
+#-------------------------------------------------------
+# Process command line arguments
+#-------------------------------------------------------
+while {[llength $argv]} {
+  set name [lshift argv]
+  switch -exact -- $name {
+    -i -
+    -in -
+    -input {
+      set ifilename [lshift argv]
+    }
+    -o -
+    -out -
+    -output {
+      set ofilename [lshift argv]
+    }
+    -delimiter -
+    --delimiter {
+      set csvDelimiter [lshift argv]
+    }
+    -d -
+    -detail -
+    -details {
+        set details 1
+    }
+    -v -
+    -verbose {
+        set VERBOSE 1
+    }
+    -d -
+    -debug {
+        set DEBUG 1
+        set VERBOSE 1
+    }
+    -h -
+    -help {
+        incr show_help
+    }
+    default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+    }
+  }
+}
+
+if {$show_help} {
+  # <-- HELP
+  puts [format {
+    Usage: csv2waiver
+                [-i <filename>|-in <filename>|-input <filename>]
+                [-o <filename>|-out <filename>|-output <filename>]
+                [-d|-details]
+                [-delimiter <csv-delimiter>]
+                [-verbose|-v]
+                [-help|-h]
+
+    Description: Utility to generate report_cdc waiver script
+
+    Example:
+       csv2waiver -i cdc_report_reiska_temp1623_mod_clocks2.csv -o waivers.tcl -delimiter ';'
+
+  } ]
+  # HELP -->
+
+  exit 0
+}
+
+if  {$ifilename == {}} {
+  puts " -E- no input file provided"
+  incr error
+}
+
+if  {![file exists $ifilename]} {
+  puts " -E- file '$ifilename' does not exist"
+  incr error
+}
+
+if  {$ofilename == {}} {
+  puts " -E- no output file provided"
+  incr error
+}
+
+if {$error} {
+  puts "\n Some error(s) occured. Cannot continue.\n"
+  exit -1
+}
+
+if {$VERBOSE} {
+  puts " -I- Processing file [file normalize $ifilename]"
+}
+set content [read-csv $ifilename $csvDelimiter]
+set header [lindex $content 0]
+set idxId -1 ; set idxSrc -1 ; set idxDest -1 ; set idxWaiver -1
+set idx -1
+foreach el $header {
+  set el [string tolower $el]
+  incr idx
+  switch -regexp -- $el {
+    id {
+      set idxId $idx
+    }
+    source {
+      if {![regexp {clock} $el]} {
+        set idxSrc $idx
+      }
+    }
+    destination {
+      if {![regexp {clock} $el]} {
+        set idxDest $idx
+      }
+    }
+    waive {
+      set idxWaiver $idx
+    }
+    default {
+    }
+  }
+}
+
+set FH [open $ofilename {w}]
+puts $FH [format {# Created on %s} [clock format [clock seconds]] ]
+puts $FH [format {# Source CSV: %s} [file normalize $ifilename] ]
+puts $FH ""
+
+set count 0
+foreach entry [lrange $content 1 end] {
+  if {$DEBUG} {
+    puts $FH "# Line [expr $count +1] - [join $entry ,]"
+  }
+  incr count
+  set id [lindex $entry $idxId]
+  set source [lindex $entry $idxSrc]
+  set destination [lindex $entry $idxDest]
+  set waiver [lindex $entry $idxWaiver]
+  if {[regexp -nocase -- {^(OK)$} $waiver]} {
+    if {$details && !$DEBUG} {
+      puts $FH "# Line [expr $count +1] - [join $entry ,]"
+    }
+    puts $FH [format {set_msg_config -id {%s} -suppress -string {{%s} {%s}}} $id $source $destination ]
+    if {$details} {
+      puts $FH ""
+    }
+  }
+}
+
+close $FH
+puts " -I- Output file [file normalize $ofilename]"
+
+exit 0
