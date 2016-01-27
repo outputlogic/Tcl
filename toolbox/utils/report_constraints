@@ -230,10 +230,10 @@ proc ::tb::utils::report_constraints::report_constraints {args} {
               [-help|-h]
 
   Description: Constraints summary from XDC or DCP
-  
+
     Use -all to report all Vivado commands. By default, only
     timing constraints are reported.
-    
+
     Use -property with -all to show property values used
     with set_property command.
 
@@ -285,6 +285,14 @@ proc ::tb::utils::report_constraints::report_constraints {args} {
   if {$showproperty && !$reportcommands} {
     puts " -W- -property must be used with -all. Command line option ignored"
 #     incr error
+  }
+
+  if {($checkpoint == {}) && ([llength $ifilenames] == 1)} {
+    if {[string tolower [file extension $ifilenames]] == {.dcp}} {
+      # In this case, the input file is most likely not an XDC but a DCP
+      set checkpoint $ifilenames
+      set ifilenames {}
+    }
   }
 
   if {$checkpoint != {}} {
@@ -368,7 +376,7 @@ proc ::tb::utils::report_constraints::report_constraints {args} {
       array set commands $res
       # Save the list of commands used in this XDC
       set allCommands [concat $allCommands [array names commands]]
-      
+
       foreach el [array names commands] {
         if {$commands($el) != 0} {
           set metrics(${index}:${el}) $commands($el)
@@ -462,10 +470,10 @@ proc ::tb::utils::report_constraints::report_constraints {args} {
       $tbl header $header
 #       $tbl configure -indent 2
       foreach command $allCommands {
-      	if {[lsearch $timCons $command] != -1} {
-      		# Skip timing reconstraints since they have already been reported
-      		continue 
-      	}
+        if {[lsearch $timCons $command] != -1} {
+          # Skip timing reconstraints since they have already been reported
+          continue
+        }
         set row [list $command]
         for {set index 0} {$index < $numColumns} {incr index} {
           if {[info exists metrics(${index}:${command})]} {
@@ -481,7 +489,7 @@ proc ::tb::utils::report_constraints::report_constraints {args} {
         }
         $tbl addrow $row
       }
-      
+
 #       set output [concat $output [split [$tbl export -format $params(format)] \n] ]
       switch $params(format) {
         table {
@@ -498,7 +506,7 @@ proc ::tb::utils::report_constraints::report_constraints {args} {
         }
       }
       catch {$tbl destroy}
-    }   
+    }
 
     ########################################################################################
     ##
@@ -642,21 +650,21 @@ proc ::tb::utils::report_constraints::getVivadoCommands {filename {showproperty 
         set cmd {set_max_delay_DPO}
       }
       if {$cmd == {set_property}} {
-       	set value [lindex $args 1]
-       	if {$value == {-quiet}} { set value [lindex $args 2] }
-      	# Skip properties SRC_FILE_INFO and src_info
-      	if {($value == {SRC_FILE_INFO}) || ($value == {src_info})} {
-      		return -code ok
-      	}
-      	# If the command is set_property, then save the property value as well.
-      	# For example: 
-      	#   set_property (CLOCK_DEDICATED_ROUTE)
-      	#   set_property (USER_CLOCK_ROOT)
-      	if {$showproperty} {
-      		# Show property value
+        set value [lindex $args 1]
+        if {$value == {-quiet}} { set value [lindex $args 2] }
+        # Skip properties SRC_FILE_INFO and src_info
+        if {($value == {SRC_FILE_INFO}) || ($value == {src_info})} {
+          return -code ok
+        }
+        # If the command is set_property, then save the property value as well.
+        # For example:
+        #   set_property (CLOCK_DEDICATED_ROUTE)
+        #   set_property (USER_CLOCK_ROOT)
+        if {$showproperty} {
+          # Show property value
           set cmd "${cmd} (${value})"
         } else {
-        	# Hide the property value
+          # Hide the property value
         }
       }
       if {![info exists commands($cmd)]} {
