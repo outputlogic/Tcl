@@ -1,7 +1,7 @@
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2013 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -10,8 +10,8 @@
 # package require Vivado 1.2014.1
 
 # Proc to reload current script
-proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
-proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 namespace eval ::tb {
     namespace export prettyTable
@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.12.10
+## Version:        2016.01.27
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,6 +265,7 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.01.27 - Fixed missing header when exporting to CSV
 ## 2015.12.10 - Added 'title' method to add/change the table title
 ##            - Added new command line options to 'configure' method to set the default
 ##              table format and cell alignment
@@ -326,7 +327,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
-  variable version {2015.12.10}
+  variable version {2016.01.27}
 } ]
 
 #------------------------------------------------------------------------
@@ -753,8 +754,8 @@ proc ::tb::prettyTable::exportToCSV {self args} {
     append res "# limit${sepChar}[::tb::prettyTable::list2csv $params(maxNumRows) $sepChar]\n"
     append res "# display_limit${sepChar}[::tb::prettyTable::list2csv $params(maxNumRowsToDisplay) $sepChar]\n"
     append res "# display_columns${sepChar}[::tb::prettyTable::list2csv [list $params(columnsToDisplay)] $sepChar]\n"
-    append res "[::tb::prettyTable::list2csv $header $sepChar]\n"
   }
+  append res "[::tb::prettyTable::list2csv $header $sepChar]\n"
   set count 0
   foreach row $table {
     incr count
