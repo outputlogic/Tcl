@@ -643,6 +643,7 @@ proc ::tb::utils::report_constraints::getVivadoCommands {filename {showproperty 
       }
       if {$cmd == {set_property}} {
        	set value [lindex $args 1]
+       	if {$value == {-quiet}} { set value [lindex $args 2] }
       	# Skip properties SRC_FILE_INFO and src_info
       	if {($value == {SRC_FILE_INFO}) || ($value == {src_info})} {
       		return -code ok
