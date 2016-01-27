@@ -18,11 +18,14 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Description:    Timing constraints summary from XDC or DCP
+## Description:    Constraints summary from XDC or DCP
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.01.26 - Renamed script to report_constraints
+##            - Renamed namespace to report_constraints
+##            - Added support for -all/-property
 ## 2016.01.22 - Added support for -dcp
 ## 2016.01.20 - Added support for 'set_max_delay -datapath_only' as separate constraint
 ##            - Misc enhancements
@@ -46,32 +49,58 @@ exec tclsh "$0" "$@"
 #
 #   step3.xdc      ->      /wrk/xsjhdnobkup2/dpefour/bugcases/932532/step3.xdc
 
-#      +--------------------------------------------------------------------------------+
-#      | Timing Constraints Summary                                                     |
-#      +---------------------+---------------------+---------------+--------------------+
-#      | Constraint          | x_top_early.xdc (0) | x_top.xdc (1) | x_top_late.xdc (2) |
-#      +---------------------+---------------------+---------------+--------------------+
-#      | create_clock        | 3                   | 19            | 0                  |
-#      | set_clock_groups    | 0                   | 101           | 0                  |
-#      | set_input_jitter    | 1                   | 0             | 0                  |
-#      | set_case_analysis   | 15                  | 0             | 0                  |
-#      | set_false_path      | 50                  | 152           | 0                  |
-#      | set_max_delay (DPO) | 0                   | 44            | 4                  |
-#      | set_disable_timing  | 0                   | 0             | 2                  |
-#      +---------------------+---------------------+---------------+--------------------+
+#      +------------------------+--------------------------------+---------------------------+---------------------------------+
+#      | Constraint             | bb200_top_wrapper_late.xdc (0) | bb200_top_wrapper.xdc (1) | bb200_top_wrapper_early.xdc (2) |
+#      +------------------------+--------------------------------+---------------------------+---------------------------------+
+#      | create_clock           | 0                              | 7                         | 9                               |
+#      | create_generated_clock | 0                              | 1                         | 0                               |
+#      | set_clock_groups       | 0                              | 2                         | 0                               |
+#      | set_input_delay        | 0                              | 2                         | 0                               |
+#      | set_output_delay       | 0                              | 2                         | 0                               |
+#      | set_case_analysis      | 0                              | 0                         | 15                              |
+#      | set_false_path         | 23                             | 5                         | 1435                            |
+#      | set_multicycle_path    | 0                              | 8                         | 2                               |
+#      | set_max_delay          | 0                              | 3                         | 0                               |
+#      | set_max_delay (DPO)    | 158                            | 9                         | 512                             |
+#      | set_min_delay          | 0                              | 3                         | 0                               |
+#      | set_disable_timing     | 58                             | 0                         | 0                               |
+#      +------------------------+--------------------------------+---------------------------+---------------------------------+
+#      +---------------------------------------------------------------------------------------------------------------------+
+#      | Vivado Commands Summary                                                                                             |
+#      +----------------------+--------------------------------+---------------------------+---------------------------------+
+#      | Command              | bb200_top_wrapper_late.xdc (0) | bb200_top_wrapper.xdc (1) | bb200_top_wrapper_early.xdc (2) |
+#      +----------------------+--------------------------------+---------------------------+---------------------------------+
+#      | add_cells_to_pblock  | 0                              | 1                         | 2                               |
+#      | all_fanout           | 80                             | 0                         | 0                               |
+#      | create_interface     | 0                              | 0                         | 1                               |
+#      | create_pblock        | 0                              | 2                         | 2                               |
+#      | current_design       | 6659                           | 2168                      | 17138                           |
+#      | current_instance     | 174                            | 5                         | 319                             |
+#      | filter               | 85                             | 0                         | 0                               |
+#      | get_cells            | 304                            | 15                        | 2332                            |
+#      | get_clocks           | 0                              | 38                        | 0                               |
+#      | get_iobanks          | 2                              | 0                         | 0                               |
+#      | get_nets             | 0                              | 12                        | 6                               |
+#      | get_pblocks          | 0                              | 3                         | 4                               |
+#      | get_pins             | 17                             | 43                        | 1149                            |
+#      | get_ports            | 85                             | 1713                      | 74                              |
+#      | make_diff_pair_ports | 0                              | 0                         | 1                               |
+#      | resize_pblock        | 0                              | 2                         | 2                               |
+#      | set_property         | 6663                           | 3868                      | 17233                           |
+#      +----------------------+--------------------------------+---------------------------+---------------------------------+
 
 
 namespace eval ::tb {
-#   namespace export -force report_timing_constraints
+#   namespace export -force report_constraints
 }
 
 namespace eval ::tb::utils {
-  namespace export -force report_timing_constraints
+  namespace export -force report_constraints
 }
 
-namespace eval ::tb::utils::report_timing_constraints {
-  namespace export -force report_timing_constraints
-  variable version {2016.01.22}
+namespace eval ::tb::utils::report_constraints {
+  namespace export -force report_constraints
+  variable version {2016.01.26}
   variable params
   variable output {}
   variable metrics
@@ -79,14 +108,14 @@ namespace eval ::tb::utils::report_timing_constraints {
   array set metrics [list]
 }
 
-proc ::tb::utils::report_timing_constraints::lshift {inputlist} {
+proc ::tb::utils::report_constraints::lshift {inputlist} {
   upvar $inputlist argv
   set arg  [lindex $argv 0]
   set argv [lrange $argv 1 end]
   return $arg
 }
 
-proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
+proc ::tb::utils::report_constraints::report_constraints {args} {
   variable reports
   variable metrics
   variable params
@@ -106,6 +135,8 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
   set refColumn 0
   set returnstring 0
   set standalone 0
+  set reportcommands 0
+  set showproperty 0
   set tmpDir {}
   set error 0
   set help 0
@@ -126,6 +157,12 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
       }
       {^-csv?$} {
         set params(format) {csv}
+      }
+      {^-all?$} {
+        set reportcommands 1
+      }
+      {^-pr(o(p(e(r(ty?)?)?)?)?)?$} {
+        set showproperty 1
       }
       {^-xdc?$} {
         foreach pattern [lshift args] {
@@ -180,9 +217,10 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
 
   if {$help} {
     puts [format {
-  Usage: report_timing_constraints
+  Usage: report_constraints
               [<pattern>][-xdc <pattern>]
               [-dcp <checkpoint>]
+              [-all][-property]
               [-current_design]
               [-file <filename>]
               [-append]
@@ -191,13 +229,19 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
               [-verbose|-v]
               [-help|-h]
 
-  Description: Timing constraints summary from XDC or DCP
+  Description: Constraints summary from XDC or DCP
+  
+    Use -all to report all Vivado commands. By default, only
+    timing constraints are reported.
+    
+    Use -property with -all to show property values used
+    with set_property command.
 
   Example:
-     tb::report_timing_constraints -current_design
-     tb::report_timing_constraints -xdc '*xdc' -return_string
-     tb::report_timing_constraints -xdc '*xdc' -csv -file result.csv
-     tb::report_timing_constraints -dcp top.dcp -csv -file result.csv
+     tb::report_constraints -current_design
+     tb::report_constraints -xdc '*xdc' -all -return_string
+     tb::report_constraints -xdc '*xdc' -csv -file result.csv
+     tb::report_constraints -dcp top.dcp -csv -file result.csv
 } ]
     # HELP -->
     return -code ok
@@ -238,6 +282,11 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     incr error
   }
 
+  if {$showproperty && !$reportcommands} {
+    puts " -W- -property must be used with -all. Command line option ignored"
+#     incr error
+  }
+
   if {$checkpoint != {}} {
     set checkpoint [file normalize $checkpoint]
     if {![file exists $checkpoint]} {
@@ -256,13 +305,18 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
   if {$currentDesign} {
     # Generate XDC from current design
     set xdc [file normalize [format {write_xdc.%s} [clock seconds]]]
-    write_xdc -quiet -exclude_physical -file $xdc
+    if {$reportcommands} {
+      write_xdc -quiet -file $xdc
+    } else {
+      write_xdc -quiet -exclude_physical -file $xdc
+    }
+#     write_xdc -quiet -exclude_physical -file $xdc
     dputs " -D- writing XDC file '$xdc'"
     set ifilenames $xdc
   }
 
   if {$checkpoint != {}} {
-    set tmpDir [file normalize [format {report_timing_constraints.%s} [clock seconds]] ]
+    set tmpDir [file normalize [format {report_constraints.%s} [clock seconds]] ]
     # Extract XDC inside temp directory
     uplevel #0 [list exec unzip $checkpoint *.xdc -d $tmpDir ]
     set ifilenames [glob -nocomplain $tmpDir/*xdc]
@@ -298,7 +352,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
                       group_path \
                       set_disable_timing \
                       set_bus_skew ]
-
+    set allCommands [list]
     set index -1
     set numColumns [llength $ifilenames]
     catch {unset metrics}
@@ -310,15 +364,18 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
       foreach el $timCons {
         set commands($el) 0
       }
-      set res [getVivadoCommands $file]
+      set res [getVivadoCommands $file $showproperty]
       array set commands $res
-
-      foreach el $timCons {
+      # Save the list of commands used in this XDC
+      set allCommands [concat $allCommands [array names commands]]
+      
+      foreach el [array names commands] {
         if {$commands($el) != 0} {
           set metrics(${index}:${el}) $commands($el)
         }
       }
     }
+    set allCommands [lsort -unique $allCommands]
 
     ########################################################################################
     ##
@@ -326,7 +383,6 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     ##
     ########################################################################################
 
-#     set tbl [::tb::prettyTable {Design Summary}]
     set tbl [::Table::Create {Timing Constraints Summary}]
     $tbl indent 1
     set header [list {Constraint}]
@@ -384,6 +440,72 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
     }
     catch {$tbl destroy}
 
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+    if {$reportcommands} {
+      set tbl [::Table::Create {Vivado Commands Summary}]
+      $tbl indent 1
+      set header [list {Command}]
+      if {$currentDesign} {
+        lappend header {<CURRENT_DESIGN>}
+      } else {
+        set index -1
+        foreach file $ifilenames {
+          incr index
+          lappend header [format {%s (%d)} [file tail $file] $index]
+        }
+      }
+      $tbl header $header
+#       $tbl configure -indent 2
+      foreach command $allCommands {
+      	if {[lsearch $timCons $command] != -1} {
+      		# Skip timing reconstraints since they have already been reported
+      		continue 
+      	}
+        set row [list $command]
+        for {set index 0} {$index < $numColumns} {incr index} {
+          if {[info exists metrics(${index}:${command})]} {
+            lappend row $metrics(${index}:${command})
+          } else {
+            lappend row 0
+          }
+        }
+        if {[lsort -unique [lrange $row 1 end]] == {0}} {
+          # If none of the XDC have this constraint, then skip it:
+          # Eg: row = {set_clock_groups 0 0 0 0}
+          continue
+        }
+        $tbl addrow $row
+      }
+      
+#       set output [concat $output [split [$tbl export -format $params(format)] \n] ]
+      switch $params(format) {
+        table {
+          set output [concat $output [split [$tbl print] \n] ]
+        }
+        csv {
+          set output [concat $output [split [$tbl csv] \n] ]
+          if {$ofilename != {}} {
+            # Append a comment out version of the table
+            foreach line [split [$tbl print] \n] {
+              lappend output [format {#  %s} $line]
+            }
+          }
+        }
+      }
+      catch {$tbl destroy}
+    }   
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
     if {$currentDesign} {
       # When -current_design has been used, do not generate the footer
       # with the filename
@@ -432,12 +554,12 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
   }
 
   set stopTime [clock seconds]
-#   puts " -I- report_timing_constraints completed in [expr $stopTime - $startTime] seconds"
+#   puts " -I- report_constraints completed in [expr $stopTime - $startTime] seconds"
 
   if {$ofilename != {}} {
     set FH [open $ofilename $filemode]
     puts $FH "# ---------------------------------------------------------------------------------"
-    puts $FH [format {# Created on %s with report_timing_constraints (%s)} [clock format [clock seconds]] $::tb::utils::report_timing_constraints::version ]
+    puts $FH [format {# Created on %s with report_constraints (%s)} [clock format [clock seconds]] $::tb::utils::report_constraints::version ]
     puts $FH "# ---------------------------------------------------------------------------------\n"
     puts $FH [join $output \n]
     close $FH
@@ -458,7 +580,7 @@ proc ::tb::utils::report_timing_constraints::report_timing_constraints {args} {
 ##
 ##
 ########################################################################################
-proc ::tb::utils::report_timing_constraints::presort_list {l1 l2} {
+proc ::tb::utils::report_constraints::presort_list {l1 l2} {
   set l [list]
   foreach el $l1 {
     if {[lsearch $l2 $el] != -1} {
@@ -473,7 +595,7 @@ proc ::tb::utils::report_timing_constraints::presort_list {l1 l2} {
   return $l
 }
 
-proc ::tb::utils::report_timing_constraints::dputs {args} {
+proc ::tb::utils::report_constraints::dputs {args} {
   variable params
   if {$params(debug)} {
     eval [concat puts $args]
@@ -482,7 +604,7 @@ proc ::tb::utils::report_timing_constraints::dputs {args} {
 }
 
 # Generate a list of integers
-proc ::tb::utils::report_timing_constraints::iota {from to} {
+proc ::tb::utils::report_constraints::iota {from to} {
   set out [list]
   if {$from <= $to} {
     for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
@@ -499,14 +621,17 @@ proc ::tb::utils::report_timing_constraints::iota {from to} {
 #   create_generated_clock 67 set_clock_groups 292 current_instance 10 \
 #   set_case_analysis 15 get_cells 191 get_clocks 717 get_ports 26 create_clock 12
 
-proc ::tb::utils::report_timing_constraints::getVivadoCommands {filename} {
+proc ::tb::utils::report_constraints::getVivadoCommands {filename {showproperty 0}} {
   set slave [interp create]
   $slave eval [format {
     catch {unset commands}
     global commands
+    global showproperty
+    set showproperty %s
 
     proc unknown {args} {
       global commands
+      global showproperty
       set cmd [lindex $args 0]
       if {[regexp {^[0-9]$} $cmd]} {
         return -code ok
@@ -516,6 +641,23 @@ proc ::tb::utils::report_timing_constraints::getVivadoCommands {filename} {
       } elseif {($cmd == {set_max_delay}) && ([lsearch -regexp $args {-datapath}] != -1)} {
         set cmd {set_max_delay_DPO}
       }
+      if {$cmd == {set_property}} {
+       	set value [lindex $args 1]
+      	# Skip properties SRC_FILE_INFO and src_info
+      	if {($value == {SRC_FILE_INFO}) || ($value == {src_info})} {
+      		return -code ok
+      	}
+      	# If the command is set_property, then save the property value as well.
+      	# For example: 
+      	#   set_property (CLOCK_DEDICATED_ROUTE)
+      	#   set_property (USER_CLOCK_ROOT)
+      	if {$showproperty} {
+      		# Show property value
+          set cmd "${cmd} (${value})"
+        } else {
+        	# Hide the property value
+        }
+      }
       if {![info exists commands($cmd)]} {
         set commands($cmd) 0
       }
@@ -524,7 +666,7 @@ proc ::tb::utils::report_timing_constraints::getVivadoCommands {filename} {
     }
 
     source %s
-  } $filename ]
+  } $showproperty $filename ]
 
   set result [$slave eval array get commands]
   interp delete $slave
@@ -532,16 +674,16 @@ proc ::tb::utils::report_timing_constraints::getVivadoCommands {filename} {
 }
 
 namespace eval ::tb::utils {
-  namespace import -force ::tb::utils::report_timing_constraints::report_timing_constraints
+  namespace import -force ::tb::utils::report_constraints::report_constraints
 }
 
 namespace eval ::tb {
-  namespace import -force ::tb::utils::report_timing_constraints
+  namespace import -force ::tb::utils::report_constraints
 }
 
 ###########################################################################
 ##
-## Simple package to handle printing of tables
+## Simple package to Handle printing of tables
 ##
 ## %> set tbl [Table::Create {this is my title}]
 ## %> $tbl header [list "name" "#Pins" "case_value" "user_case_value"]
@@ -795,7 +937,7 @@ proc ::Table::list2csv { list {sepChar ,} } {
 if {[file tail [info script]]!=[file tail $argv0]} {
   # This file is sourced
 } else {
-  if {[catch {eval [concat ::tb::utils::report_timing_constraints::report_timing_constraints -standalone $argv]} errorstring]} {
+  if {[catch {eval [concat ::tb::utils::report_constraints::report_constraints -standalone $argv]} errorstring]} {
     puts $errorstring
     exit 1
   }
