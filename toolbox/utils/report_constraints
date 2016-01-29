@@ -23,6 +23,7 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
+## 2016.01.28 - Ordered XDC files when reading DCP
 ## 2016.01.26 - Renamed script to report_constraints
 ##            - Renamed namespace to report_constraints
 ##            - Added support for -all/-property
@@ -100,7 +101,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_constraints {
   namespace export -force report_constraints
-  variable version {2016.01.26}
+  variable version {2016.01.28}
   variable params
   variable output {}
   variable metrics
@@ -327,7 +328,7 @@ proc ::tb::utils::report_constraints::report_constraints {args} {
     set tmpDir [file normalize [format {report_constraints.%s} [clock seconds]] ]
     # Extract XDC inside temp directory
     uplevel #0 [list exec unzip $checkpoint *.xdc -d $tmpDir ]
-    set ifilenames [glob -nocomplain $tmpDir/*xdc]
+    set ifilenames [lsort [glob -nocomplain $tmpDir/*xdc]]
   }
 
   if {[catch {
