@@ -19,6 +19,9 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.01.28 - Fixed metric pattern (check_timing)
+##            - Code re-organization
+##            - Added support for -rts/-rct/-rda/-rrs/-rci/-ru/-rru
 ## 2016.01.22 - Added support for -suppress
 ## 2016.01.20 - Updated label for congestion metrics
 ## 2016.01.18 - Added tag metrics
@@ -157,12 +160,12 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_design_summary {
   namespace export -force report_design_summary
-  variable version {2016.01.22}
+  variable version {2016.01.28}
   variable params
   variable output {}
   variable reports
   variable metrics
-  array set params [list format {table} verbose 0 debug 0]
+  array set params [list vivado 1 format {table} verbose 0 debug 0]
   array set reports [list]
   array set metrics [list]
 }
@@ -181,6 +184,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   variable output
   catch {unset metrics}
   catch {unset reports}
+  set params(vivado) 1
   set params(verbose) 0
   set params(debug) 0
   set params(format) {table}
@@ -194,6 +198,13 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set experiment {}
   set step {}
   set showdetails 0
+  set reportTimingSummary {}
+  set reportDesignAnalysis {}
+  set reportRamUtilization {}
+  set reportCheckTiming {}
+  set reportUtilization {}
+  set reportClockInteraction {}
+  set reportRouteStatus {}
   set error 0
   set help 0
 #   if {[llength $args] == 0} {
@@ -246,22 +257,79 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         lappend sections {congestion}
       }
       {^-pr(o(j(e(ct?)?)?)?)?$} {
-           set project [lshift args]
+        set project [lshift args]
       }
       {^-ve(r(s(i(on?)?)?)?)?$} {
-           set version [lshift args]
+        set version [lshift args]
       }
       {^-ex(p(e(r(i(m(e(nt?)?)?)?)?)?)?)?$} {
-           set experiment [lshift args]
+        set experiment [lshift args]
       }
       {^-st(ep?)?$} {
-           set step [lshift args]
+        set step [lshift args]
       }
       {^-de(t(a(i(ls?)?)?)?)?$} {
-           set showdetails 1
+        set showdetails 1
       }
       {^-r(e(t(u(r(n(_(s(t(r(i(ng?)?)?)?)?)?)?)?)?)?)?)?$} {
         set returnstring 1
+      }
+      -rts -
+      -report_timing_summary {
+        set reportTimingSummary [lshift args]
+        if {![file exists $reportTimingSummary]} {
+          puts " -E- file '$reportTimingSummary' does not exist"
+          incr error
+       }
+      }
+      -ct -
+      -rct -
+      -report_check_timing {
+        set reportCheckTiming [lshift args]
+        if {![file exists $reportCheckTiming]} {
+          puts " -E- file '$reportCheckTiming' does not exist"
+          incr error
+       }
+      }
+      -rda -
+      -report_design_analysis {
+        set reportDesignAnalysis [lshift args]
+        if {![file exists $reportDesignAnalysis]} {
+          puts " -E- file '$reportDesignAnalysis' does not exist"
+          incr error
+       }
+      }
+      -rci -
+      -report_clock_interaction {
+        set reportClockInteraction [lshift args]
+        if {![file exists $reportClockInteraction]} {
+          puts " -E- file '$reportClockInteraction' does not exist"
+          incr error
+       }
+      }
+      -ru -
+      -report_utilization {
+        set reportUtilization [lshift args]
+        if {![file exists $reportUtilization]} {
+          puts " -E- file '$reportUtilization' does not exist"
+          incr error
+       }
+      }
+      -rru -
+      -report_ram_utilization {
+        set reportRamUtilization [lshift args]
+        if {![file exists $reportRamUtilization]} {
+          puts " -E- file '$reportRamUtilization' does not exist"
+          incr error
+       }
+      }
+      -rrs -
+      -report_route_status {
+        set reportRouteStatus [lshift args]
+        if {![file exists $reportRouteStatus]} {
+          puts " -E- file '$reportRouteStatus' does not exist"
+          incr error
+       }
       }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
@@ -302,6 +370,14 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-experiment <string>]
               [-step <string>]
             +--------------------+
+              [-rts <filename>|-report_timing_summary <filename>]
+              [-rct <filename>|-report_check_timing <filename>]
+              [-rda <filename>|-report_design_analysis <filename>]
+              [-rci <filename>|-report_clock_interaction <filename>]
+              [-ru <filename>|-report_utilization <filename>]
+              [-rru <filename>|-report_ram_utilization <filename>]
+              [-rrs <filename>|-report_route_status <filename>]
+            +--------------------+
               [-details]
               [-suppress]
               [-file <filename>]
@@ -316,6 +392,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     Use -details with -file to append full reports
     Use -project/-version/-experiment/-step to save informative tags
     Use -suppress to suppress metrics that have not been found
+    Use -rts/-ct/-rda/-rrs/-rci/-ru/-rru to import on-disk reports
 
   Example:
      tb::report_design_summary -file myreport.rpt -details -all
@@ -339,6 +416,21 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     error " -E- some error(s) happened. Cannot continue"
   }
 
+  if {[lsearch -exact [package names] {Vivado}] == -1} {
+    # If Vivado package is not found, then the script is not
+    # running inside a Vivado session
+    set params(vivado) 0
+  }
+
+  # Import on-disk reports
+  if {[file exists $reportTimingSummary]}    { importReport {report_timing_summary}    $reportTimingSummary }
+  if {[file exists $reportCheckTiming]}      { importReport {check_timing}             $reportCheckTiming }
+  if {[file exists $reportDesignAnalysis]}   { importReport {report_design_analysis}   $reportDesignAnalysis }
+  if {[file exists $reportRamUtilization]}   { importReport {report_ram_utilization}   $reportRamUtilization }
+  if {[file exists $reportUtilization]}      { importReport {report_utilization}       $reportUtilization }
+  if {[file exists $reportClockInteraction]} { importReport {report_clock_interaction} $reportClockInteraction }
+  if {[file exists $reportRouteStatus]}      { importReport {report_route_status}      $reportRouteStatus }
+
   set startTime [clock seconds]
   set output [list]
 
@@ -351,7 +443,6 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {default}] != -1} {
-
       addMetric {vivado.version}   {Vivado Release}
       addMetric {vivado.plateform} {Plateform}
       addMetric {vivado.os}        {OS}
@@ -363,9 +454,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       setMetric {vivado.plateform} $::tcl_platform(platform)
       setMetric {vivado.os}        $::tcl_platform(os)
       setMetric {vivado.osVersion} $::tcl_platform(osVersion)
-      setMetric {vivado.top}       [get_property -quiet TOP [current_design -quiet]]
-      setMetric {vivado.dir}       [get_property -quiet XLNX_PROJ_DIR [current_design -quiet]]
-
+      if {$params(vivado)} {
+        setMetric {vivado.top}       [get_property -quiet TOP [current_design -quiet]]
+        setMetric {vivado.dir}       [get_property -quiet XLNX_PROJ_DIR [current_design -quiet]]
+      }
     }
 
     ########################################################################################
@@ -392,8 +484,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ##
     ########################################################################################
 
-    if {[lsearch $sections {default}] != -1} {
-
+    if {([lsearch $sections {default}] != -1) && $params(vivado)} {
       addMetric {design.part}                 {Part}
       addMetric {design.nets}                 {Number of nets}
       addMetric {design.nets.slls}            {Number of SLL nets}
@@ -434,7 +525,6 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       setMetric {design.clocks.usergenerated} [llength [filter -quiet $clocks {!IS_VIRTUAL && IS_GENERATED && IS_USER_GENERATED}] ]
       setMetric {design.clocks.autoderived}   [llength [filter -quiet $clocks {!IS_VIRTUAL && IS_GENERATED && !IS_USER_GENERATED}] ]
       setMetric {design.clocks.virtual}       [llength [filter -quiet $clocks {IS_VIRTUAL}] ]
-
     }
 
     ########################################################################################
@@ -444,7 +534,6 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {timing}] != -1} {
-
       addMetric {timing.wns}           {WNS}
       addMetric {timing.tns}           {TNS}
       addMetric {timing.tnsFallingEp}  {TNS Failing Endpoints}
@@ -462,7 +551,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {timing.whs.spclock}   {WHS Startpoint Clock}
       addMetric {timing.whs.epclock}   {WHS Endpoint Clock}
 
+      # Get report
       set report [split [getReport {report_timing_summary} {-quiet -no_detailed_paths -no_check_timing -no_header}] \n]
+
+      # Extract metrics
       if {[set i [lsearch -regexp $report {Design Timing Summary}]] != -1} {
          foreach {wns tns tnsFallingEp tnsTotalEp whs ths thsFallingEp thsTotalEp wpws tpws tpwsFailingEp tpwsTotalEp} [regexp -inline -all -- {\S+} [lindex $report [expr $i + 6]]] { break }
          setMetric {timing.wns}           $wns
@@ -478,7 +570,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
          setMetric {timing.tpwsFailingEp} $tpwsFailingEp
          setMetric {timing.tpwsTotalEp}   $tpwsTotalEp
       }
+    }
 
+    if {([lsearch $sections {timing}] != -1) && $params(vivado)} {
       # Saving startpoint/endpoint clock(s) of WNS path
       set wnsPath [get_timing_paths -quiet -setup -max_paths 1]
       set spClk [get_property -quiet STARTPOINT_CLOCK $wnsPath]
@@ -494,7 +588,6 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       setMetric {timing.whs.spclock}   $spClk
       setMetric {timing.whs.epclock}   $epClk
       setReport {WHS} [report_timing -quiet -of $whsPath -return_string]
-
     }
 
     ########################################################################################
@@ -504,7 +597,6 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {check_timing}] != -1} {
-
       addMetric {checktiming.no_clock}             {check_timing (no_clock)}
       addMetric {checktiming.constant_clock}       {check_timing (constant_clock)}
       addMetric {checktiming.pulse_width_clock}    {check_timing (pulse_width_clock)}
@@ -519,45 +611,33 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {checktiming.partial_output_delay} {check_timing (partial_output_delay)}
       addMetric {checktiming.latch_loops}          {check_timing (latch_loops)}
 
-      set report {}
-      catch {
-        set file [format {check_timing.%s} [clock seconds]]
-        check_timing -quiet -file $file
-        set FH [open $file {r}]
-        set report [read $FH]
-        close $FH
-        if {!$params(debug)} {
-          # Keep the file in debug mode
-          file delete $file
-        } else {
-          dputs " -I- writing check_timing file '$file'"
-        }
-      }
-      setReport {check_timing} $report
+      # Get report
+      set report [getReport {check_timing}]
 
-      extractMetric {check_timing} {checktiming.no_clock}                     {\s+There are\s+([0-9\.]+)\s+register/latch pins with no clock}                 {n/a}
-      extractMetric {check_timing} {checktiming.constant_clock}               {\s+There are\s+([0-9\.]+)\s+register/latch pins with constant_clock}           {n/a}
-      extractMetric {check_timing} {checktiming.pulse_width_clock}            {\s+There are\s+([0-9\.]+)\s+register/latch pins which need pulse_width check}  {n/a}
+      # Extract metrics
+      extractMetric {check_timing} {checktiming.no_clock}                     {\s+There.+\s+([0-9\.]+)\s+register/latch pins with no clock}                 {n/a}
+      extractMetric {check_timing} {checktiming.constant_clock}               {\s+There.+\s+([0-9\.]+)\s+register/latch pins with constant_clock}           {n/a}
+      extractMetric {check_timing} {checktiming.pulse_width_clock}            {\s+There.+\s+([0-9\.]+)\s+register/latch pins which need pulse_width check}  {n/a}
 
-      set res1 [extractMetric {check_timing} {checktiming.unconstrained_internal_endpoints}     {\s+There are\s+([0-9\.]+)\s+pins that are not constrained for maximum delay\.}  0 0]
-      set res2 [extractMetric {check_timing} {checktiming.unconstrained_internal_endpoints}     {\s+There are\s+([0-9\.]+)\s+pins that are not constrained for maximum delay due to constant clock}  0 0]
+      set res1 [extractMetric {check_timing} {checktiming.unconstrained_internal_endpoints}     {\s+There.+\s+([0-9\.]+)\s+pins that are not constrained for maximum delay\.}  0 0]
+      set res2 [extractMetric {check_timing} {checktiming.unconstrained_internal_endpoints}     {\s+There.+\s+([0-9\.]+)\s+pins that are not constrained for maximum delay due to constant clock}  0 0]
       setMetric {checktiming.unconstrained_internal_endpoints} [expr $res1 + $res2]
 
-      set res1 [extractMetric {check_timing} {checktiming.no_input_delay}     {\s+There.+\s+([0-9\.]+)\s+input port with no input delay specified}  0 0]
-      set res2 [extractMetric {check_timing} {checktiming.no_input_delay}     {\s+There are\s+([0-9\.]+)\s+input ports with no input delay but user has a false path constraint}  0 0]
+      set res1 [extractMetric {check_timing} {checktiming.no_input_delay}     {\s+There.+\s+([0-9\.]+)\s+input ports? with no input delay specified}  0 0]
+      set res2 [extractMetric {check_timing} {checktiming.no_input_delay}     {\s+There.+\s+([0-9\.]+)\s+input ports? with no input delay but user has a false path constraint}  0 0]
       setMetric {checktiming.no_input_delay} [expr $res1 + $res2]
 
-      set res1 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There are\s+([0-9\.]+)\s+ports with no output delay specified}  0 0]
-      set res2 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There are\s+([0-9\.]+)\s+ports with no output delay but user has a false path constraint}  0 0]
-      set res3 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There are\s+([0-9\.]+)\s+ports with no output delay but with a timing clock defined on it or propagating through it}  0 0]
+      set res1 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There.+\s+([0-9\.]+)\s+ports with no output delay specified}  0 0]
+      set res2 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There.+\s+([0-9\.]+)\s+ports with no output delay but user has a false path constraint}  0 0]
+      set res3 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There.+\s+([0-9\.]+)\s+ports with no output delay but with a timing clock defined on it or propagating through it}  0 0]
       setMetric {checktiming.no_output_delay} [expr $res1 + $res2 + $res3]
 
-      extractMetric {check_timing} {checktiming.multiple_clock}               {\s+There are\s+([0-9\.]+)\s+register/latch pins with multiple clocks}                    {n/a}
-      extractMetric {check_timing} {checktiming.generated_clocks}             {\s+There are\s+([0-9\.]+)\s+generated clocks that are not connected to a clock source}   {n/a}
-      extractMetric {check_timing} {checktiming.loops}                        {\s+There are\s+([0-9\.]+)\s+combinational loops in the design}                           {n/a}
-      extractMetric {check_timing} {checktiming.partial_input_delay}          {\s+There are\s+([0-9\.]+)\s+input ports with partial input delay specified}              {n/a}
-      extractMetric {check_timing} {checktiming.partial_output_delay}         {\s+There are\s+([0-9\.]+)\s+ports with partial output delay specified}                   {n/a}
-      extractMetric {check_timing} {checktiming.latch_loops}                  {\s+There are\s+([0-9\.]+)\s+combinational latch loops in the design through latch input} {n/a}
+      extractMetric {check_timing} {checktiming.multiple_clock}               {\s+There.+\s+([0-9\.]+)\s+register/latch pins with multiple clocks}                    {n/a}
+      extractMetric {check_timing} {checktiming.generated_clocks}             {\s+There.+\s+([0-9\.]+)\s+generated clocks that are not connected to a clock source}   {n/a}
+      extractMetric {check_timing} {checktiming.loops}                        {\s+There.+\s+([0-9\.]+)\s+combinational loops in the design}                           {n/a}
+      extractMetric {check_timing} {checktiming.partial_input_delay}          {\s+There.+\s+([0-9\.]+)\s+input ports with partial input delay specified}              {n/a}
+      extractMetric {check_timing} {checktiming.partial_output_delay}         {\s+There.+\s+([0-9\.]+)\s+ports with partial output delay specified}                   {n/a}
+      extractMetric {check_timing} {checktiming.latch_loops}                  {\s+There.+\s+([0-9\.]+)\s+combinational latch loops in the design through latch input} {n/a}
 
       if {$suppress} {
         # Cleaning: remove metrics that have values of 0 or n/a
@@ -572,9 +652,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {clock_interaction}] != -1} {
-
+      # Get report
       set report [getReport {report_clock_interaction} {-quiet -no_header}]
 
+      # Extract metrics
       set clock_interaction_table [::tb::utils::report_design_summary::parseClockInteractionReport $report]
       set colFromClock -1
       set colToClock -1
@@ -668,11 +749,13 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {congestion}] != -1} {
-
       addMetric {congestion.placer}    {Placer Congestion (N-S-E-W)}
       addMetric {congestion.router}    {Router Congestion (N-S-E-W)}
 
+      # Get report
       set report [getReport {report_design_analysis} {-quiet -congestion -no_header}]
+
+      # Extract metrics
       set congestion [::tb::utils::report_design_summary::parseRDACongestion $report]
       setMetric {congestion.placer}  [lindex $congestion 0]
       setMetric {congestion.router}  [lindex $congestion 1]
@@ -689,8 +772,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ##
     ########################################################################################
 
-    if {[lsearch $sections {constraints}] != -1} {
-
+    if {([lsearch $sections {constraints}] != -1) && $params(vivado)} {
       # All tracked timing constraints
       set timCons [list create_clock \
                         create_generated_clock \
@@ -753,10 +835,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {utilization}] != -1} {
-
+      # Get report
       set report [getReport {report_utilization} {-quiet}]
-#       if {![regexp {\|\s+CLB LUTs[^\|]*\s*\|\s+([0-9\.]+)\s+\|} $report -- val]} { set val {n/a} } ; setMetric design.clb.lut $val
-#       if {![regexp {\|\s+CLB LUTs[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} $report -- val]} { set val {n/a} } ; setMetric design.clb.lut.pct $val
 
       # +-------------------------------------------------------------+----------+-------+-----------+-------+
       # |                          Site Type                          |   Used   | Fixed | Available | Util% |
@@ -859,7 +939,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {utilization}] != -1} {
+      addMetric {utilization.ram.blockram}       {RAM (Blocks)}
+      addMetric {utilization.ram.distributedram} {RAM (Distributed)}
 
+      # Get report
       set report [getReport {report_ram_utilization} {-quiet}]
 
       # +----------------+------------+
@@ -882,12 +965,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       # |       RAM32M16 |       2668 |
       # +----------------+------------+
 
-      addMetric {utilization.ram.blockram}       {RAM (Blocks)}
-      addMetric {utilization.ram.distributedram} {RAM (Distributed)}
-
+      # Extract metrics
       extractMetric {report_ram_utilization} {utilization.ram.blockram}        {\|\s+BlockRAM[^\|]*\s*\|\s+([0-9\.]+)\s+\|}        {n/a}
       extractMetric {report_ram_utilization} {utilization.ram.distributedram}  {\|\s+DistributedRAM[^\|]*\s*\|\s+([0-9\.]+)\s+\|}  {n/a}
-
     }
 
     ########################################################################################
@@ -897,7 +977,12 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {route_status}] != -1} {
+      addMetric {route.errors}    {Nets with routing errors}
+      addMetric {route.routed}    {Fully routed nets}
+      addMetric {route.fixed}     {Nets with fixed routing}
+      addMetric {route.nets}      {Routable nets}
 
+      # Get report
       set report [getReport {report_route_status} {-quiet}]
 
       #                                               :      # nets :
@@ -925,16 +1010,11 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       #           # of nets with some unrouted pins.. :        2164 :
       #   ------------------------------------------- : ----------- :
 
-      addMetric {route.errors}    {Nets with routing errors}
-      addMetric {route.routed}    {Fully routed nets}
-      addMetric {route.fixed}     {Nets with fixed routing}
-      addMetric {route.nets}      {Routable nets}
-
+      # Extract metrics
       extractMetric {report_route_status} {route.errors} {nets with routing errors[^\:]+\:\s*([0-9]+)\s*\:}        {n/a}
       extractMetric {report_route_status} {route.routed} {fully routed nets[^\:]+\:\s*([0-9]+)\s*\:}               {n/a}
       extractMetric {report_route_status} {route.fixed}  {nets with fixed routing[^\:]+\:\s*([0-9]+)\s*\:}         {n/a}
       extractMetric {report_route_status} {route.nets}   {routable nets[^\:]+\:\s*([0-9]+)\s*\:}                   {n/a}
-
    }
 
     ########################################################################################
@@ -1065,8 +1145,13 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     }
     close $FH
     puts " -I- Generated file [file normalize $filename]"
+    # Remove metrics and reports
+    reset
     return -code ok
   }
+
+  # Remove metrics and reports
+  reset
 
   if {$returnstring} {
     return [join $output \n]
@@ -1081,6 +1166,30 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 ##
 ##
 ########################################################################################
+proc ::tb::utils::report_design_summary::reset {} {
+  variable reports
+  variable metrics
+  catch { unset reports }
+  catch { unset metrics }
+  return -code ok
+}
+
+proc ::tb::utils::report_design_summary::importReport {name filename} {
+  variable reports
+  if {![file exists $filename]} {
+    puts " -E- file '$filename' does not exist"
+    return -code ok
+  }
+  if {[info exists reports($name)]} {
+    puts "Found report $name. Overridding report."
+  }
+  set FH [open $filename {r}]
+  set report [read $FH]
+  close $FH
+  set reports($name) $report
+  return $report
+}
+
 proc ::tb::utils::report_design_summary::setReport {name report} {
   variable reports
   if {[info exists reports($name)]} {
@@ -1092,13 +1201,33 @@ proc ::tb::utils::report_design_summary::setReport {name report} {
 
 proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
   variable reports
+  variable params
   if {[info exists reports($name)]} {
     puts "Found report $name"
     return $reports($name)
   }
   set res {}
-  if {[catch { set res [eval [concat $name $options -return_string]] } errorstring]} {
-    puts " -E- $errorstring"
+  switch $name {
+    check_timing {
+      catch {
+        set file [format {check_timing.%s} [clock seconds]]
+        check_timing -quiet -file $file
+        set FH [open $file {r}]
+        set res [read $FH]
+        close $FH
+        if {!$params(debug)} {
+          # Keep the file in debug mode
+          file delete $file
+        } else {
+          dputs " -I- writing check_timing file '$file'"
+        }
+      }
+    }
+    default {
+      if {[catch { set res [eval [concat $name $options -return_string]] } errorstring]} {
+        puts " -E- $errorstring"
+      }
+    }
   }
 #   puts "report $name: $res"
   set reports($name) $res
