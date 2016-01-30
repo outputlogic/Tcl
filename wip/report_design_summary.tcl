@@ -801,6 +801,31 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     }
 
+
+    ########################################################################################
+    ##
+    ## Congestion metrics
+    ##
+    ########################################################################################
+
+    if {[lsearch $sections {congestion}] != -1} {
+      addMetric {congestion.placer}    {Placer Congestion (N-S-E-W)}
+      addMetric {congestion.router}    {Router Congestion (N-S-E-W)}
+
+      # Get report
+      set report [getReport {report_design_analysis} {-quiet -congestion -no_header}]
+
+      # Extract metrics
+      set congestion [::tb::utils::report_design_summary::parseRDACongestion $report]
+      setMetric {congestion.placer}  [lindex $congestion 0]
+      setMetric {congestion.router}  [lindex $congestion 1]
+
+      if {$suppress} {
+        # Cleaning: remove metrics that have values of u-u-u-u
+        delMetrics congestion.* [list {u-u-u-u}]
+      }
+    }
+
     ########################################################################################
     ##
     ## Constraints metrics
