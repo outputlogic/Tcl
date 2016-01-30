@@ -455,6 +455,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     if {![file exists $script]} {
       puts " -E- file '$script' does not exist"
       incr error
+    } else {
+    	set script [file normalize $script]
     }
   }
 
@@ -883,7 +885,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
           # Keep the file in debug mode
           file delete $xdc
         } else {
-          dputs " -I- writing XDC file '$xdc'"
+          dputs " -D- writing XDC file '$xdc'"
         }
       }
 
@@ -1318,6 +1320,7 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
     return $reports($name)
   }
   set res {}
+  set startTime [clock seconds]
   switch $name {
     report_cdc {
       # Only get the first table of the detailed report:
@@ -1350,7 +1353,7 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
           # Keep the file in debug mode
           file delete $file
         } else {
-          dputs " -I- writing report_cdc file '$file'"
+          dputs " -D- writing report_cdc file '$file'"
         }
       }
     }
@@ -1365,7 +1368,7 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
           # Keep the file in debug mode
           file delete $file
         } else {
-          dputs " -I- writing check_timing file '$file'"
+          dputs " -D- writing check_timing file '$file'"
         }
       }
     }
@@ -1375,6 +1378,8 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
       }
     }
   }
+  set stopTime [clock seconds]
+  if {$params(verbose)} { puts " -I- report '$name' completed in [expr $stopTime - $startTime] seconds" }
 #   puts "report $name: $res"
   set reports($name) $res
   return $res
@@ -1394,13 +1399,22 @@ proc ::tb::utils::report_design_summary::addMetric {name {description {}}} {
   return -code ok
 }
 
+proc ::tb::utils::report_design_summary::getMetric {name} {
+  variable metrics
+  if {![info exists metrics(${name}:def)]} {
+    puts " -E- metric '$name' does not exist"
+    return {}
+  }
+  return $metrics(${name}:val)
+}
+
 proc ::tb::utils::report_design_summary::setMetric {name value} {
   variable metrics
   if {![info exists metrics(${name}:def)]} {
     puts " -E- metric '$name' does not exist"
     return -code ok
   }
-  dputs " -I- setting: $name = $value"
+  dputs " -D- setting: $name = $value"
   set metrics(${name}:def) 2
   set metrics(${name}:val) $value
   return -code ok
@@ -1416,13 +1430,13 @@ proc ::tb::utils::report_design_summary::delMetrics {pattern {values {__UnSeT__}
   foreach name $names {
     regsub {:def} $name {} name
     if {$values == {__UnSeT__}} {
-      dputs " -I- removing: $name"
+      dputs " -D- removing: $name"
       array unset metrics ${name}:*
     } else {
       # If a list of values is passed to the proc, then unset the
       # metric only if its value matches one of the provided values
       if {[lsearch -exact $values $metrics(${name}:val)] != -1} {
-        dputs " -I- removing: $name (value='$metrics(${name}:val)')"
+        dputs " -D- removing: $name (value='$metrics(${name}:val)')"
         array unset metrics ${name}:*
       }
     }
@@ -1438,20 +1452,20 @@ proc ::tb::utils::report_design_summary::extractMetric {report name exp {notfoun
     return -code ok
   }
   if {[info exists reports($report)]} {
-    dputs " -I- found report '$report'"
+    dputs " -D- found report '$report'"
     set report $reports($report)
   } else {
-    dputs " -I- inline report"
+    dputs " -D- inline report"
   }
   if {![regexp -nocase -- $exp $report -- value]} {
     set value $notfound
-    dputs " -I- failed to extract metric '$name' from report"
+    dputs " -D- failed to extract metric '$name' from report"
   }
   if {!$save} {
     return $value
   }
   setMetric $name $value
-#   dputs " -I- setting: $name = $value"
+#   dputs " -D- setting: $name = $value"
 #   set metrics(${name}:def) 2
 #   set metrics(${name}:val) $value
   return -code ok

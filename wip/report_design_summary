@@ -3,6 +3,7 @@
 exec tclsh "$0" "$@"
 
 ########################################################################################
+## 2016.01.29 - Added support for -script
 ## 2016.01.19 - Initial release
 ########################################################################################
 
@@ -268,6 +269,7 @@ set project {}
 set experiment {}
 set version {}
 set step {}
+set script {}
 set error 0
 set help 0
 set show_long_help 0
@@ -305,6 +307,10 @@ while {[llength $::argv]} {
     -s -
     -step {
          set step [lshift ::argv]
+    }
+    -scr -
+    -script {
+         set script [lshift ::argv]
     }
     -lsf {
          set mode {lsf}
@@ -346,6 +352,7 @@ Usage: report_design_summary
             [-version|-v <string>]
             [-experiment|-e <string>]
             [-step|-s <string>]
+            [-script <filename>]
             [-lsf]
             [-lsf-mem <number>]
             [-lsf-queue <string>]
@@ -357,7 +364,8 @@ Description: Extract design summary from checkpoint
 
   -file : output CSV file. If not specified, the default file is <checkpoint>_sum.csv
   -project/-version/-experiments/-step are just strings saved inside CSV file for
-  tagging purpose. This make the comparaison between summary files easier.
+    tagging purpose. This make the comparaison between summary files easier.
+  -script: user script
 
 Example:
    report_design_summary -dcp post_route.dcp -step route_design
@@ -382,6 +390,15 @@ if {$checkpoint == {}} {
   incr error
 }
 
+if {$script != {}} {
+  if {![file exists $script]} {
+    puts " -E- file '$script' does not exist"
+    incr error
+  } else {
+  	set script [file normalize $script]
+  }
+}
+
 if {$error} {
   print fatal "some error(s) happened. Cannot continue.\n"
   exit 1
@@ -391,11 +408,12 @@ if {$ofilename == {}} {
   set ofilename [format {%s%s} [file rootname [file normalize $checkpoint]] {_sum.csv}]
 }
 
-set cmdLine [list -all -csv -file $ofilename -details]
+set cmdLine [list -verbose -all -csv -file $ofilename -details]
 if {$project != {}} { set cmdLine [concat $cmdLine -project [list $project] ] }
 if {$version != {}} { set cmdLine [concat $cmdLine -version [list $version] ] }
 if {$experiment != {}} { set cmdLine [concat $cmdLine -experiment [list $experiment] ] }
 if {$step != {}} { set cmdLine [concat $cmdLine -step [list $step] ] }
+if {$script != {}} { set cmdLine [concat $cmdLine -script [list $script] ] }
 
 #-------------------------------------------------------
 # Vivado mode (DCP)
