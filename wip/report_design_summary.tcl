@@ -41,7 +41,7 @@
 ########################################################################################
 
 # Example of report:
-#   +------------------------------------------------------------------------------------------------               -----------------------+
+#   +--------------------------------------------------------------------------------------------------------------------------------------+
 #   | Design Summary                                                                                                                       |
 #   +----------------------------------------------+----------------------------------------------------------------+----------------------+
 #   | Id                                           | Name                                                           | Value                |
@@ -299,7 +299,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         if {![file exists $reportTimingSummary]} {
           puts " -E- file '$reportTimingSummary' does not exist"
           incr error
-       }
+        }
       }
       -ct -
       -rct -
@@ -308,7 +308,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         if {![file exists $reportCheckTiming]} {
           puts " -E- file '$reportCheckTiming' does not exist"
           incr error
-       }
+        }
       }
       -rda -
       -report_design_analysis {
@@ -316,7 +316,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         if {![file exists $reportDesignAnalysis]} {
           puts " -E- file '$reportDesignAnalysis' does not exist"
           incr error
-       }
+        }
       }
       -rci -
       -report_clock_interaction {
@@ -324,7 +324,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         if {![file exists $reportClockInteraction]} {
           puts " -E- file '$reportClockInteraction' does not exist"
           incr error
-       }
+        }
       }
       -ru -
       -report_utilization {
@@ -332,7 +332,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         if {![file exists $reportUtilization]} {
           puts " -E- file '$reportUtilization' does not exist"
           incr error
-       }
+        }
       }
       -rru -
       -report_ram_utilization {
@@ -340,7 +340,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         if {![file exists $reportRamUtilization]} {
           puts " -E- file '$reportRamUtilization' does not exist"
           incr error
-       }
+        }
       }
       -rrs -
       -report_route_status {
@@ -348,14 +348,15 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         if {![file exists $reportRouteStatus]} {
           puts " -E- file '$reportRouteStatus' does not exist"
           incr error
-       }
+        }
+      }
       -rcdc -
       -report_cdc {
         set reportCDC [lshift args]
         if {![file exists $reportCDC]} {
           puts " -E- file '$reportCDC' does not exist"
           incr error
-       }
+        }
       }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
@@ -364,16 +365,16 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         set params(debug) 1
       }
       {^-h(e(lp?)?)?$} {
-           set help 1
+        set help 1
       }
       default {
-            if {[string match "-*" $name]} {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            } else {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            }
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        }
       }
     }
   }
@@ -696,8 +697,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
       foreach line [split $report \n] {
         if {[regexp {^\s*(CDC-[0-9]+)\s+(\w+)\s+([0-9]+)\s+(.+)\s*$} $line - id severity count description]} {
-          addMetric [format {cdc.%s} $id] [format {%s (%s)} $description $severity]
-          setMetric [format {cdc.%s} $id] $count
+          addMetric [format {cdc.%s} [string tolower $id]] [format {%s (%s)} $description $severity]
+          setMetric [format {cdc.%s} [string tolower $id]] $count
         }
       }
 
@@ -798,30 +799,6 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         setMetric clkinteraction.$string    $clockInteractionReport($name)
       }
 
-    }
-
-    ########################################################################################
-    ##
-    ## Congestion metrics
-    ##
-    ########################################################################################
-
-    if {[lsearch $sections {congestion}] != -1} {
-      addMetric {congestion.placer}    {Placer Congestion (N-S-E-W)}
-      addMetric {congestion.router}    {Router Congestion (N-S-E-W)}
-
-      # Get report
-      set report [getReport {report_design_analysis} {-quiet -congestion -no_header}]
-
-      # Extract metrics
-      set congestion [::tb::utils::report_design_summary::parseRDACongestion $report]
-      setMetric {congestion.placer}  [lindex $congestion 0]
-      setMetric {congestion.router}  [lindex $congestion 1]
-
-      if {$suppress} {
-        # Cleaning: remove metrics that have values of u-u-u-u
-        delMetrics congestion.* [list {u-u-u-u}]
-      }
     }
 
     ########################################################################################
@@ -1073,7 +1050,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       extractMetric {report_route_status} {route.routed} {fully routed nets[^\:]+\:\s*([0-9]+)\s*\:}               {n/a}
       extractMetric {report_route_status} {route.fixed}  {nets with fixed routing[^\:]+\:\s*([0-9]+)\s*\:}         {n/a}
       extractMetric {report_route_status} {route.nets}   {routable nets[^\:]+\:\s*([0-9]+)\s*\:}                   {n/a}
-   }
+    }
 
     ########################################################################################
     ##
@@ -1081,10 +1058,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ##
     ########################################################################################
 
-      if {$suppress} {
-        # Cleaning: remove metrics that have values of n/a
-#         delMetrics *.* [list {n/a}]
-      }
+    if {$suppress} {
+      # Cleaning: remove metrics that have values of n/a
+#       delMetrics *.* [list {n/a}]
+    }
 
     ########################################################################################
     ##
