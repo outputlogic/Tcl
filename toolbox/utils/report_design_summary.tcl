@@ -22,6 +22,8 @@
 ## 2016.01.29 - Fixed metric patterns (check_timing)
 ##            - Added support for -cdc/-rcdc
 ##            - Added support for incremental mode (-incremental)
+##            - Added support for -script
+##            - Fixed missing seperator in CSV
 ##            - Script is more silent
 ## 2016.01.28 - Fixed metric pattern (check_timing)
 ##            - Code re-organization
@@ -124,11 +126,11 @@
 #   | checktiming.pulse_width_clock                | check_timing (pulse_width_clock)                               | 0                    |
 #   | checktiming.unconstrained_internal_endpoints | check_timing (unconstrained_internal_endpoints)                | 0                    |
 #   +----------------------------------------------+----------------------------------------------------------------+----------------------+
-#   | cdc.CDC-15                                   | Clock enable controlled CDC structure detected (Warning)       | 1                    |
-#   | cdc.CDC-1                                    | 1-bit unknown CDC circuitry (Critical)                         | 1                    |
-#   | cdc.CDC-3                                    | 1-bit synchronized with ASYNC_REG property (Info)              | 37                   |
-#   | cdc.CDC-6                                    | Multi-bit synchronized with ASYNC_REG property (Warning)       | 1                    |
-#   | cdc.CDC-9                                    | Asynchronous reset synchronized with ASYNC_REG property (Info) | 1                    |
+#   | cdc.cdc-15                                   | Clock enable controlled CDC structure detected (Warning)       | 1                    |
+#   | cdc.cdc-1                                    | 1-bit unknown CDC circuitry (Critical)                         | 1                    |
+#   | cdc.cdc-3                                    | 1-bit synchronized with ASYNC_REG property (Info)              | 37                   |
+#   | cdc.cdc-6                                    | Multi-bit synchronized with ASYNC_REG property (Warning)       | 1                    |
+#   | cdc.cdc-9                                    | Asynchronous reset synchronized with ASYNC_REG property (Info) | 1                    |
 #   +----------------------------------------------+----------------------------------------------------------------+----------------------+
 #   | congestion.placer                            | Placer Congestion (N-S-E-W)                                    | u-u-u-u              |
 #   | congestion.router                            | Router Congestion (N-S-E-W)                                    | u-u-u-u              |
@@ -209,6 +211,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set experiment {}
   set step {}
   set showdetails 0
+  set script {}
   set reportTimingSummary {}
   set reportDesignAnalysis {}
   set reportRamUtilization {}
@@ -358,6 +361,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
           incr error
         }
       }
+      {^-sc(r(i(pt?)?)?)?$} {
+        set script [lshift args]
+      }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
       }
@@ -413,6 +419,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-file <filename>]
               [-append]
               [-csv]
+              [-script <filename>]
               [-return_string]
               [-verbose|-v]
               [-help|-h]
@@ -424,6 +431,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     Use -suppress to suppress metrics that have not been found
     Use -rts/-ct/-rda/-rrs/-rci/-ru/-rru/-rcdc to import on-disk reports
     Use -incremental for the incremental mode
+    Use -script to provide a user script to be sourced at the end
 
   Example:
      tb::report_design_summary -file myreport.rpt -details -all
@@ -441,6 +449,13 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   if {($filename != {}) && $returnstring} {
     puts " -E- cannot use -file & -return_string together"
     incr error
+  }
+
+  if {$script != {}} {
+    if {![file exists $script]} {
+      puts " -E- file '$script' does not exist"
+      incr error
+    }
   }
 
   if {$error} {
@@ -1079,6 +1094,19 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     ########################################################################################
     ##
+    ## Optional user script
+    ##
+    ########################################################################################
+
+    if {$script != {}} {
+      puts " -I- Sourcing user script '$script'"
+      if {[catch { source $script } errorstring]} {
+        puts " -E- User script failed: $errorstring"
+      }
+    }
+
+    ########################################################################################
+    ##
     ##
     ##
     ########################################################################################
@@ -1126,6 +1154,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         default {
         }
       }
+
       $tbl separator
       foreach key [lsort [array names metrics $category.*:def]] {
         regsub {:def} $key {} key
@@ -1682,10 +1711,10 @@ proc ::Table::printcsv {self args} {
       incr numsep
       if {$numsep == 1} {
         append res "# [::Table::list2csv {++++++++++++++++++++++++++++++++++++++++++++++++++} $sepChar]\n"
-      } else {
-        set numsep 0
       }
       continue
+    } else {
+      set numsep 0
     }
     append res "[::Table::list2csv $row $sepChar]\n"
   }
