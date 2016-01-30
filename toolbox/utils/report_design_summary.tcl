@@ -19,6 +19,10 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.01.29 - Fixed metric patterns (check_timing)
+##            - Added support for -cdc/-rcdc
+##            - Added support for incremental mode (-incremental)
+##            - Script is more silent
 ## 2016.01.28 - Fixed metric pattern (check_timing)
 ##            - Code re-organization
 ##            - Added support for -rts/-rct/-rda/-rrs/-rci/-ru/-rru
@@ -37,118 +41,124 @@
 ########################################################################################
 
 # Example of report:
-#   +-----------------------------------------------------------------------------------------------------------------------+
-#   | Design Summary                                                                                                        |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | Id                                           | Name                                            | Value                |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | tag.experiment                               | Experiment                                      | myexperiment         |
-#   | tag.project                                  | Project                                         | myproject            |
-#   | tag.step                                     | Step                                            | place_design         |
-#   | tag.version                                  | Version                                         | myversion            |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | vivado.os                                    | OS                                              | Linux                |
-#   | vivado.osVersion                             | OS Version                                      | 2.6.18-371.4.1.el5   |
-#   | vivado.plateform                             | Plateform                                       | unix                 |
-#   | vivado.top                                   | Top Module Name                                 | hothk_sata_top       |
-#   | vivado.version                               | Vivado Release                                  | 2016.1               |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | design.cells.blackbox                        | Number of blackbox cells                        | 0                    |
-#   | design.cells.hier                            | Number of hierarchical cells                    | 11488                |
-#   | design.cells.primitive                       | Number of primitive cells                       | 1104666              |
-#   | design.clocks.autoderived                    | Number of auto-derived clocks                   | 43                   |
-#   | design.clocks.primary                        | Number of primary clocks                        | 13                   |
-#   | design.clocks.usergenerated                  | Number of user generated clocks                 | 33                   |
-#   | design.clocks.virtual                        | Number of virtual clocks                        | 0                    |
-#   | design.clocks                                | Number of clocks                                | 89                   |
-#   | design.ips                                   | Number of IPs                                   | 0                    |
-#   | design.nets.slls                             | Number of SLL nets                              | 0                    |
-#   | design.nets                                  | Number of nets                                  | 1318820              |
-#   | design.part                                  | Part                                            | xcku115-flvf1924-2-e |
-#   | design.pblocks                               | Number of pblocks                               | 0                    |
-#   | design.ports                                 | Number of ports                                 | 280                  |
-#   | design.slrs                                  | Number of SLRs                                  | 2                    |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | utilization.clb.ff.pct                       | CLB Registers (%)                               | 31.38                |
-#   | utilization.clb.ff                           | CLB Registers                                   | 416347               |
-#   | utilization.clb.lut.pct                      | CLB LUTs (%)                                    | 83.98                |
-#   | utilization.clb.lut                          | CLB LUTs                                        | 557059               |
-#   | utilization.ctrlsets.lost                    | Registers Lost due to Control Sets              | n/a                  |
-#   | utilization.ctrlsets.uniq                    | Unique Control Sets                             | n/a                  |
-#   | utilization.dsp.pct                          | DSPs (%)                                        | 0.43                 |
-#   | utilization.dsp                              | DSPs                                            | 24                   |
-#   | utilization.io.pct                           | IOs (%)                                         | 22.53                |
-#   | utilization.io                               | IOs                                             | 164                  |
-#   | utilization.ram.blockram                     | RAM (Blocks)                                    | 2038                 |
-#   | utilization.ram.distributedram               | RAM (Distributed)                               | 1068                 |
-#   | utilization.ram.tile.pct                     | Block RAM Tile (%)                              | 69.00                |
-#   | utilization.ram.tile                         | Block RAM Tile                                  | 1490.5               |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | timing.ths                                   | THS                                             | -15171.135           |
-#   | timing.thsFallingEp                          | THS Failing Endpoints                           | 398034               |
-#   | timing.thsTotalEp                            | THS Total Endpoints                             | 1110733              |
-#   | timing.tns                                   | TNS                                             | -129.755             |
-#   | timing.tnsFallingEp                          | TNS Failing Endpoints                           | 732                  |
-#   | timing.tnsTotalEp                            | TNS Total Endpoints                             | 1110733              |
-#   | timing.tpws                                  | TPWS                                            | 0.000                |
-#   | timing.tpwsFailingEp                         | TPWS Failing Endpoints                          | 0                    |
-#   | timing.tpwsTotalEp                           | TPWS Total Endpoints                            | 433087               |
-#   | timing.whs.epclock                           | WHS Endpoint Clock                              | txoutclk_out[3]      |
-#   | timing.whs.spclock                           | WHS Startpoint Clock                            | txoutclk_out[3]      |
-#   | timing.whs                                   | WHS                                             | -0.944               |
-#   | timing.wns.epclock                           | WNS Endpoint Clock                              | axi_aclk             |
-#   | timing.wns.spclock                           | WNS Startpoint Clock                            | dmon                 |
-#   | timing.wns                                   | WNS                                             | -1.250               |
-#   | timing.wpws                                  | WPWS                                            | 0.000                |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | clkinteraction.asynchronous_groups           | Clock Interaction (Asynchronous Groups)         | 266                  |
-#   | clkinteraction.false_path                    | Clock Interaction (False Path)                  | 2                    |
-#   | clkinteraction.partial_false_path            | Clock Interaction (Partial False Path)          | 33                   |
-#   | clkinteraction.timed                         | Clock Interaction (Timed)                       | 111                  |
-#   | clkinteraction.timed_unsafe                  | Clock Interaction (Timed (unsafe))              | 1                    |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | checktiming.constant_clock                   | check_timing (constant_clock)                   | 0                    |
-#   | checktiming.generated_clocks                 | check_timing (generated_clocks)                 | 0                    |
-#   | checktiming.latch_loops                      | check_timing (latch_loops)                      | 0                    |
-#   | checktiming.loops                            | check_timing (loops)                            | 0                    |
-#   | checktiming.multiple_clock                   | check_timing (multiple_clock)                   | 0                    |
-#   | checktiming.no_clock                         | check_timing (no_clock)                         | 15                   |
-#   | checktiming.no_input_delay                   | check_timing (no_input_delay)                   | 68                   |
-#   | checktiming.no_output_delay                  | check_timing (no_output_delay)                  | 147                  |
-#   | checktiming.partial_input_delay              | check_timing (partial_input_delay)              | 0                    |
-#   | checktiming.partial_output_delay             | check_timing (partial_output_delay)             | 0                    |
-#   | checktiming.pulse_width_clock                | check_timing (pulse_width_clock)                | 0                    |
-#   | checktiming.unconstrained_internal_endpoints | check_timing (unconstrained_internal_endpoints) | 0                    |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | congestion.placer                            | Placer Congestion (N-S-E-W)                     | u-u-u-u              |
-#   | congestion.router                            | Router Congestion (N-S-E-W)                     | u-u-u-u              |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | route.errors                                 | Nets with routing errors                        | 4880                 |
-#   | route.fixed                                  | Nets with fixed routing                         | n/a                  |
-#   | route.nets                                   | Routable nets                                   | 1038                 |
-#   | route.routed                                 | Fully routed nets                               | n/a                  |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
-#   | constraints.create_clock                     | create_clock                                    | 13                   |
-#   | constraints.create_generated_clock           | create_generated_clock                          | 67                   |
-#   | constraints.group_path                       | group_path                                      | 0                    |
-#   | constraints.set_bus_skew                     | set_bus_skew                                    | 0                    |
-#   | constraints.set_case_analysis                | set_case_analysis                               | 15                   |
-#   | constraints.set_clock_groups                 | set_clock_groups                                | 292                  |
-#   | constraints.set_clock_latency                | set_clock_latency                               | 0                    |
-#   | constraints.set_clock_sense                  | set_clock_sense                                 | 0                    |
-#   | constraints.set_clock_uncertainty            | set_clock_uncertainty                           | 0                    |
-#   | constraints.set_data_check                   | set_data_check                                  | 0                    |
-#   | constraints.set_disable_timing               | set_disable_timing                              | 0                    |
-#   | constraints.set_external_delay               | set_external_delay                              | 0                    |
-#   | constraints.set_false_path                   | set_false_path                                  | 162                  |
-#   | constraints.set_input_delay                  | set_input_delay                                 | 0                    |
-#   | constraints.set_input_jitter                 | set_input_jitter                                | 0                    |
-#   | constraints.set_max_delay                    | set_max_delay                                   | 0                    |
-#   | constraints.set_min_delay                    | set_min_delay                                   | 0                    |
-#   | constraints.set_multicycle_path              | set_multicycle_path                             | 66                   |
-#   | constraints.set_output_delay                 | set_output_delay                                | 0                    |
-#   | constraints.set_system_jitter                | set_system_jitter                               | 0                    |
-#   +----------------------------------------------+-------------------------------------------------+----------------------+
+#   +------------------------------------------------------------------------------------------------               -----------------------+
+#   | Design Summary                                                                                                                       |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | Id                                           | Name                                                           | Value                |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | tag.experiment                               | Experiment                                                     | myexperiment         |
+#   | tag.project                                  | Project                                                        | myproject            |
+#   | tag.step                                     | Step                                                           | place_design         |
+#   | tag.version                                  | Version                                                        | myversion            |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | vivado.os                                    | OS                                                             | Linux                |
+#   | vivado.osVersion                             | OS Version                                                     | 2.6.18-371.4.1.el5   |
+#   | vivado.plateform                             | Plateform                                                      | unix                 |
+#   | vivado.top                                   | Top Module Name                                                | hothk_sata_top       |
+#   | vivado.version                               | Vivado Release                                                 | 2016.1               |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | design.cells.blackbox                        | Number of blackbox cells                                       | 0                    |
+#   | design.cells.hier                            | Number of hierarchical cells                                   | 11488                |
+#   | design.cells.primitive                       | Number of primitive cells                                      | 1104666              |
+#   | design.clocks.autoderived                    | Number of auto-derived clocks                                  | 43                   |
+#   | design.clocks.primary                        | Number of primary clocks                                       | 13                   |
+#   | design.clocks.usergenerated                  | Number of user generated clocks                                | 33                   |
+#   | design.clocks.virtual                        | Number of virtual clocks                                       | 0                    |
+#   | design.clocks                                | Number of clocks                                               | 89                   |
+#   | design.ips                                   | Number of IPs                                                  | 0                    |
+#   | design.nets.slls                             | Number of SLL nets                                             | 0                    |
+#   | design.nets                                  | Number of nets                                                 | 1318820              |
+#   | design.part                                  | Part                                                           | xcku115-flvf1924-2-e |
+#   | design.pblocks                               | Number of pblocks                                              | 0                    |
+#   | design.ports                                 | Number of ports                                                | 280                  |
+#   | design.slrs                                  | Number of SLRs                                                 | 2                    |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | utilization.clb.ff.pct                       | CLB Registers (%)                                              | 31.38                |
+#   | utilization.clb.ff                           | CLB Registers                                                  | 416347               |
+#   | utilization.clb.lut.pct                      | CLB LUTs (%)                                                   | 83.98                |
+#   | utilization.clb.lut                          | CLB LUTs                                                       | 557059               |
+#   | utilization.ctrlsets.lost                    | Registers Lost due to Control Sets                             | n/a                  |
+#   | utilization.ctrlsets.uniq                    | Unique Control Sets                                            | n/a                  |
+#   | utilization.dsp.pct                          | DSPs (%)                                                       | 0.43                 |
+#   | utilization.dsp                              | DSPs                                                           | 24                   |
+#   | utilization.io.pct                           | IOs (%)                                                        | 22.53                |
+#   | utilization.io                               | IOs                                                            | 164                  |
+#   | utilization.ram.blockram                     | RAM (Blocks)                                                   | 2038                 |
+#   | utilization.ram.distributedram               | RAM (Distributed)                                              | 1068                 |
+#   | utilization.ram.tile.pct                     | Block RAM Tile (%)                                             | 69.00                |
+#   | utilization.ram.tile                         | Block RAM Tile                                                 | 1490.5               |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | timing.ths                                   | THS                                                            | -15171.135           |
+#   | timing.thsFallingEp                          | THS Failing Endpoints                                          | 398034               |
+#   | timing.thsTotalEp                            | THS Total Endpoints                                            | 1110733              |
+#   | timing.tns                                   | TNS                                                            | -129.755             |
+#   | timing.tnsFallingEp                          | TNS Failing Endpoints                                          | 732                  |
+#   | timing.tnsTotalEp                            | TNS Total Endpoints                                            | 1110733              |
+#   | timing.tpws                                  | TPWS                                                           | 0.000                |
+#   | timing.tpwsFailingEp                         | TPWS Failing Endpoints                                         | 0                    |
+#   | timing.tpwsTotalEp                           | TPWS Total Endpoints                                           | 433087               |
+#   | timing.whs.epclock                           | WHS Endpoint Clock                                             | txoutclk_out[3]      |
+#   | timing.whs.spclock                           | WHS Startpoint Clock                                           | txoutclk_out[3]      |
+#   | timing.whs                                   | WHS                                                            | -0.944               |
+#   | timing.wns.epclock                           | WNS Endpoint Clock                                             | axi_aclk             |
+#   | timing.wns.spclock                           | WNS Startpoint Clock                                           | dmon                 |
+#   | timing.wns                                   | WNS                                                            | -1.250               |
+#   | timing.wpws                                  | WPWS                                                           | 0.000                |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | clkinteraction.asynchronous_groups           | Clock Interaction (Asynchronous Groups)                        | 266                  |
+#   | clkinteraction.false_path                    | Clock Interaction (False Path)                                 | 2                    |
+#   | clkinteraction.partial_false_path            | Clock Interaction (Partial False Path)                         | 33                   |
+#   | clkinteraction.timed                         | Clock Interaction (Timed)                                      | 111                  |
+#   | clkinteraction.timed_unsafe                  | Clock Interaction (Timed (unsafe))                             | 1                    |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | checktiming.constant_clock                   | check_timing (constant_clock)                                  | 0                    |
+#   | checktiming.generated_clocks                 | check_timing (generated_clocks)                                | 0                    |
+#   | checktiming.latch_loops                      | check_timing (latch_loops)                                     | 0                    |
+#   | checktiming.loops                            | check_timing (loops)                                           | 0                    |
+#   | checktiming.multiple_clock                   | check_timing (multiple_clock)                                  | 0                    |
+#   | checktiming.no_clock                         | check_timing (no_clock)                                        | 15                   |
+#   | checktiming.no_input_delay                   | check_timing (no_input_delay)                                  | 68                   |
+#   | checktiming.no_output_delay                  | check_timing (no_output_delay)                                 | 147                  |
+#   | checktiming.partial_input_delay              | check_timing (partial_input_delay)                             | 0                    |
+#   | checktiming.partial_output_delay             | check_timing (partial_output_delay)                            | 0                    |
+#   | checktiming.pulse_width_clock                | check_timing (pulse_width_clock)                               | 0                    |
+#   | checktiming.unconstrained_internal_endpoints | check_timing (unconstrained_internal_endpoints)                | 0                    |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | cdc.CDC-15                                   | Clock enable controlled CDC structure detected (Warning)       | 1                    |
+#   | cdc.CDC-1                                    | 1-bit unknown CDC circuitry (Critical)                         | 1                    |
+#   | cdc.CDC-3                                    | 1-bit synchronized with ASYNC_REG property (Info)              | 37                   |
+#   | cdc.CDC-6                                    | Multi-bit synchronized with ASYNC_REG property (Warning)       | 1                    |
+#   | cdc.CDC-9                                    | Asynchronous reset synchronized with ASYNC_REG property (Info) | 1                    |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | congestion.placer                            | Placer Congestion (N-S-E-W)                                    | u-u-u-u              |
+#   | congestion.router                            | Router Congestion (N-S-E-W)                                    | u-u-u-u              |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | route.errors                                 | Nets with routing errors                                       | 4880                 |
+#   | route.fixed                                  | Nets with fixed routing                                        | n/a                  |
+#   | route.nets                                   | Routable nets                                                  | 1038                 |
+#   | route.routed                                 | Fully routed nets                                              | n/a                  |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | constraints.create_clock                     | create_clock                                                   | 13                   |
+#   | constraints.create_generated_clock           | create_generated_clock                                         | 67                   |
+#   | constraints.group_path                       | group_path                                                     | 0                    |
+#   | constraints.set_bus_skew                     | set_bus_skew                                                   | 0                    |
+#   | constraints.set_case_analysis                | set_case_analysis                                              | 15                   |
+#   | constraints.set_clock_groups                 | set_clock_groups                                               | 292                  |
+#   | constraints.set_clock_latency                | set_clock_latency                                              | 0                    |
+#   | constraints.set_clock_sense                  | set_clock_sense                                                | 0                    |
+#   | constraints.set_clock_uncertainty            | set_clock_uncertainty                                          | 0                    |
+#   | constraints.set_data_check                   | set_data_check                                                 | 0                    |
+#   | constraints.set_disable_timing               | set_disable_timing                                             | 0                    |
+#   | constraints.set_external_delay               | set_external_delay                                             | 0                    |
+#   | constraints.set_false_path                   | set_false_path                                                 | 162                  |
+#   | constraints.set_input_delay                  | set_input_delay                                                | 0                    |
+#   | constraints.set_input_jitter                 | set_input_jitter                                               | 0                    |
+#   | constraints.set_max_delay                    | set_max_delay                                                  | 0                    |
+#   | constraints.set_min_delay                    | set_min_delay                                                  | 0                    |
+#   | constraints.set_multicycle_path              | set_multicycle_path                                            | 66                   |
+#   | constraints.set_output_delay                 | set_output_delay                                               | 0                    |
+#   | constraints.set_system_jitter                | set_system_jitter                                              | 0                    |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
 
 namespace eval ::tb {
 #   namespace export -force report_design_summary
@@ -160,12 +170,12 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_design_summary {
   namespace export -force report_design_summary
-  variable version {2016.01.28}
+  variable version {2016.01.29}
   variable params
   variable output {}
   variable reports
   variable metrics
-  array set params [list vivado 1 format {table} verbose 0 debug 0]
+  array set params [list vivado 1 format {table} incremental 0 verbose 0 debug 0]
   array set reports [list]
   array set metrics [list]
 }
@@ -182,9 +192,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   variable metrics
   variable params
   variable output
-  catch {unset metrics}
-  catch {unset reports}
+#   catch {unset metrics}
+#   catch {unset reports}
   set params(vivado) 1
+  set params(incremental) 0
   set params(verbose) 0
   set params(debug) 0
   set params(format) {table}
@@ -205,6 +216,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set reportUtilization {}
   set reportClockInteraction {}
   set reportRouteStatus {}
+  set reportCDC {}
   set error 0
   set help 0
 #   if {[llength $args] == 0} {
@@ -233,6 +245,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
                                              clock_interaction \
                                              congestion \
                                              check_timing \
+                                             cdc \
                                              route_status] ]
       }
       {^-c(h(e(c(k(_(t(i(m(i(ng?)?)?)?)?)?)?)?)?)?)?$} {
@@ -240,6 +253,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       }
       {^-r(o(u(te?)?)?)?$} {
         lappend sections {route_status}
+      }
+      {^-cdc?$} {
+        lappend sections {cdc}
       }
       {^-cl(o(c(k(_(i(n(t(e(r(a(c(t(i(on?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
         lappend sections {clock_interaction}
@@ -270,6 +286,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       }
       {^-de(t(a(i(ls?)?)?)?)?$} {
         set showdetails 1
+      }
+      {^-in(c(r(e(m(e(n(t(al?)?)?)?)?)?)?)?)?$} {
+        set params(incremental) 1
       }
       {^-r(e(t(u(r(n(_(s(t(r(i(ng?)?)?)?)?)?)?)?)?)?)?)?$} {
         set returnstring 1
@@ -330,6 +349,13 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
           puts " -E- file '$reportRouteStatus' does not exist"
           incr error
        }
+      -rcdc -
+      -report_cdc {
+        set reportCDC [lshift args]
+        if {![file exists $reportCDC]} {
+          puts " -E- file '$reportCDC' does not exist"
+          incr error
+       }
       }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
@@ -362,6 +388,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-congestion]
               [-constraints]
               [-check_timing]
+              [-cdc]
               [-clock_interaction]
               [-route]
             +--------------------+
@@ -377,8 +404,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-ru <filename>|-report_utilization <filename>]
               [-rru <filename>|-report_ram_utilization <filename>]
               [-rrs <filename>|-report_route_status <filename>]
+              [-rcdc <filename>|-report_cdc <filename>]
             +--------------------+
               [-details]
+              [-incremental]
               [-suppress]
               [-file <filename>]
               [-append]
@@ -392,7 +421,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     Use -details with -file to append full reports
     Use -project/-version/-experiment/-step to save informative tags
     Use -suppress to suppress metrics that have not been found
-    Use -rts/-ct/-rda/-rrs/-rci/-ru/-rru to import on-disk reports
+    Use -rts/-ct/-rda/-rrs/-rci/-ru/-rru/-rcdc to import on-disk reports
+    Use -incremental for the incremental mode
 
   Example:
      tb::report_design_summary -file myreport.rpt -details -all
@@ -430,6 +460,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   if {[file exists $reportUtilization]}      { importReport {report_utilization}       $reportUtilization }
   if {[file exists $reportClockInteraction]} { importReport {report_clock_interaction} $reportClockInteraction }
   if {[file exists $reportRouteStatus]}      { importReport {report_route_status}      $reportRouteStatus }
+  if {[file exists $reportCDC]}              { importReport {report_cdc}               $reportCDC }
 
   set startTime [clock seconds]
   set output [list]
@@ -615,34 +646,61 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       set report [getReport {check_timing}]
 
       # Extract metrics
-      extractMetric {check_timing} {checktiming.no_clock}                     {\s+There.+\s+([0-9\.]+)\s+register/latch pins with no clock}                 {n/a}
-      extractMetric {check_timing} {checktiming.constant_clock}               {\s+There.+\s+([0-9\.]+)\s+register/latch pins with constant_clock}           {n/a}
-      extractMetric {check_timing} {checktiming.pulse_width_clock}            {\s+There.+\s+([0-9\.]+)\s+register/latch pins which need pulse_width check}  {n/a}
+      extractMetric {check_timing} {checktiming.no_clock}                     {\s+There.+\s+([0-9\.]+)\s+register/latch pins? with no clock}                 {n/a}
+      extractMetric {check_timing} {checktiming.constant_clock}               {\s+There.+\s+([0-9\.]+)\s+register/latch pins? with constant_clock}           {n/a}
+      extractMetric {check_timing} {checktiming.pulse_width_clock}            {\s+There.+\s+([0-9\.]+)\s+register/latch pins? which need pulse_width check}  {n/a}
 
-      set res1 [extractMetric {check_timing} {checktiming.unconstrained_internal_endpoints}     {\s+There.+\s+([0-9\.]+)\s+pins that are not constrained for maximum delay\.}  0 0]
-      set res2 [extractMetric {check_timing} {checktiming.unconstrained_internal_endpoints}     {\s+There.+\s+([0-9\.]+)\s+pins that are not constrained for maximum delay due to constant clock}  0 0]
+      set res1 [extractMetric {check_timing} {checktiming.unconstrained_internal_endpoints}     {\s+There.+\s+([0-9\.]+)\s+pins? that \w+ not constrained for maximum delay\.}  0 0]
+      set res2 [extractMetric {check_timing} {checktiming.unconstrained_internal_endpoints}     {\s+There.+\s+([0-9\.]+)\s+pins? that \w+ not constrained for maximum delay due to constant clock}  0 0]
       setMetric {checktiming.unconstrained_internal_endpoints} [expr $res1 + $res2]
 
       set res1 [extractMetric {check_timing} {checktiming.no_input_delay}     {\s+There.+\s+([0-9\.]+)\s+input ports? with no input delay specified}  0 0]
       set res2 [extractMetric {check_timing} {checktiming.no_input_delay}     {\s+There.+\s+([0-9\.]+)\s+input ports? with no input delay but user has a false path constraint}  0 0]
       setMetric {checktiming.no_input_delay} [expr $res1 + $res2]
 
-      set res1 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There.+\s+([0-9\.]+)\s+ports with no output delay specified}  0 0]
-      set res2 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There.+\s+([0-9\.]+)\s+ports with no output delay but user has a false path constraint}  0 0]
-      set res3 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There.+\s+([0-9\.]+)\s+ports with no output delay but with a timing clock defined on it or propagating through it}  0 0]
+      set res1 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There.+\s+([0-9\.]+)\s+ports? with no output delay specified}  0 0]
+      set res2 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There.+\s+([0-9\.]+)\s+ports? with no output delay but user has a false path constraint}  0 0]
+      set res3 [extractMetric {check_timing} {checktiming.no_output_delay}    {\s+There.+\s+([0-9\.]+)\s+ports? with no output delay but with a timing clock defined on it or propagating through it}  0 0]
       setMetric {checktiming.no_output_delay} [expr $res1 + $res2 + $res3]
 
-      extractMetric {check_timing} {checktiming.multiple_clock}               {\s+There.+\s+([0-9\.]+)\s+register/latch pins with multiple clocks}                    {n/a}
-      extractMetric {check_timing} {checktiming.generated_clocks}             {\s+There.+\s+([0-9\.]+)\s+generated clocks that are not connected to a clock source}   {n/a}
-      extractMetric {check_timing} {checktiming.loops}                        {\s+There.+\s+([0-9\.]+)\s+combinational loops in the design}                           {n/a}
-      extractMetric {check_timing} {checktiming.partial_input_delay}          {\s+There.+\s+([0-9\.]+)\s+input ports with partial input delay specified}              {n/a}
-      extractMetric {check_timing} {checktiming.partial_output_delay}         {\s+There.+\s+([0-9\.]+)\s+ports with partial output delay specified}                   {n/a}
-      extractMetric {check_timing} {checktiming.latch_loops}                  {\s+There.+\s+([0-9\.]+)\s+combinational latch loops in the design through latch input} {n/a}
+      extractMetric {check_timing} {checktiming.multiple_clock}               {\s+There.+\s+([0-9\.]+)\s+register/latch pins? with multiple clocks}                    {n/a}
+      extractMetric {check_timing} {checktiming.generated_clocks}             {\s+There.+\s+([0-9\.]+)\s+generated clocks? that \w+ not connected to a clock source}   {n/a}
+      extractMetric {check_timing} {checktiming.loops}                        {\s+There.+\s+([0-9\.]+)\s+combinational loops? in the design}                           {n/a}
+      extractMetric {check_timing} {checktiming.partial_input_delay}          {\s+There.+\s+([0-9\.]+)\s+input ports? with partial input delay specified}              {n/a}
+      extractMetric {check_timing} {checktiming.partial_output_delay}         {\s+There.+\s+([0-9\.]+)\s+ports? with partial output delay specified}                   {n/a}
+      extractMetric {check_timing} {checktiming.latch_loops}                  {\s+There.+\s+([0-9\.]+)\s+combinational latch loops? in the design through latch input} {n/a}
 
       if {$suppress} {
         # Cleaning: remove metrics that have values of 0 or n/a
         delMetrics checktiming.* [list {n/a} 0]
       }
+    }
+
+    ########################################################################################
+    ##
+    ## Report CDC metrics
+    ##
+    ########################################################################################
+
+    if {[lsearch $sections {cdc}] != -1} {
+      # Get report
+      set report [getReport {report_cdc}]
+
+      #  ID      Severity  Count  Description
+      #  ------  --------  -----  -------------------------------------------------------
+      #  CDC-1   Critical      1  1-bit unknown CDC circuitry
+      #  CDC-3   Info         37  1-bit synchronized with ASYNC_REG property
+      #  CDC-6   Warning       1  Multi-bit synchronized with ASYNC_REG property
+      #  CDC-9   Info          1  Asynchronous reset synchronized with ASYNC_REG property
+      #  CDC-15  Warning       1  Clock enable controlled CDC structure detected
+
+      foreach line [split $report \n] {
+        if {[regexp {^\s*(CDC-[0-9]+)\s+(\w+)\s+([0-9]+)\s+(.+)\s*$} $line - id severity count description]} {
+          addMetric [format {cdc.%s} $id] [format {%s (%s)} $description $severity]
+          setMetric [format {cdc.%s} $id] $count
+        }
+      }
+
     }
 
     ########################################################################################
@@ -1054,6 +1112,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
                                          timing \
                                          clkinteraction \
                                          checktiming \
+                                         cdc \
                                          congestion \
                                          route \
                                          constraints \
@@ -1128,6 +1187,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
                          WHS \
                          report_clock_interaction \
                          check_timing \
+                         report_cdc \
                          report_design_analysis \
                          report_route_status \
                    ] {
@@ -1145,13 +1205,13 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     }
     close $FH
     puts " -I- Generated file [file normalize $filename]"
-    # Remove metrics and reports
-    reset
+    # Remove metrics and reports (if not in incremental mode)
+    if {!$params(incremental)} { reset }
     return -code ok
   }
 
-  # Remove metrics and reports
-  reset
+  # Remove metrics and reports (if not in incremental mode)
+  if {!$params(incremental)} { reset }
 
   if {$returnstring} {
     return [join $output \n]
@@ -1169,19 +1229,32 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 proc ::tb::utils::report_design_summary::reset {} {
   variable reports
   variable metrics
+  variable params
+  if {$params(incremental) || $params(debug)} {
+    # Do not remove arrays in incremental mode or debug mode
+    return -code ok
+  }
   catch { unset reports }
   catch { unset metrics }
+  array set reports [list]
+  array set metrics [list]
   return -code ok
 }
 
 proc ::tb::utils::report_design_summary::importReport {name filename} {
   variable reports
+  variable params
   if {![file exists $filename]} {
     puts " -E- file '$filename' does not exist"
     return -code ok
   }
   if {[info exists reports($name)]} {
-    puts "Found report $name. Overridding report."
+    if {$params(incremental)} {
+      if {$params(verbose)} { puts " -I- Found report '$name'. Report not overriden (incermental mode)" }
+      return $reports($name)
+    } else {
+      if {$params(verbose)} { puts " -I- Found report '$name'. Overridding existing report with new one" }
+    }
   }
   set FH [open $filename {r}]
   set report [read $FH]
@@ -1192,8 +1265,15 @@ proc ::tb::utils::report_design_summary::importReport {name filename} {
 
 proc ::tb::utils::report_design_summary::setReport {name report} {
   variable reports
+  variable params
   if {[info exists reports($name)]} {
-    puts "Found report $name. Overridding report."
+    if {$params(incremental)} {
+      puts "Found report $name. Skipping report.(incremental mode)"
+      if {$params(verbose)} { puts " -I- Found report '$name'. Report not overriden (incermental mode)" }
+      return $reports($name)
+    } else {
+      if {$params(verbose)} { puts " -I- Found report '$name'. Overridding existing report with new one" }
+    }
   }
   set reports($name) $report
   return $report
@@ -1203,11 +1283,46 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
   variable reports
   variable params
   if {[info exists reports($name)]} {
-    puts "Found report $name"
+    if {$params(verbose)} { puts " -I- Found report '$name'" }
     return $reports($name)
   }
   set res {}
   switch $name {
+    report_cdc {
+      # Only get the first table of the detailed report:
+      #  ID      Severity  Count  Description
+      #  ------  --------  -----  -------------------------------------------------------
+      #  CDC-1   Critical      1  1-bit unknown CDC circuitry
+      #  CDC-3   Info         37  1-bit synchronized with ASYNC_REG property
+      #  CDC-6   Warning       1  Multi-bit synchronized with ASYNC_REG property
+      #  CDC-9   Info          1  Asynchronous reset synchronized with ASYNC_REG property
+      #  CDC-15  Warning       1  Clock enable controlled CDC structure detected
+      catch {
+        set file [format {report_cdc.%s} [clock seconds]]
+        report_cdc -quiet -details -file $file
+        set FH [open $file {r}]
+        set content [list]
+        set loop 1
+        while {$loop && ![eof $FH]} {
+          gets $FH line
+          if {[regexp {^\s*Source\s+Clock\s*:} $line]} {
+            # We are only interested in the first table
+            # Skip detailed summary tables for clock pairs
+            set loop 0
+          } else {
+            lappend content $line
+          }
+        }
+        set res [join $content \n]
+        close $FH
+        if {!$params(debug)} {
+          # Keep the file in debug mode
+          file delete $file
+        } else {
+          dputs " -I- writing report_cdc file '$file'"
+        }
+      }
+    }
     check_timing {
       catch {
         set file [format {check_timing.%s} [clock seconds]]
@@ -1236,8 +1351,9 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
 
 proc ::tb::utils::report_design_summary::addMetric {name {description {}}} {
   variable metrics
+  variable params
   if {[info exists metrics(${name}:def)]} {
-    puts " -E- metric '$name' already exist"
+    if {$params(verbose)} { puts " -W- metric '$name' already exist. Skipping new definition" }
     return -code ok
   }
   if {$description == {}} { set description $name }
