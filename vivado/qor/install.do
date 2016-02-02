@@ -101,31 +101,6 @@ proc main { {scriptname run.st} } {
     puts " -D- arguments: $arguments"
   }
 
-  # Generate lsf.do
-  uplevel #0 [linsert $arguments 0 exec smtpl -i ${WDIR}/lsf.st \
-                                              -o ${WDIR}/lsf.do \
-                                              -force \
-                                              -ROOTDIR=$WDIR ]
-#   exec smtpl -i ${WDIR}/lsf.st \
-#              -o ${WDIR}/lsf.do \
-#              -force \
-#              -MEMORY=$LSF_MEMORY \
-#              -ROOTDIR=$WDIR \
-#              -DIRECTIVES=$DIRECTIVES
-  exec chmod +x ${WDIR}/lsf.do
-  puts " File ${WDIR}/lsf.do generated"
-
-  # Generate clean.do
-  uplevel #0 [linsert $arguments 0 exec smtpl -i ${WDIR}/clean.st \
-                                              -o ${WDIR}/clean.do \
-                                              -force ]
-#   exec smtpl -i ${WDIR}/clean.st \
-#              -o ${WDIR}/clean.do \
-#              -force \
-#              -DIRECTIVES=$DIRECTIVES
-  exec chmod +x ${WDIR}/clean.do
-  puts " File ${WDIR}/clean.do generated"
-
   # Generate all run.tcl scripts inside their own directory
   set iterName [lindex $CONFIG_VARS(_) 0]
   set iterValues [lindex $CONFIG_VARS(_) 1]
@@ -158,6 +133,31 @@ proc main { {scriptname run.st} } {
 #                -EXPERIMENT=$EXPERIMENT
     puts " File ${WDIR}/$dir/run.tcl generated"
   }
+
+  # Generate lsf.do
+  uplevel #0 [linsert $arguments 0 exec smtpl -i ${WDIR}/lsf.st \
+                                              -o ${WDIR}/lsf.do \
+                                              -force \
+                                              -ROOTDIR=$WDIR ]
+#   exec smtpl -i ${WDIR}/lsf.st \
+#              -o ${WDIR}/lsf.do \
+#              -force \
+#              -MEMORY=$LSF_MEMORY \
+#              -ROOTDIR=$WDIR \
+#              -DIRECTIVES=$DIRECTIVES
+  exec chmod +x ${WDIR}/lsf.do
+  puts " File ${WDIR}/lsf.do generated"
+
+  # Generate clean.do
+  uplevel #0 [linsert $arguments 0 exec smtpl -i ${WDIR}/clean.st \
+                                              -o ${WDIR}/clean.do \
+                                              -force ]
+#   exec smtpl -i ${WDIR}/clean.st \
+#              -o ${WDIR}/clean.do \
+#              -force \
+#              -DIRECTIVES=$DIRECTIVES
+  exec chmod +x ${WDIR}/clean.do
+  puts " File ${WDIR}/clean.do generated"
 
   return -code ok
 }
