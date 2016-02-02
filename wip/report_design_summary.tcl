@@ -23,6 +23,7 @@
 ##            - Replaced -script with -tclpre/-tclpost
 ##            - Added support for -tclprecmd/-tclpostcmd
 ##            - Added clock pairs metrics
+##            - Added additional default metrics
 ## 2016.01.29 - Fixed metric patterns (check_timing)
 ##            - Added support for -cdc/-rcdc
 ##            - Added support for incremental mode (-incremental)
@@ -564,6 +565,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     if {[lsearch $sections {default}] != -1} {
       addMetric {vivado.version}   {Vivado Release}
+      addMetric {vivado.build}     {Vivado Build}
       addMetric {vivado.plateform} {Plateform}
       addMetric {vivado.os}        {OS}
       addMetric {vivado.osVersion} {OS Version}
@@ -571,6 +573,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {vivado.dir}       {Project Directory}
 
       setMetric {vivado.version}   [regsub {^([0-9]+\.[0-9]+)\.0$} [version -short] {\1}]
+      setMetric {vivado.build}     [regsub {SW Build ([0-9]+).+$} [lindex [split [version] \n] 1] {\1}]
       setMetric {vivado.plateform} $::tcl_platform(platform)
       setMetric {vivado.os}        $::tcl_platform(os)
       setMetric {vivado.osVersion} $::tcl_platform(osVersion)
@@ -605,33 +608,48 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {([lsearch $sections {default}] != -1) && $params(vivado)} {
-      addMetric {design.part}                 {Part}
-      addMetric {design.nets}                 {Number of nets}
-      addMetric {design.nets.slls}            {Number of SLL nets}
-      addMetric {design.cells.primitive}      {Number of primitive cells}
-      addMetric {design.cells.hier}           {Number of hierarchical cells}
-      addMetric {design.cells.blackbox}       {Number of blackbox cells}
-      addMetric {design.ports}                {Number of ports}
-      addMetric {design.clocks}               {Number of clocks}
-      addMetric {design.clocks.primary}       {Number of primary clocks}
-      addMetric {design.clocks.usergenerated} {Number of user generated clocks}
-      addMetric {design.clocks.autoderived}   {Number of auto-derived clocks}
-      addMetric {design.clocks.virtual}       {Number of virtual clocks}
-      addMetric {design.pblocks}              {Number of pblocks}
-      addMetric {design.ips}                  {Number of IPs}
-      addMetric {design.slrs}                 {Number of SLRs}
+      addMetric {design.part}                   {Part}
+      addMetric {design.part.architecture}      {Architecture}
+      addMetric {design.part.architecture.name} {Architecture Name}
+      addMetric {design.part.speed.class}       {Speed class}
+      addMetric {design.part.speed.label}       {Speed label}
+      addMetric {design.part.speed.id}          {Speed ID}
+      addMetric {design.part.speed.date}        {Speed date}
+      addMetric {design.nets}                   {Number of nets}
+      addMetric {design.nets.slls}              {Number of SLL nets}
+      addMetric {design.cells.primitive}        {Number of primitive cells}
+      addMetric {design.cells.hier}             {Number of hierarchical cells}
+      addMetric {design.cells.blackbox}         {Number of blackbox cells}
+      addMetric {design.ports}                  {Number of ports}
+      addMetric {design.clocks}                 {Number of clocks (all inclusive)}
+      addMetric {design.clocks.primary}         {Number of primary clocks}
+      addMetric {design.clocks.usergenerated}   {Number of user generated clocks}
+      addMetric {design.clocks.autoderived}     {Number of auto-derived clocks}
+      addMetric {design.clocks.virtual}         {Number of virtual clocks}
+      addMetric {design.pblocks}                {Number of pblocks}
+      addMetric {design.ips}                    {Number of IPs}
+      addMetric {design.ips.list}               {List of IPs}
+      addMetric {design.slrs}                   {Number of SLRs}
 
-      setMetric {design.part}      [get_property -quiet PART [current_design]]
-      setMetric {design.ports}     [llength [get_ports -quiet]]
-      setMetric {design.pblocks}   [llength [get_pblocks -quiet]]
-      setMetric {design.ips}       [llength [get_ips -quiet]]
-      setMetric {design.slrs}      [llength [get_slrs -quiet]]
+      set part [get_property -quiet PART [current_design]]
+      setMetric {design.part}                   $part
+      setMetric {design.part.architecture}      [get_property -quiet ARCHITECTURE $part]
+      setMetric {design.part.architecture.name} [get_property -quiet ARCHITECTURE_FULL_NAME $part]
+      setMetric {design.part.speed.class}       [get_property -quiet SPEED $part]
+      setMetric {design.part.speed.label}       [get_property -quiet SPEED_LABEL $part]
+      setMetric {design.part.speed.id}          [get_property -quiet SPEED_LEVEL_ID $part]
+      setMetric {design.part.speed.date}        [get_property -quiet SPEED_LEVEL_ID_DATE $part]
+      setMetric {design.ports}                  [llength [get_ports -quiet]]
+      setMetric {design.pblocks}                [llength [get_pblocks -quiet]]
+      setMetric {design.ips}                    [llength [get_ips -quiet]]
+      setMetric {design.ips.list}               [lsort -unique [get_property -quiet IPDEF [get_ips -quiet]]]
+      setMetric {design.slrs}                   [llength [get_slrs -quiet]]
 
-      setMetric {design.nets}      [llength [get_nets -quiet -hier -top_net_of_hierarchical_group -filter {TYPE == SIGNAL}]]
+      setMetric {design.nets}         [llength [get_nets -quiet -hier -top_net_of_hierarchical_group -filter {TYPE == SIGNAL}]]
       if {[llength [get_slrs -quiet]] <= 1} {
         setMetric {design.nets.slls} {n/a}
       } else {
-        setMetric {design.nets.slls} [llength [get_nets -quiet -hier -top_net_of_hierarchical_group -filter {CROSSING_SLRS != ""}]]
+        setMetric {design.nets.slls}  [llength [get_nets -quiet -hier -top_net_of_hierarchical_group -filter {CROSSING_SLRS != ""}]]
       }
 
       set cells [get_cells -quiet -hier]
