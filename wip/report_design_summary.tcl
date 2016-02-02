@@ -21,6 +21,7 @@
 ########################################################################################
 ## 2016.02.02 - Added support for -serialize
 ##            - Replaced -script with -tclpre/-tclpost
+##            - Added support for -tclprecmd/-tclpostcmd
 ##            - Added clock pairs metrics
 ## 2016.01.29 - Fixed metric patterns (check_timing)
 ##            - Added support for -cdc/-rcdc
@@ -115,6 +116,15 @@
 #   | clkinteraction.partial_false_path            | Clock Interaction (Partial False Path)                         | 33                   |
 #   | clkinteraction.timed                         | Clock Interaction (Timed)                                      | 111                  |
 #   | clkinteraction.timed_unsafe                  | Clock Interaction (Timed (unsafe))                             | 1                    |
+#   +----------------------------------------------+----------------------------------------------------------------+----------------------+
+#   | clockpair.0.from                             | Clock Pair (From)                                              | clk_312_5_mmcm_clk   |
+#   | clockpair.0.tns                              | Clock Pair (TNS)                                               | 0.00                 |
+#   | clockpair.0.to                               | Clock Pair (To)                                                | clk_312_5_mmcm_clk   |
+#   | clockpair.0.wns                              | Clock Pair (WNS)                                               | 0.22                 |
+#   | clockpair.1.from                             | Clock Pair (From)                                              | gci0_gth_txoutclk    |
+#   | clockpair.1.tns                              | Clock Pair (TNS)                                               | 0.00                 |
+#   | clockpair.1.to                               | Clock Pair (To)                                                | gci0_gth_txoutclk    |
+#   | clockpair.1.wns                              | Clock Pair (WNS)                                               | 2.01                 |
 #   +----------------------------------------------+----------------------------------------------------------------+----------------------+
 #   | checktiming.constant_clock                   | check_timing (constant_clock)                                  | 0                    |
 #   | checktiming.generated_clocks                 | check_timing (generated_clocks)                                | 0                    |
@@ -217,6 +227,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set showdetails 0
   set prescript {}
   set postscript {}
+  set precommand {}
+  set postcommand {}
   set reportTimingSummary {}
   set reportDesignAnalysis {}
   set reportRamUtilization {}
@@ -375,6 +387,12 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       {^-tclpost$} {
         set postscript [lshift args]
       }
+      {^-tclprecmd$} {
+        set precommand [lshift args]
+      }
+      {^-tclpostcmd$} {
+        set postcommand [lshift args]
+      }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
       }
@@ -433,6 +451,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-return_string]
               [-tclpre <filename>]
               [-tclpost <filename>]
+              [-tclprecmd <command>]
+              [-tclpostcmd <command>]
               [-serialize]
               [-verbose|-v]
               [-help|-h]
@@ -445,6 +465,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     Use -rts/-ct/-rda/-rrs/-rci/-ru/-rru/-rcdc to import on-disk reports
     Use -incremental for the incremental mode
     Use -tclpre/-tclpost to provide a user scripts to be sourced
+    at the beginning and at the end
+    Use -tclprecmd/-tclpostcmd to provide a command to be executed
     at the beginning and at the end
     Use -serialize to return the serialized list of metrics
 
@@ -516,9 +538,16 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     ########################################################################################
     ##
-    ## Optional pre script
+    ## Optional pre script / command
     ##
     ########################################################################################
+
+    if {$precommand != {}} {
+      puts " -I- Executing pre-command '$precommand'"
+      if {[catch { eval $precommand } errorstring]} {
+        puts " -E- Pre-command failed: $errorstring"
+      }
+    }
 
     if {$prescript != {}} {
       puts " -I- Sourcing pre-script '$prescript'"
@@ -1162,9 +1191,16 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     ########################################################################################
     ##
-    ## Optional post script
+    ## Optional post script / command
     ##
     ########################################################################################
+
+    if {$postcommand != {}} {
+      puts " -I- Executing post-command '$postcommand'"
+      if {[catch { eval $postcommand } errorstring]} {
+        puts " -E- Post-command failed: $errorstring"
+      }
+    }
 
     if {$postscript != {}} {
       puts " -I- Sourcing post-script '$postscript'"
