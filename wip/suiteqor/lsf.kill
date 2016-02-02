@@ -1,0 +1,44 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+if {![file exists ./lsf.pid]} {
+  puts " -I- file ./lsf.pid does not exists"
+  exit 0
+}
+
+set FH [open ./lsf.pid {r}]
+set content [read $FH]
+close $FH
+
+foreach line [split $content \n] {
+  # E.g:
+  #    7783480 dpefour RUN   long       xsjdpefour40 xsjl24559   vivado -mode batch -source /wrk/SSI_HighUtilSLRs/run.tcl -log /wrk/SSI_HighUtilSLRs/run.log -jou /wrk/SSI_HighUtilSLRs/run.jou Oct 16 13:57
+  set dir {<UNKNOWN>}
+  regexp {/([^/]+)/run.tcl} $line -- dir
+  if {[regexp {^([0-9]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+} $line -- jobid]} {
+    if {[catch { exec bjobs $jobid } errorstring]} {
+      # Job <6149992> is not found
+      continue
+    }
+    # Extract job status from 'bjobs' returned string
+    # E.g:
+    #    5887558 dpefour RUN   long       xsjdpefour4 xsjl24538   *w/run.jou Apr  7 14:35
+    regexp {^([0-9]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+} $line -- - - status
+    switch $status {
+      PEND -
+      RUN {
+        puts " Stopping LSF job $jobid ($dir) ($status)"
+        if {[catch {exec bkill $jobid} errorstring]} {
+        }
+      }
+      DONE -
+      EXIT {
+      }
+      default {
+      }
+    }
+  }
+}
+
+exit 0
