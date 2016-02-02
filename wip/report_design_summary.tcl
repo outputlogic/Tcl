@@ -19,6 +19,9 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.02.02 - Added support for -serialize
+##            - Replaced -script with -tclpre/-tclpost
+##            - Added clock pairs metrics
 ## 2016.01.29 - Fixed metric patterns (check_timing)
 ##            - Added support for -cdc/-rcdc
 ##            - Added support for incremental mode (-incremental)
@@ -172,7 +175,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_design_summary {
   namespace export -force report_design_summary
-  variable version {2016.01.29}
+  variable version {2016.02.02}
   variable params
   variable output {}
   variable reports
@@ -206,12 +209,14 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set filemode {w}
   set suppress 0
   set returnstring 0
+  set returnsummary 0
   set project {}
   set version {}
   set experiment {}
   set step {}
   set showdetails 0
-  set script {}
+  set prescript {}
+  set postscript {}
   set reportTimingSummary {}
   set reportDesignAnalysis {}
   set reportRamUtilization {}
@@ -296,6 +301,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       {^-r(e(t(u(r(n(_(s(t(r(i(ng?)?)?)?)?)?)?)?)?)?)?)?$} {
         set returnstring 1
       }
+      {^-se(r(i(a(l(i(z(ed?)?)?)?)?)?)?)?$} {
+        set returnsummary 1
+      }
       -rts -
       -report_timing_summary {
         set reportTimingSummary [lshift args]
@@ -361,8 +369,11 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
           incr error
         }
       }
-      {^-sc(r(i(pt?)?)?)?$} {
-        set script [lshift args]
+      {^-tclpre$} {
+        set prescript [lshift args]
+      }
+      {^-tclpost$} {
+        set postscript [lshift args]
       }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
@@ -419,8 +430,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-file <filename>]
               [-append]
               [-csv]
-              [-script <filename>]
               [-return_string]
+              [-tclpre <filename>]
+              [-tclpost <filename>]
+              [-serialize]
               [-verbose|-v]
               [-help|-h]
 
@@ -431,7 +444,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     Use -suppress to suppress metrics that have not been found
     Use -rts/-ct/-rda/-rrs/-rci/-ru/-rru/-rcdc to import on-disk reports
     Use -incremental for the incremental mode
-    Use -script to provide a user script to be sourced at the end
+    Use -tclpre/-tclpost to provide a user scripts to be sourced
+    at the beginning and at the end
+    Use -serialize to return the serialized list of metrics
 
   Example:
      tb::report_design_summary -file myreport.rpt -details -all
@@ -451,13 +466,27 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     incr error
   }
 
-  if {$script != {}} {
-    if {![file exists $script]} {
-      puts " -E- file '$script' does not exist"
+  if {$prescript != {}} {
+    if {![file exists $prescript]} {
+      puts " -E- file '$prescript' does not exist"
       incr error
     } else {
-    	set script [file normalize $script]
+      set prescript [file normalize $prescript]
     }
+  }
+
+  if {$postscript != {}} {
+    if {![file exists $postscript]} {
+      puts " -E- file '$postscript' does not exist"
+      incr error
+    } else {
+      set postscript [file normalize $postscript]
+    }
+  }
+
+  if {$returnstring && $returnsummary} {
+    puts " -E- cannot use -return_summary & -return_string together"
+    incr error
   }
 
   if {$error} {
@@ -484,6 +513,19 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set output [list]
 
   if {[catch {
+
+    ########################################################################################
+    ##
+    ## Optional pre script
+    ##
+    ########################################################################################
+
+    if {$prescript != {}} {
+      puts " -I- Sourcing pre-script '$prescript'"
+      if {[catch { source $prescript } errorstring]} {
+        puts " -E- Pre-script failed: $errorstring"
+      }
+    }
 
     ########################################################################################
     ##
@@ -583,6 +625,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {timing}] != -1} {
+      # Get report
+      set report [split [getReport {report_timing_summary} {-quiet -no_detailed_paths -no_check_timing -no_header}] \n]
+
       addMetric {timing.wns}           {WNS}
       addMetric {timing.tns}           {TNS}
       addMetric {timing.tnsFallingEp}  {TNS Failing Endpoints}
@@ -599,9 +644,6 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {timing.wns.epclock}   {WNS Endpoint Clock}
       addMetric {timing.whs.spclock}   {WHS Startpoint Clock}
       addMetric {timing.whs.epclock}   {WHS Endpoint Clock}
-
-      # Get report
-      set report [split [getReport {report_timing_summary} {-quiet -no_detailed_paths -no_check_timing -no_header}] \n]
 
       # Extract metrics
       if {[set i [lsearch -regexp $report {Design Timing Summary}]] != -1} {
@@ -646,6 +688,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {check_timing}] != -1} {
+      # Get report
+      set report [getReport {check_timing}]
+
       addMetric {checktiming.no_clock}             {check_timing (no_clock)}
       addMetric {checktiming.constant_clock}       {check_timing (constant_clock)}
       addMetric {checktiming.pulse_width_clock}    {check_timing (pulse_width_clock)}
@@ -659,9 +704,6 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {checktiming.partial_input_delay}  {check_timing (partial_input_delay)}
       addMetric {checktiming.partial_output_delay} {check_timing (partial_output_delay)}
       addMetric {checktiming.latch_loops}          {check_timing (latch_loops)}
-
-      # Get report
-      set report [getReport {check_timing}]
 
       # Extract metrics
       extractMetric {check_timing} {checktiming.no_clock}                     {\s+There.+\s+([0-9\.]+)\s+register/latch pins? with no clock}                 {n/a}
@@ -786,6 +828,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       }
 
       set n 0
+      set clockPairs [list]
       catch {unset clockInteractionReport}
       foreach row [lrange $clock_interaction_table 1 end] {
         incr n
@@ -796,12 +839,16 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 #         set commonPrimaryClock [lindex $row $colCommonPrimaryClock]
         set interClockConstraints [lindex $row $colInterClockConstraints]
 #         set wnsClockEdges [lindex $row $colWNSClockEdges]
-#         set wns [lindex $row $colWNS]
-#         set tns [lindex $row $colTNS]
+        set wns [lindex $row $colWNS]
+        set tns [lindex $row $colTNS]
 #         set wnsPathRequirement [lindex $row $colWNSPathRequirement]
 #         # Save the clock pair
 #         lappend clockPairs [list $fromClock $toClock]
         dputs " -D- Processing report_clock_interaction \[$n/[expr [llength $clock_interaction_table] -1]\]: $fromClock -> $toClock \t ($interClockConstraints)"
+        if {[string is double $wns] && ($wns != {})} {
+          # Clock domain pairs failing WNS
+          lappend clockPairs [list $wns [list $fromClock $toClock $wns $tns] ]
+        }
         if {![info exists clockInteractionReport($interClockConstraints)]} {
           set clockInteractionReport($interClockConstraints) 0
         }
@@ -816,6 +863,25 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         setMetric clkinteraction.$string    $clockInteractionReport($name)
       }
 
+      # Sort list from worst to best WNS
+      set clockPairs [lsort -real -increasing -index 0 $clockPairs]
+      set count -1
+      foreach el $clockPairs {
+        incr count
+        foreach {- L} $el { break }
+        foreach {fromClock toClock wns tns} $L { break }
+        addMetric clockpair.${count}.from    [format {Clock Pair (From)} ]
+        addMetric clockpair.${count}.to      [format {Clock Pair (To)} ]
+        addMetric clockpair.${count}.wns     [format {Clock Pair (WNS)} ]
+        addMetric clockpair.${count}.tns     [format {Clock Pair (TNS)} ]
+        setMetric clockpair.${count}.from    $fromClock
+        setMetric clockpair.${count}.to      $toClock
+        setMetric clockpair.${count}.wns     $wns
+        setMetric clockpair.${count}.tns     $tns
+        # Max 10 worst fromClock -> toClock are reported
+        if {$count >= 9} { break }
+      }
+
     }
 
 
@@ -826,11 +892,11 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {congestion}] != -1} {
-      addMetric {congestion.placer}    {Placer Congestion (N-S-E-W)}
-      addMetric {congestion.router}    {Router Congestion (N-S-E-W)}
-
       # Get report
       set report [getReport {report_design_analysis} {-quiet -congestion -no_header}]
+
+      addMetric {congestion.placer}    {Placer Congestion (N-S-E-W)}
+      addMetric {congestion.router}    {Router Congestion (N-S-E-W)}
 
       # Extract metrics
       set congestion [::tb::utils::report_design_summary::parseRDACongestion $report]
@@ -1054,13 +1120,13 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ########################################################################################
 
     if {[lsearch $sections {route_status}] != -1} {
+      # Get report
+      set report [getReport {report_route_status} {-quiet}]
+
       addMetric {route.errors}    {Nets with routing errors}
       addMetric {route.routed}    {Fully routed nets}
       addMetric {route.fixed}     {Nets with fixed routing}
       addMetric {route.nets}      {Routable nets}
-
-      # Get report
-      set report [getReport {report_route_status} {-quiet}]
 
       #                                               :      # nets :
       #   ------------------------------------------- : ----------- :
@@ -1096,14 +1162,14 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     ########################################################################################
     ##
-    ## Optional user script
+    ## Optional post script
     ##
     ########################################################################################
 
-    if {$script != {}} {
-      puts " -I- Sourcing user script '$script'"
-      if {[catch { source $script } errorstring]} {
-        puts " -E- User script failed: $errorstring"
+    if {$postscript != {}} {
+      puts " -I- Sourcing post-script '$postscript'"
+      if {[catch { source $postscript } errorstring]} {
+        puts " -E- Post-script failed: $errorstring"
       }
     }
 
@@ -1205,6 +1271,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set stopTime [clock seconds]
   puts " -I- report_design_summary completed in [expr $stopTime - $startTime] seconds"
 
+  # Get all metrics as pair-value
+  set allMetrics [serializeMetrics]
+
   if {$filename != {}} {
     set FH [open $filename $filemode]
     puts $FH "# ---------------------------------------------------------------------------------"
@@ -1240,6 +1309,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     puts " -I- Generated file [file normalize $filename]"
     # Remove metrics and reports (if not in incremental mode)
     if {!$params(incremental)} { reset }
+    if {$returnsummary} {
+      return $allMetrics
+    }
     return -code ok
   }
 
@@ -1248,6 +1320,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
   if {$returnstring} {
     return [join $output \n]
+  } elseif {$returnsummary} {
+    return $allMetrics
   } else {
     puts [join $output \n]
   }
@@ -1259,6 +1333,18 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 ##
 ##
 ########################################################################################
+proc ::tb::utils::report_design_summary::serializeMetrics {} {
+  variable reports
+  variable metrics
+  variable params
+  set L [list]
+  foreach el [lsort [array names metrics *:def]] {
+    regsub {:def$} $el {} name
+    lappend L [list $name $metrics(${name}:val) ]
+  }
+  return $L
+}
+
 proc ::tb::utils::report_design_summary::reset {} {
   variable reports
   variable metrics
