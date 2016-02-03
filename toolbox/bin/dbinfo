@@ -5,7 +5,7 @@ exec tclsh "$0" "$@"
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -20,6 +20,7 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
+## 2016.02.03 - Added support for pattern to specify database
 ## 2014.11.06 - Initial release
 ########################################################################################
 
@@ -38,10 +39,10 @@ namespace eval ::tb {}
 namespace eval ::tb::dbinfo {
   namespace export dbinfo
 
-  variable SCRIPT_VERSION {11-06-2014}
+  variable SCRIPT_VERSION {2016.02.03}
   variable VERBOSE 0
   variable DEBUG 0
-  
+
   variable SQL
 }
 
@@ -141,7 +142,7 @@ proc ::tb::dbinfo::dbinfo {args} {
   variable SCRIPT_VERSION
   variable VERBOSE
   variable DEBUG
-  
+
   variable SQL
 
   set VERBOSE 0
@@ -149,7 +150,7 @@ proc ::tb::dbinfo::dbinfo {args} {
 
   set error 0
   set show_help 0
-  set ifilename {}
+  set ifilenames {}
   if {[llength $args] == 0} {
     incr show_help
   }
@@ -161,34 +162,54 @@ proc ::tb::dbinfo::dbinfo {args} {
     switch -exact -- $name {
       -db -
       --db {
-        set ifilename [lshift args]
+        foreach pattern [lshift args] {
+          foreach file [glob -nocomplain $pattern] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
+              incr error
+              continue
+            }
+            lappend ifilenames [file normalize $file]
+          }
+        }
+        set ifilenames [lsort -unique $ifilenames]
       }
       -v -
       -verbose {
-          set VERBOSE 1
+        set VERBOSE 1
       }
       -d -
       -debug {
-          set DEBUG 1
-          set VERBOSE 1
+        set DEBUG 1
+        set VERBOSE 1
       }
       -h -
       -help {
-          incr show_help
+        incr show_help
       }
       default {
-          if {[string match "-*" $name]} {
-            puts " -E- option '$name' is not a valid option"
-            incr error
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          if {![file exists $name]} {
+            puts " -W- file '$name' does not exist"
           } else {
-            if {![file exists $name]} {
-              puts " -W- file '$name' does not exist"
-            } else {
-              set ifilename $name
+            foreach pattern [lshift args] {
+              foreach file [glob -nocomplain $pattern] {
+                if {![file exists $file]} {
+                  puts " -E- File '$file' does not exist"
+                  incr error
+                  continue
+                }
+                lappend ifilenames [file normalize $file]
+              }
             }
-#             puts " -E- option '$name' is not a valid option"
-#             incr error
+            set ifilenames [lsort -unique $ifilenames]
           }
+#           puts " -E- option '$name' is not a valid option"
+#           incr error
+        }
       }
     }
   }
@@ -197,7 +218,7 @@ proc ::tb::dbinfo::dbinfo {args} {
     # <-- HELP
     puts [format {
       Usage: dbinfo
-                  [-db <filename>]
+                  [<pattern>][-db <filename>][-db <pattern>]
                   [-verbose|-v]
                   [-help|-h]
 
@@ -206,18 +227,16 @@ proc ::tb::dbinfo::dbinfo {args} {
       Version: %s
 
       Example:
-         dbinfo -db file1.db 
+         dbinfo -db file1.db
+         dbinfo -db '*/metrics.db'
     } $SCRIPT_VERSION ]
     # HELP -->
 
     return -code ok
   }
 
-  if  {$ifilename == {}} {
+  if  {$ifilenames == {}} {
     puts " -E- no input database provided"
-    incr error
-  } elseif {![file exists $ifilename]} {
-    puts " -E- no file $ifilename does not exist"
     incr error
   }
 
@@ -226,30 +245,32 @@ proc ::tb::dbinfo::dbinfo {args} {
 #     exit -1
   }
 
-  if {[catch {sqlite3 SQL[pid] $ifilename -readonly true} errorstring]} {
-    error " -E- $errorstring"
+  foreach database $ifilenames {
+    if {[catch {sqlite3 SQL[pid] $database -readonly true} errorstring]} {
+      error " -E- $errorstring"
+    }
+    set SQL SQL[pid]
+
+    set tables [dbGetTables $SQL]
+    # Remove 'sqlite_sequence' from the list
+    set tables [lsearch -inline -all -not -exact $tables {sqlite_sequence}]
+
+    if {$VERBOSE} {
+        puts " -I- database $database"
+        puts " -I- tables \[[llength $tables]\]: [lsort $tables]"
+    }
+
+    foreach table [lsort $tables] {
+      set columns [dbGetTableColumns $SQL $table]
+      set count [execSQL $SQL [format {SELECT count(*) FROM '%s' ;} $table]]
+      puts " -I- Table: '$table' \t # columns = [llength $columns] \t # entries = $count"
+      if {$VERBOSE} { puts " -I- Columns: $columns" }
+    }
+
+    # Close SQlite database
+    $SQL close
+    set SQL {}
   }
-  set SQL SQL[pid]
-
-  set tables [dbGetTables $SQL]
-  # Remove 'sqlite_sequence' from the list
-  set tables [lsearch -inline -all -not -exact $tables {sqlite_sequence}]
-
-  if {$VERBOSE} {
-      puts " -I- database $ifilename"
-      puts " -I- tables \[[llength $tables]\]: [lsort $tables]"
-  }
-
-  foreach table [lsort $tables] {
-    set columns [dbGetTableColumns $SQL $table]
-    set count [execSQL $SQL [format {SELECT count(*) FROM '%s' ;} $table]]
-    puts " -I- Table: '$table' \t # columns = [llength $columns] \t # entries = $count"
-    if {$VERBOSE} { puts " -I- Columns: $columns" }
-  }
-
-  # Close SQlite database
-  $SQL close
-  set SQL {}
 
   return -code ok
 }
