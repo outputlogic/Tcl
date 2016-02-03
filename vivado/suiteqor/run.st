@@ -7,7 +7,8 @@
 set rootDir        {%{ROOTDIR}}
 set runDir         {%{RUNDIR}}
 # set db             {%{ROOTDIR}/metrics.db}
-set db             $rootDir/metrics.db
+# set db             $rootDir/metrics.db
+set db             $runDir/metrics.db
 set project        {%{PROJECT}}
 set version        {%{VERSION}}
 set experiment     {%{EXPERIMENT}}
@@ -46,9 +47,9 @@ set_param route.flowDbg 1
 
 catch {
   catch {
-  	if {[lsearch [tclapp::list_apps] {xilinx::designutils}] == -1} {
-  		tclapp::install designutils
-  	}
+    if {[lsearch [tclapp::list_apps] {xilinx::designutils}] == -1} {
+      tclapp::install designutils
+    }
   }
   package require toolbox
   snapshot reset
@@ -83,11 +84,42 @@ if {[catch {open_checkpoint $checkpoint} errorstring]} {
 # tb::report_design_summary -file $runDir/summary.csv -details -csv
 # tb::report_design_summary -file ./summary.csv -details -csv -verbose
 # tb::report_design_summary -all -file ./summary.csv -details -csv -verbose
-set res [tb::report_design_summary -serialize -incremental -all -file [file rootname [file tail $checkpoint]]_sum.csv -details -csv -verbose -project $project -version $version -experiment $experiment]
+set res [tb::report_design_summary -serialize -all -file [file rootname [file tail $checkpoint]]_opt_sum.csv -details -csv -verbose -project $project -version $version -experiment $experiment -step opt_design]
 
-snapshot configure -db $db -project $project -version $version -experiment $experiment
+snapshot configure -db $db -project $project -version $version -experiment $experiment -step opt_design
 foreach el $res {
-	foreach {metric value} $el { break }
-	snapshot set -once $metric $value
+  foreach {metric value} $el { break }
+  snapshot set -once $metric $value
 }
-snapshot save
+snapshot extract -save
+snapshot reset
+
+catch { close_design }
+
+set fisDir [file dirname $checkpoint]
+
+if {[file exists $fisDir/postplace.dcp]} {
+  open_checkpoint $fisDir/postplace.dcp
+  set res [tb::report_design_summary -serialize -all -file [file rootname [file tail $checkpoint]]_place_sum.csv -details -csv -verbose -project $project -version $version -experiment $experiment -step place_design]
+  snapshot configure -db $db -project $project -version $version -experiment $experiment -step place_design
+  foreach el $res {
+    foreach {metric value} $el { break }
+    snapshot set -once $metric $value
+  }
+  snapshot extract -save
+  snapshot reset
+  catch { close_design }
+}
+
+if {[file exists $fisDir/postroute.dcp]} {
+  open_checkpoint $fisDir/postroute.dcp
+  set res [tb::report_design_summary -serialize -all -file [file rootname [file tail $checkpoint]]_route_sum.csv -details -csv -verbose -project $project -version $version -experiment $experiment -step route_design]
+  snapshot configure -db $db -project $project -version $version -experiment $experiment -step route_design
+  foreach el $res {
+    foreach {metric value} $el { break }
+    snapshot set -once $metric $value
+  }
+  snapshot extract -save
+  snapshot reset
+  catch { close_design }
+}
