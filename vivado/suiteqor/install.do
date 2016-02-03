@@ -147,6 +147,9 @@ proc main { {scriptname run.st} } {
     puts " File ${WDIR}/$dir/run.tcl generated"
   }
 
+  # To remove duplicates when multiple fisruns where done the same day
+  set DIRECTORIES [lsort -unique $DIRECTORIES]
+
   # Generate lsf.do
   uplevel #0 [linsert $arguments 0 exec smtpl -i ${WDIR}/lsf.st \
                                               -o ${WDIR}/lsf.do \
