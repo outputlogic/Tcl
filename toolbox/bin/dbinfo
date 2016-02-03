@@ -195,15 +195,13 @@ proc ::tb::dbinfo::dbinfo {args} {
           if {![file exists $name]} {
             puts " -W- file '$name' does not exist"
           } else {
-            foreach pattern [lshift args] {
-              foreach file [glob -nocomplain $pattern] {
-                if {![file exists $file]} {
-                  puts " -E- File '$file' does not exist"
-                  incr error
-                  continue
-                }
-                lappend ifilenames [file normalize $file]
+            foreach file [glob -nocomplain $name] {
+              if {![file exists $file]} {
+                puts " -E- File '$file' does not exist"
+                incr error
+                continue
               }
+              lappend ifilenames [file normalize $file]
             }
             set ifilenames [lsort -unique $ifilenames]
           }
