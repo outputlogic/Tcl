@@ -163,7 +163,14 @@ proc main { {scriptname run.st} } {
 }
 
 if {[llength $argv] == 1} {
-  set filename $argv
+  set filename1 $argv
+  set filename2 ${filename1}.st
+  # 'run' should match 'run.st'
+  if {![file exists $filename1] && [file exists $filename2]} {
+    set filename $filename2
+  } else {
+    set filename $filename1
+  }
   if {![file exists $filename]} {
     puts " -E- File '$filename' does not exist"
     exit 1
