@@ -19,6 +19,11 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.02.04 - Renamed -serialize to -return_metrics
+##            - Renamed -suppress to -hide_missing
+##            - Added -add_metrics
+##            - Added -exclude
+##            - Changed behavior of incremental mode to be more user friendly
 ## 2016.02.02 - Added support for -serialize
 ##            - Replaced -script with -tclpre/-tclpost
 ##            - Added support for -tclprecmd/-tclpostcmd
@@ -216,11 +221,13 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set params(debug) 0
   set params(format) {table}
   set sections {default}
+  set excludesections [list]
   set filename {}
   set filemode {w}
-  set suppress 0
+  set hidemissing 0
   set returnstring 0
-  set returnsummary 0
+  set returnmetrics 0
+  set usermetrics [list]
   set project {}
   set version {}
   set experiment {}
@@ -255,9 +262,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       {^-csv?$} {
         set params(format) {csv}
       }
-      {^-su(p(p(r(e(ss?)?)?)?)?)?$} -
-      {^-suppress$} {
-        set suppress 1
+      {^-hi(d(e(_(m(i(s(s(i(ng?)?)?)?)?)?)?)?)?)?$} -
+      {^-hide_missing$} {
+        set hidemissing 1
       }
       {^-a(ll?)?$} {
         set sections [concat $sections [list utilization \
@@ -268,6 +275,11 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
                                              check_timing \
                                              cdc \
                                              route_status] ]
+      }
+      {^-ex(c(l(u(de?)?)?)?)?$} {
+        foreach el [lshift args] {
+          lappend excludesections $el
+        }
       }
       {^-c(h(e(c(k(_(t(i(m(i(ng?)?)?)?)?)?)?)?)?)?)?$} {
         lappend sections {check_timing}
@@ -311,11 +323,14 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       {^-in(c(r(e(m(e(n(t(al?)?)?)?)?)?)?)?)?$} {
         set params(incremental) 1
       }
-      {^-r(e(t(u(r(n(_(s(t(r(i(ng?)?)?)?)?)?)?)?)?)?)?)?$} {
+      {^-return_s(t(r(i(ng?)?)?)?)?$} {
         set returnstring 1
       }
-      {^-se(r(i(a(l(i(z(ed?)?)?)?)?)?)?)?$} {
-        set returnsummary 1
+      {^-return_m(e(t(r(i(cs?)?)?)?)?)?$} {
+        set returnmetrics 1
+      }
+      {^-ad(d(_(m(e(t(r(i(cs?)?)?)?)?)?)?)?)?$} {
+        set usermetrics [concat $usermetrics [lshift args]]
       }
       -rts -
       -report_timing_summary {
@@ -428,6 +443,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-cdc]
               [-clock_interaction]
               [-route]
+              [-exclude <list_sections>]
             +--------------------+
               [-project <string>]
               [-version <string>]
@@ -444,17 +460,18 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-rcdc <filename>|-report_cdc <filename>]
             +--------------------+
               [-details]
-              [-incremental]
-              [-suppress]
               [-file <filename>]
               [-append]
               [-csv]
+              [-incremental]
+              [-hide_missing]
               [-return_string]
+              [-return_metrics]
+              [-add_metrics <list_user_metrics>]
               [-tclpre <filename>]
               [-tclpost <filename>]
               [-tclprecmd <command>]
               [-tclpostcmd <command>]
-              [-serialize]
               [-verbose|-v]
               [-help|-h]
 
@@ -462,18 +479,19 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     Use -details with -file to append full reports
     Use -project/-version/-experiment/-step to save informative tags
-    Use -suppress to suppress metrics that have not been found
+    Use -hide_missing to suppress metrics that have not been found
     Use -rts/-ct/-rda/-rrs/-rci/-ru/-rru/-rcdc to import on-disk reports
-    Use -incremental for the incremental mode
+    Use -incremental for incremental mode
     Use -tclpre/-tclpost to provide a user scripts to be sourced
     at the beginning and at the end
     Use -tclprecmd/-tclpostcmd to provide a command to be executed
     at the beginning and at the end
-    Use -serialize to return the serialized list of metrics
+    Use -return_metrics to return the list of metrics
+    Use -add_metrics to add custom metrics
 
   Example:
      tb::report_design_summary -file myreport.rpt -details -all
-     tb::report_design_summary -timing -csv -return_string -suppress
+     tb::report_design_summary -timing -csv -return_string -hide_missing
 } ]
     # HELP -->
     return -code ok
@@ -507,7 +525,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     }
   }
 
-  if {$returnstring && $returnsummary} {
+  if {$returnstring && $returnmetrics} {
     puts " -E- cannot use -return_summary & -return_string together"
     incr error
   }
@@ -521,6 +539,18 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     # running inside a Vivado session
     set params(vivado) 0
   }
+
+  # Remove sections that have been excluded
+  set sections [lsort -unique $sections]
+  foreach el $excludesections {
+    set posn [lsearch -exact $sections $el]
+    if {$posn != -1} {
+      set sections [lreplace $sections $posn $posn]
+    }
+  }
+
+  # Remove metrics and reports (if not in incremental mode)
+  if {!$params(incremental)} { reset }
 
   # Import on-disk reports
   if {[file exists $reportTimingSummary]}    { importReport {report_timing_summary}    $reportTimingSummary }
@@ -554,6 +584,36 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       puts " -I- Sourcing pre-script '$prescript'"
       if {[catch { source $prescript } errorstring]} {
         puts " -E- Pre-script failed: $errorstring"
+      }
+    }
+
+    ########################################################################################
+    ##
+    ## Add user metrics
+    ##
+    ########################################################################################
+
+    if {[llength $usermetrics]} {
+      foreach el $usermetrics {
+        switch [llength $el] {
+          2 {
+            foreach {metric value} $el { break }
+            # Force the metric to have the format: <category>.<something>
+            if {![regexp {\.} $metric]} { set metric [format {custom.%s} $metric] }
+            addMetric $metric {n/a}
+            setMetric $metric $value
+          }
+          3 {
+            foreach {metric description value} $el { break }
+            # Force the metric to have the format: <category>.<something>
+            if {![regexp {\.} $metric]} { set metric [format {custom.%s} $metric] }
+            addMetric $metric $description
+            setMetric $metric $value
+          }
+          default {
+            puts " -E- wrong number of elements for '$el'"
+          }
+        }
       }
     }
 
@@ -777,7 +837,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       extractMetric {check_timing} {checktiming.partial_output_delay}         {\s+There.+\s+([0-9\.]+)\s+ports? with partial output delay specified}                   {n/a}
       extractMetric {check_timing} {checktiming.latch_loops}                  {\s+There.+\s+([0-9\.]+)\s+combinational latch loops? in the design through latch input} {n/a}
 
-      if {$suppress} {
+      if {$hidemissing} {
         # Cleaning: remove metrics that have values of 0 or n/a
         delMetrics checktiming.* [list {n/a} 0]
       }
@@ -950,7 +1010,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       setMetric {congestion.placer}  [lindex $congestion 0]
       setMetric {congestion.router}  [lindex $congestion 1]
 
-      if {$suppress} {
+      if {$hidemissing} {
         # Cleaning: remove metrics that have values of u-u-u-u
         delMetrics congestion.* [list {u-u-u-u}]
       }
@@ -1012,7 +1072,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
         setMetric constraints.$el    $commands($el)
       }
 
-      if {$suppress} {
+      if {$hidemissing} {
         # Cleaning: remove metrics that have values of 0
         delMetrics constraints.* [list 0]
       }
@@ -1233,7 +1293,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     ##
     ########################################################################################
 
-    if {$suppress} {
+    if {$hidemissing} {
       # Cleaning: remove metrics that have values of n/a
 #       delMetrics *.* [list {n/a}]
     }
@@ -1361,20 +1421,15 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     }
     close $FH
     puts " -I- Generated file [file normalize $filename]"
-    # Remove metrics and reports (if not in incremental mode)
-    if {!$params(incremental)} { reset }
-    if {$returnsummary} {
+    if {$returnmetrics} {
       return $allMetrics
     }
     return -code ok
   }
 
-  # Remove metrics and reports (if not in incremental mode)
-  if {!$params(incremental)} { reset }
-
   if {$returnstring} {
     return [join $output \n]
-  } elseif {$returnsummary} {
+  } elseif {$returnmetrics} {
     return $allMetrics
   } else {
     puts [join $output \n]
@@ -1394,7 +1449,9 @@ proc ::tb::utils::report_design_summary::serializeMetrics {} {
   set L [list]
   foreach el [lsort [array names metrics *:def]] {
     regsub {:def$} $el {} name
-    lappend L [list $name $metrics(${name}:val) ]
+#     lappend L [list $name $metrics(${name}:val) ]
+    lappend L $name
+    lappend L $metrics(${name}:val)
   }
   return $L
 }
@@ -1403,8 +1460,8 @@ proc ::tb::utils::report_design_summary::reset {} {
   variable reports
   variable metrics
   variable params
-  if {$params(incremental) || $params(debug)} {
-    # Do not remove arrays in incremental mode or debug mode
+  if {$params(debug)} {
+    # Do not remove arrays in debug mode
     return -code ok
   }
   catch { unset reports }
@@ -1422,12 +1479,13 @@ proc ::tb::utils::report_design_summary::importReport {name filename} {
     return -code ok
   }
   if {[info exists reports($name)]} {
-    if {$params(incremental)} {
-      if {$params(verbose)} { puts " -I- Found report '$name'. Report not overriden (incermental mode)" }
-      return $reports($name)
-    } else {
-      if {$params(verbose)} { puts " -I- Found report '$name'. Overridding existing report with new one" }
-    }
+#     if {$params(incremental)} {
+#       if {$params(verbose)} { puts " -I- Found report '$name'. Report not overriden (incremental mode)" }
+#       return $reports($name)
+#     } else {
+#       if {$params(verbose)} { puts " -I- Found report '$name'. Overridding existing report with new one" }
+#     }
+    if {$params(verbose)} { puts " -I- Found report '$name'. Overridding existing report with new one" }
   }
   set FH [open $filename {r}]
   set report [read $FH]
@@ -1440,13 +1498,14 @@ proc ::tb::utils::report_design_summary::setReport {name report} {
   variable reports
   variable params
   if {[info exists reports($name)]} {
-    if {$params(incremental)} {
-      puts "Found report $name. Skipping report.(incremental mode)"
-      if {$params(verbose)} { puts " -I- Found report '$name'. Report not overriden (incermental mode)" }
-      return $reports($name)
-    } else {
-      if {$params(verbose)} { puts " -I- Found report '$name'. Overridding existing report with new one" }
-    }
+#     if {$params(incremental)} {
+#       puts "Found report $name. Skipping report (incremental mode)"
+#       if {$params(verbose)} { puts " -I- Found report '$name'. Report not overriden (incremental mode)" }
+#       return $reports($name)
+#     } else {
+#       if {$params(verbose)} { puts " -I- Found report '$name'. Overridding existing report with new one" }
+#     }
+    if {$params(verbose)} { puts " -I- Found report '$name'. Overridding existing report with new one" }
   }
   set reports($name) $report
   return $report
