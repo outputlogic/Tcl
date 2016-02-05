@@ -66,8 +66,6 @@ proc ::tb::dcpinfo::dcpinfo {args} {
   variable VERBOSE
   variable DEBUG
 
-  variable SQL
-
   set VERBOSE 0
   set DEBUG 0
 
@@ -180,19 +178,24 @@ proc ::tb::dcpinfo::dcpinfo {args} {
     #   <Part Name="xcku15p-ffva1760-3-e-es1"/>
     #   <Top Name="rosco_top"/>
     #   <File Type="EDIF" Name="rosco_top.edf" ModTime="1454564451"/>
+    #   <File Type="REPLAY" Name="rosco_top_iPhysOpt.tcl" ModTime="1454564520"/>
     set build {n/a}; set buildFullName {n/a}; set product {n/a};
-    set part {n/a}; set top {n/a} ; set time {n/a}
-    regexp {BUILD_NUMBER Name="([0-9]+)"} $content - build
-    regexp {FULL_BUILD Name="([^\"]+)"} $content - buildFullName
-    regexp {PRODUCT Name="([^\"]+)"} $content - product
-    regexp {Part Name="([^\"]+)"} $content - part
-    regexp {Top Name="([^\"]+)"} $content - top
-    regexp {File Type="EDIF" .+ ModTime="([^\"]+)"} $content - time
+    set part {n/a}; set top {n/a} ; set time {n/a} ; set replay {n/a}
+    regexp {BUILD_NUMBER\s+Name="([0-9]+)"} $content - build
+    regexp {FULL_BUILD\s+Name="([^\"]+)"} $content - buildFullName
+    regexp {PRODUCT\s+Name="([^\"]+)"} $content - product
+    regexp {Part\s+Name="([^\"]+)"} $content - part
+    regexp {Top\s+Name="([^\"]+)"} $content - top
+    regexp {File\s+Type="EDIF".+ModTime="([^\"]+)"} $content - time
+    regexp {File\s+Type="REPLAY"\s+Name="([^\"]+)"} $content - replay
     if {[llength $ifilenames] > 1} { puts "\n  Checkpoint $checkpoint" }
     puts "      Product: $product $buildFullName"
     puts "      Part   : $part"
     puts "      Top    : $top"
     puts "      Date   : [clock format $time]"
+    if {$replay != {n/a}} {
+      puts "      Replay : $replay"
+    }
     file delete -force [glob -nocomplain $tmpDir/*xml]
   }
 
