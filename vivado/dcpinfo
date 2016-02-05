@@ -1,0 +1,228 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" "$@"
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Description:    This utility provides information on DCP
+##
+########################################################################################
+
+########################################################################################
+## 2016.02.04 - Initial release
+########################################################################################
+
+# if {[file tail [info script]]!=[file tail $argv0]} {
+#   # This file is sourced
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+# }
+
+namespace eval ::tb {}
+
+namespace eval ::tb::dcpinfo {
+  namespace export dcpinfo
+
+  variable SCRIPT_VERSION {2016.02.04}
+  variable VERBOSE 0
+  variable DEBUG 0
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tb::dcpinfo::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::dcpinfo::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## dcpinfo
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::dcpinfo::dcpinfo {args} {
+
+  variable SCRIPT_VERSION
+  variable VERBOSE
+  variable DEBUG
+
+  variable SQL
+
+  set VERBOSE 0
+  set DEBUG 0
+
+  set error 0
+  set show_help 0
+  set ifilenames {}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -dcp -
+      --dcp {
+        foreach pattern [lshift args] {
+          foreach file [glob -nocomplain $pattern] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
+              incr error
+              continue
+            }
+            lappend ifilenames [file normalize $file]
+          }
+        }
+        set ifilenames [lsort -unique $ifilenames]
+      }
+      -v -
+      -verbose {
+        set VERBOSE 1
+      }
+      -d -
+      -debug {
+        set DEBUG 1
+        set VERBOSE 1
+      }
+      -h -
+      -help {
+        incr show_help
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          if {![file exists $name]} {
+            puts " -W- file '$name' does not exist"
+          } else {
+            foreach file [glob -nocomplain $name] {
+              if {![file exists $file]} {
+                puts " -E- File '$file' does not exist"
+                incr error
+                continue
+              }
+              lappend ifilenames [file normalize $file]
+            }
+            set ifilenames [lsort -unique $ifilenames]
+          }
+#           puts " -E- option '$name' is not a valid option"
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: dcpinfo
+                  [<pattern>][-dcp <filename>][-dcp <pattern>]
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Utility to provide DCP information
+
+      Version: %s
+
+      Example:
+         dcpinfo -dcp design.dcp
+         dcpinfo '*/*.dcp'
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if  {$ifilenames == {}} {
+    puts " -E- no input database provided"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#     exit -1
+  }
+
+  set tmpDir [file normalize [format {dcpinfo.%s} [clock seconds]] ]
+
+  foreach checkpoint $ifilenames {
+    # Extract XDC inside temp directory
+    uplevel #0 [list exec unzip $checkpoint dcp.xml -d $tmpDir ]
+    set FH [open [glob -nocomplain $tmpDir/*xml]]
+    set content [read $FH]
+    close $FH
+    #   <BUILD_NUMBER Name="1471427"/>
+    #   <FULL_BUILD Name="SW Build 1471427 on Wed Feb  3 18:18:35 MST 2016"/>
+    #   <PRODUCT Name="Vivado v2016.1.0 (64-bit)"/>
+    #   <Part Name="xcku15p-ffva1760-3-e-es1"/>
+    #   <Top Name="rosco_top"/>
+    #   <File Type="EDIF" Name="rosco_top.edf" ModTime="1454564451"/>
+    set build {n/a}; set buildFullName {n/a}; set product {n/a};
+    set part {n/a}; set top {n/a} ; set time {n/a}
+    regexp {BUILD_NUMBER Name="([0-9]+)"} $content - build
+    regexp {FULL_BUILD Name="([^\"]+)"} $content - buildFullName
+    regexp {PRODUCT Name="([^\"]+)"} $content - product
+    regexp {Part Name="([^\"]+)"} $content - part
+    regexp {Top Name="([^\"]+)"} $content - top
+    regexp {File Type="EDIF" .+ ModTime="([^\"]+)"} $content - time
+    if {[llength $ifilenames] > 1} { puts "\n  Checkpoint $checkpoint" }
+    puts "      Product: $product $buildFullName"
+    puts "      Part   : $part"
+    puts "      Top    : $top"
+    puts "      Date   : [clock format $time]"
+    file delete -force [glob -nocomplain $tmpDir/*xml]
+  }
+
+  if {$tmpDir != {}} { file delete -force $tmpDir }
+  return -code ok
+}
+
+namespace eval ::tb {
+  namespace import ::tb::dcpinfo::dcpinfo
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::tb::dcpinfo::VERBOSE 0
+set ::tb::dcpinfo::DEBUG 0
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tb::dcpinfo::dcpinfo
+} else {
+  if {[catch {eval [concat ::tb::dcpinfo::dcpinfo $argv]} errorstring]} {
+    puts $errorstring
+    # Close SQlite database
+    catch { $::tb::dcpinfo::SQL close }
+    exit 1
+  }
+  exit 0
+}
