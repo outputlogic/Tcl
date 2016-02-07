@@ -1,7 +1,7 @@
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -19,6 +19,7 @@ proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 ########################################################################################
 
 ########################################################################################
+## 2016.02.06 - Improved supported primitives (UltraScale Plus)
 ## 2015.10.21 - Fixed issue when timing paths start or end on a port
 ##            - Remove PBlock table when there is no pblock in the design
 ##            - Added new column 'ILKN' to support interlaken
@@ -58,7 +59,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_path_analysis {
   namespace export -force report_path_analysis
-  variable version {2015.10.21}
+  variable version {2016.02.06}
   variable pathObj
   variable pathData
   variable params
@@ -1930,6 +1931,7 @@ proc ::tb::utils::report_path_analysis::getPathInfo {path props} {
   array set primTable [list DSP_A_B_DATA DSP DSP_ALU DSP DSP_C_DATA DSP DSP_MULTIPLIER DSP DSP_M_DATA DSP DSP_OUTPUT DSP DSP_PREADD DSP DSP_PREADD_DATA DSP ]
   # Some more entries for UltraScale Plus
   array set primTable [list CMACE4 OTHER ILKNE4 ILKN PCIE40E4 PCIE ]
+  array set primTable [list BUFGCE CLK OBUFT CLK ISERDESE2 IO GTYE4_CHANNEL GT GTYE4_COMMON GT GTHE4_CHANNEL GT GTHE4_COMMON GT ]
   set primRef [list LUT CARRY MUX FD SRL LUTRAM RAMB DSP CLK GT PCIE IO ILKN OTHER]
   set slrRef  [get_slrs -quiet]
 
@@ -2130,8 +2132,8 @@ proc ::tb::utils::report_path_analysis::getPathInfo {path props} {
       }
       spPinType {
         set cellType [get_property -quiet REF_NAME $spCell ]
-        if {$cellType == {}} { 
-          set pinType {<PORT>} 
+        if {$cellType == {}} {
+          set pinType {<PORT>}
         } else {
           # Most likely a clock pin, so no need to check for a bus name
           set pinType [format {%s/%s} $cellType [get_property -quiet REF_PIN_NAME $spPin ] ]
@@ -2140,8 +2142,8 @@ proc ::tb::utils::report_path_analysis::getPathInfo {path props} {
       }
       epPinType {
         set cellType [get_property -quiet REF_NAME $epCell ]
-        if {$cellType == {}} { 
-          set pinType {<PORT>} 
+        if {$cellType == {}} {
+          set pinType {<PORT>}
         } else {
           # Check whether enpoint pin is a bus or not
           set pinBusName [get_property -quiet BUS_NAME $epPin]
@@ -2516,7 +2518,7 @@ proc ::tb::utils::report_path_analysis::lfilter {L script} {
     if {[uplevel 1 $script $e]} {lappend res $e}
   }
   set res
-} 
+}
 
 proc ::tb::utils::report_path_analysis::lslack {L} {
   # Return all the valid slacks in the list (exclude infinite slack)
@@ -2584,7 +2586,7 @@ proc ::tb::utils::report_path_analysis::dputs {args} {
   return -code ok
 }
 
-proc ::tb::utils::report_path_analysis::sigma {L} {         
+proc ::tb::utils::report_path_analysis::sigma {L} {
   if {[catch {
     # More efficient to build list before using concat...
     foreach {sum sum2} [SumSum2 $L] {}
@@ -2784,7 +2786,7 @@ if {0} {
                        ]
   set output [concat $output [split [$tbl export -format $params(format)] \n] ]
   catch {$tbl destroy}
-  
+
   ########################################################################################
 
   set tbl [::tb::prettyTable {Clock Pair Distribution}]
