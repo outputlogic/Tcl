@@ -19,7 +19,7 @@ proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 ########################################################################################
 
 ########################################################################################
-## 2016.02.06 - Improved supported primitives (UltraScale Plus)
+## 2016.02.08 - Improved supported primitives (UltraScale Plus)
 ## 2015.10.21 - Fixed issue when timing paths start or end on a port
 ##            - Remove PBlock table when there is no pblock in the design
 ##            - Added new column 'ILKN' to support interlaken
@@ -59,7 +59,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_path_analysis {
   namespace export -force report_path_analysis
-  variable version {2016.02.06}
+  variable version {2016.02.08}
   variable pathObj
   variable pathData
   variable params
@@ -1931,7 +1931,7 @@ proc ::tb::utils::report_path_analysis::getPathInfo {path props} {
   array set primTable [list DSP_A_B_DATA DSP DSP_ALU DSP DSP_C_DATA DSP DSP_MULTIPLIER DSP DSP_M_DATA DSP DSP_OUTPUT DSP DSP_PREADD DSP DSP_PREADD_DATA DSP ]
   # Some more entries for UltraScale Plus
   array set primTable [list CMACE4 OTHER ILKNE4 ILKN PCIE40E4 PCIE ]
-  array set primTable [list BUFGCE CLK OBUFT CLK ISERDESE2 IO GTYE4_CHANNEL GT GTYE4_COMMON GT GTHE4_CHANNEL GT GTHE4_COMMON GT ]
+  array set primTable [list BUFGCE CLK INBUF CLK OBUFT CLK ISERDESE3 IO OSERDESE3 IO GTYE4_CHANNEL GT GTYE4_COMMON GT GTHE4_CHANNEL GT GTHE4_COMMON GT ]
   set primRef [list LUT CARRY MUX FD SRL LUTRAM RAMB DSP CLK GT PCIE IO ILKN OTHER]
   set slrRef  [get_slrs -quiet]
 
