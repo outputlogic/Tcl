@@ -28,6 +28,9 @@ proc init {} {
    SpreadLogic_high       \
    SpreadLogic_medium     \
    SpreadLogic_low        \
+   AltSpreadLogic_high    \
+   AltSpreadLogic_medium  \
+   AltSpreadLogic_low     \
    LateBlockPlacement     \
    ExtraNetDelay_high     \
    ExtraNetDelay_medium   \
@@ -50,9 +53,9 @@ proc init {} {
 proc main { {scriptname run.st} } {
   global WDIR
   global CONFIG_VARS
-  
+
   if {![file exists $scriptname]} {
-  	puts " -E- File '$scriptname' does not exist"
+    puts " -E- File '$scriptname' does not exist"
     return -code ok
   }
 
@@ -62,7 +65,7 @@ proc main { {scriptname run.st} } {
   # set WDIR [pwd]
   set WDIR [file dirname [file normalize [info script]]]
 
-  # Override the 'set' command to save defined Tcl variables inside the 
+  # Override the 'set' command to save defined Tcl variables inside the
   # array 'CONFIG_VARS'
   rename set setTCL
   proc set { var value } { global CONFIG_VARS ; setTCL CONFIG_VARS($var) $value ; uplevel 1 [list setTCL $var $value ] }
@@ -226,6 +229,24 @@ exit 0
 #    *  SpreadLogic_low - Distribute logic across the device. Three levels are
 #       supported: high, medium, and low. SpreadLogic_low achieves a minimal
 #       level of distribution.
+#
+#    *  AltSpreadLogic_high - (UltraScale only) Spreads logic throughout the
+#       device to avoid creating congested regions using algorithms created
+#       specifically for UltraScale target devices. Three levels are supported:
+#       high, medium, and low. AltSpreadLogic_high achieves the highest level
+#       of spreading.
+#
+#    *  AltSpreadLogic_medium - (UltraScale only) Spreads logic throughout the
+#       device to avoid creating congested regions using algorithms created
+#       specifically for UltraScale target devices. Three levels are supported:
+#       high, medium, and low. AltSpreadLogic_medium achieves a medium level of
+#       spreading compared to low and high.
+#
+#    *  AltSpreadLogic_low - (UltraScale only) Spreads logic throughout the
+#       device to avoid creating congested regions using algorithms created
+#       specifically for UltraScale target devices. Three levels are supported:
+#       high, medium, and low. AltSpreadLogic_low achieves the lowest level of
+#       spreading.
 #
 #    *  ExtraPostPlacementOpt - Increased placer effort in post-placement
 #       optimization.
