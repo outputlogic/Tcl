@@ -1,7 +1,7 @@
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -11,13 +11,15 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2014.12.16
+## Version:        2016.02.11
 ## Tool Version:   Vivado 2014.1
 ## Description:    This package provides commands for timing correlation
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.02.11 - Fixed issue with get_p2p_info where options were not passed to
+##              internal::route_dbg_p2p_route
 ## 2014.12.16 - Added pin_info to return pin site information 
 ## 2014.09.22 - Added get_est_wire_delay for pin-to-pin estimated wire delays 
 ## 2014.09.09 - Save latest p2p report inside ::tb::p2pdelay::report
@@ -143,7 +145,7 @@ proc ::tb::p2pdelay::get_p2p_info {args} {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::p2pdelay {
-  variable version {2014.12.16}
+  variable version {2016.02.11}
   variable params
   variable tcpstate {}
   variable socket {}
@@ -1433,6 +1435,7 @@ proc ::tb::p2pdelay::method:get_p2p_delay {args} {
   Example:
      p2pdelay get_p2p_delay -from {SLICE_X47Y51 AQ} -to {SLICE_X47Y51 A1}
      p2pdelay get_p2p_delay -from int1_reg/Q -to {SLICE_X47Y51 A1} -options {-removeLUTPinDelay}
+     p2pdelay get_p2p_delay -from int1_reg/Q -to {SLICE_X47Y51 A1} -options {-removeLUTPinDelay -disableGlobals}
 } ]
     # HELP -->
     return -code ok
@@ -1492,7 +1495,7 @@ proc ::tb::p2pdelay::method:get_p2p_delay {args} {
     error " -E- some error(s) happened. Cannot continue"
   }
   
-  return [lindex [getP2pInfo -from $from -to $to -host $host -port $port] 0]
+  return [lindex [getP2pInfo -from $from -to $to -host $host -port $port -options $opt] 0]
 }
 
 #------------------------------------------------------------------------

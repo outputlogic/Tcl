@@ -14,7 +14,7 @@ if {![package vsatisfies [package provide Tcl] 8.4]} {
 }
 
 namespace eval ::tb::p2pdelay {
-    variable version {2014.09.22}
+    variable version {2016.02.11}
     # Allow Tcl to find tclIndex
     variable home [file join [pwd] [file dirname [info script]]]
     if {[lsearch -exact $::auto_path $home] == -1} {
