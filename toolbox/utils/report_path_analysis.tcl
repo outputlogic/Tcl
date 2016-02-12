@@ -6,8 +6,8 @@
 # HEADER_END
 ####################################################################################################
 
-proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
-proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 ########################################################################################
 ##
@@ -19,6 +19,7 @@ proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 ########################################################################################
 
 ########################################################################################
+## 2016.02.12 - Improved supported primitives (UltraScale / UltraScale Plus)
 ## 2016.02.08 - Improved supported primitives (UltraScale Plus)
 ## 2015.10.21 - Fixed issue when timing paths start or end on a port
 ##            - Remove PBlock table when there is no pblock in the design
@@ -59,7 +60,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_path_analysis {
   namespace export -force report_path_analysis
-  variable version {2016.02.08}
+  variable version {2016.02.12}
   variable pathObj
   variable pathData
   variable params
@@ -1927,10 +1928,12 @@ proc ::tb::utils::report_path_analysis::getPathInfo {path props} {
   array set primTable [list BUFG CLK BUFGCTRL CLK BUFH CLK CARRY4 CARRY CARRY8 CARRY DSP48E1 DSP FDCE FD FDPE FD FDRE FD FDRS FD FDSE FD FIFO18E1 RAMB FIFO36E1 RAMB FRAME_ECCE2 OTHER GND OTHER GTHE2_COMMON GT GTHE2_CHANNEL GT GTXE2_CHANNEL GT GTXE2_COMMON GT GTPE2_CHANNEL GT IBUF IO IBUFDS IO IBUFDS_GTE2 IO ICAPE2 OTHER IDELAYCTRL IO IDELAYE2 IO IN_FIFO IO IOBUF CLK ISERDESE2 IO LUT1 LUT LUT2 LUT LUT3 LUT LUT4 LUT LUT5 LUT LUT6 LUT LUT6_2 LUT MMCME2_ADV CLK MUXF7 MUX MUXF8 MUX OBUF IO OBUFDS_DUAL_BUF IO IDDR IO ODDR IO OSERDESE2 IO OUT_FIFO IO PCIE_2_1 PCIE PCIE_3_0 PCIE PHASER_IN IO PHASER_OUT_PHY IO PHASER_REF IO PHY_CONTROL IO IBUFCTRL IO BITSLICE_CONTROL IO PLLE2_ADV CLK RAM128X1S LUTRAM RAM32M LUTRAM RAM32X1D LUTRAM RAM32X1S LUTRAM RAM64M LUTRAM RAM64X1D LUTRAM RAM64X1S LUTRAM RAMB18E1 RAMB RAMB36E1 RAMB ROM128X1 LUTRAM ROM256X1 LUTRAM SRLC16E SRL SRL16E SRL SRLC32E SRL VCC OTHER XADC OTHER RAMD64E LUTRAM RAMD64E LUTRAM RAMD32 LUTRAM RAMS32 LUTRAM RAMS64E LUTRAM ]
   # Some more entries for UltraScale
   array set primTable [list DSP48E2 DSP PCIE_3_1 PCIE FIFO18E2 RAMB FIFO36E2 RAMB RAMB18E2 RAMB RAMB36E2 RAMB GTHE3_CHANNEL GT GTXE3_CHANNEL GT GTXE3_COMMON GT GTPE3_CHANNEL GT RXTX_BITSLICE IO ILKN ILKN ]
+  array set primTable [list MMCME3_ADV CLK PLLE3_ADV CLK ]
   array set primTable [list CMAC OTHER ]
   array set primTable [list DSP_A_B_DATA DSP DSP_ALU DSP DSP_C_DATA DSP DSP_MULTIPLIER DSP DSP_M_DATA DSP DSP_OUTPUT DSP DSP_PREADD DSP DSP_PREADD_DATA DSP ]
   # Some more entries for UltraScale Plus
   array set primTable [list CMACE4 OTHER ILKNE4 ILKN PCIE40E4 PCIE ]
+  array set primTable [list MMCME4_ADV CLK PLLE4_ADV CLK ]
   array set primTable [list BUFGCE CLK INBUF CLK OBUFT CLK ISERDESE3 IO OSERDESE3 IO GTYE4_CHANNEL GT GTYE4_COMMON GT GTHE4_CHANNEL GT GTHE4_COMMON GT ]
   set primRef [list LUT CARRY MUX FD SRL LUTRAM RAMB DSP CLK GT PCIE IO ILKN OTHER]
   set slrRef  [get_slrs -quiet]
