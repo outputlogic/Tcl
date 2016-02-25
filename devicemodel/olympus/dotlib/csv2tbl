@@ -2,19 +2,58 @@
 # use -*-TCL-*- \
 exec tclsh "$0" "$@"
 
-set SCRIPT_VERSION {10-22-2013}
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
 
-# Convert CSV files to tables
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2016.02.25
+## Description:    This utility provides to way to convert CSV files to tables
+##
+########################################################################################
 
-if {[file tail [info script]]!=[file tail $argv0]} {
-  # This file is sourced
-  error " ERROR - this script is meant to be executed and not sourced.\n"
+########################################################################################
+## 2016.02.25 - Updated help message
+## 2016.01.12 - Added support for -transpose
+## 2015.12.18 - Added support for -noheader
+## 2015.12.16 - Added support for -lean/-classic/-format/-left/-right
+##              When using those command line options, the script requires prettyTable
+##              otherwise it reverts to default format
+##            - Changed the behavior when multiple input CSV files are provided.
+##              Each CSV file is now converted as a report and saved inside the same
+##              directory (unless -out/-stdout is used)
+## 2014.11.03 - Code reorganization under namespace ::tb::csv2tbl
+## 2013.09.27 - Initial release
+########################################################################################
+
+# if {[file tail [info script]]!=[file tail $argv0]} {
+#   # This file is sourced
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+# }
+
+namespace eval ::tb {}
+
+namespace eval ::tb::csv2tbl {
+  namespace export csv2tbl
+
+  variable SCRIPT_VERSION {2016.02.25}
+  variable VERBOSE 0
+  variable DEBUG 0
+  variable channel {}
 }
 
 ##-----------------------------------------------------------------------
 ## Long help function
 ##-----------------------------------------------------------------------
-proc print_help {} {
+proc ::tb::csv2tbl::print_help {} {
 
 set help_message [format {
 #########################################################################
@@ -87,11 +126,11 @@ set help_message [format {
 # namespace eval Table { set n 0 }
 
 # Trick to silence the linter
-eval [list namespace eval Table {
+eval [list namespace eval ::tb::csv2tbl::Table {
   set n 0
 } ]
 
-proc Table::Create { {title {}} } { #-- constructor
+proc ::tb::csv2tbl::Table::Create { {title {}} } { #-- constructor
   # Summary :
   # Argument Usage:
   # Return Value:
@@ -99,13 +138,13 @@ proc Table::Create { {title {}} } { #-- constructor
   variable n
   set instance [namespace current]::[incr n]
   namespace eval $instance { variable tbl [list]; variable header [list]; variable indent 0; variable title {}; variable numrows 0 }
-  interp alias {} $instance {} Table::do $instance
+  interp alias {} $instance {} ::tb::csv2tbl::Table::do $instance
   # Set the title
   $instance title $title
   set instance
 }
 
-proc Table::do {self method args} { #-- Dispatcher with methods
+proc ::tb::csv2tbl::Table::do {self method args} { #-- Dispatcher with methods
   # Summary :
   # Argument Usage:
   # Return Value:
@@ -136,7 +175,7 @@ proc Table::do {self method args} { #-- Dispatcher with methods
         return 0
       }
       print {
-        eval Table::print $self
+        eval ::tb::csv2tbl::Table::print $self $args
       }
       length {
         return $numrows
@@ -175,7 +214,7 @@ proc Table::do {self method args} { #-- Dispatcher with methods
   }
 }
 
-proc Table::print {self} {
+proc ::tb::csv2tbl::Table::print {self {printHeader 1}} {
   # Summary :
   # Argument Usage:
   # Return Value:
@@ -217,8 +256,14 @@ proc Table::print {self} {
   # Generate the table header
   append res $head\n
   # Generate the table rows
-  set first 1
-  foreach row [concat [list $header] $table] {
+  if {$printHeader} {
+    set rows [concat [list $header] $table]
+    set first 1
+  } else {
+    set rows $table
+    set first 0
+  }
+  foreach row $rows {
       if {$row eq {%%SEPARATOR%%}} {
         append res $head\n
         continue
@@ -242,14 +287,14 @@ proc Table::print {self} {
 ##-----------------------------------------------------------------------
 ## Stack functions
 ##-----------------------------------------------------------------------
-proc lshift { inputlist } {
+proc ::tb::csv2tbl::lshift { inputlist } {
   upvar $inputlist argv
   set arg  [lindex $argv 0]
   set argv [lrange $argv 1 end]
   return $arg
 }
 
-proc unlshift { ls data } {
+proc ::tb::csv2tbl::unlshift { ls data } {
    upvar 1 $ls LIST
    set LIST [concat $data $LIST]
 }
@@ -260,9 +305,9 @@ proc unlshift { ls data } {
 ## List functions
 ##-----------------------------------------------------------------------
 
-proc K {a b} {return $a}
+proc ::tb::csv2tbl::K {a b} {return $a}
 
-proc lequal {l1 l2} {
+proc ::tb::csv2tbl::lequal {l1 l2} {
     if {[llength $l1] != [llength $l2]} {
         return false
     }
@@ -286,7 +331,7 @@ proc lequal {l1 l2} {
 ##-----------------------------------------------------------------------
 ## Convert a CSV string to a Tcl list based on a field separator
 ##-----------------------------------------------------------------------
-proc split-csv { str {sepChar ,} } {
+proc ::tb::csv2tbl::split-csv { str {sepChar ,} } {
   regsub -all {(\A\"|\"\Z)} $str \0 str
   set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
   set str [string map [list $sepChar\"\"\" $sepChar\0\" \
@@ -317,7 +362,9 @@ proc split-csv { str {sepChar ,} } {
 ##-----------------------------------------------------------------------
 ## Read CSV file and return a Table object
 ##-----------------------------------------------------------------------
-proc read-csv {&tbl filename {csvDelimiter ,}} {
+proc ::tb::csv2tbl::read-csv {&tbl filename {csvDelimiter ,} {parseHeader 1}} {
+  variable VERBOSE
+  variable channel
   if {![file exists $filename]} {
     error " -E- file '$filename' does not exist"
   }
@@ -336,7 +383,7 @@ proc read-csv {&tbl filename {csvDelimiter ,}} {
         # If we are in merge mode, then check that the header for this CSV file
         # does match the existing header
         if {![lequal [subst $${tbl}::header] $header]} {
-          if {$::VERBOSE} {
+          if {$VERBOSE} {
             puts " -I- CSV header: $header"
             puts " -I- Table header: [subst $${tbl}::header]"
           }
@@ -344,7 +391,16 @@ proc read-csv {&tbl filename {csvDelimiter ,}} {
           return 1
         }
       }
-      $tbl header $header
+      if {$parseHeader} {
+        $tbl header $header
+      } else {
+        # If the CSV file has no header, create an empty header with correct number
+        # of columns and add the first line as a row
+        set L [list] ; foreach el $header { lappend L {} }
+        $tbl header $L
+        $tbl addrow $header
+        incr count
+      }
       set first 0
     } else {
       $tbl addrow [split-csv $line $csvDelimiter]
@@ -352,178 +408,454 @@ proc read-csv {&tbl filename {csvDelimiter ,}} {
     }
   }
   close $FH
-  if {$::VERBOSE} {
-    puts $::channel " -I- Header: $header"
-    puts $::channel " -I- Number of imported row(s): $count"
+  if {$VERBOSE && ($channel != {})} {
+    puts $channel " -I- Header: $header"
+    puts $channel " -I- Number of imported row(s): $count"
   }
   return 0
 }
 
 ##-----------------------------------------------------------------------
-## MAIN
+## transpose
 ##-----------------------------------------------------------------------
+## Transpose the table
+##-----------------------------------------------------------------------
+proc ::tb::csv2tbl::transpose {table} {
+  upvar 1 ${table} tbl
+  if {[info exists ${tbl}::tbl]} {
+    # For table package embedded in this file
+    upvar #0 ${tbl}::tbl rows
+    upvar #0 ${tbl}::numrows numrows
+  } else {
+    # For prettyTable, some internal variable names are different
+    upvar #0 ${tbl}::table rows
+    upvar #0 ${tbl}::numRows numrows
+  }
+  upvar #0 ${tbl}::header header
+  if {[lsort -unique $header] == [list {}]} {
+    # Empty header. The matrix is only made of the table rows
+    set matrix $rows
+  } else {
+    # If header defined, include it in the matrix along with the
+    # table rows
+    set matrix [concat [list $header] $rows]
+  }
 
-set VERBOSE 0
-set DEBUG 0
+  # Create template of an empty row for the transposed matrix
+  # (number of rows of current table)
+  set row {}
+  set transpose {}
+  foreach r $matrix {
+    # Skip separator rows
+    if {$r == {%%SEPARATOR%%}} {
+      continue
+    }
+    lappend row {}
+  }
+  # Create empty transposed matrix
+  foreach c [lindex $matrix 0] {
+    lappend transpose $row
+  }
 
-set error 0
-set show_help 0
-set show_long_help 0
-set ifilename [list]
-set ofilename {}
-set mode {w}
-set csvDelimiter {,}
-set merge 0
-set channel {stdout}
-if {[llength $argv] == 0} {
-  incr show_help
+  # Transpose the matrix: rows become columns
+  set nr 0
+  foreach r $matrix {
+    # Skip separator rows
+    if {$r == {%%SEPARATOR%%}} {
+      continue
+    }
+    set nc 0
+    foreach c $r {
+      lset transpose [list $nc $nr] $c
+      incr nc
+    }
+    incr nr
+  }
+
+  # Re-create a header with format: header row0 row1 ... rowN
+  set header {header}
+  set n -1
+  foreach el [lrange $row 1 end] {
+    lappend header [format {row%d} [incr n]]
+  }
+  # Save the transposed matrix
+  set rows $transpose
+  # Update the number of rows
+  set numrows [llength $transpose]
+
+  return 0
 }
-#-------------------------------------------------------
-# Process command line arguments
-#-------------------------------------------------------
-while {[llength $argv]} {
-  set name [lshift argv]
-  switch -exact -- $name {
-    -csv -
-    --csv {
-      while {![string match "-*" [set filename [lshift argv]]]} {
-        if {$filename == {}} {
-          break
-        } elseif {![file exists $filename]} {
-          puts " -E- file '$filename' does not exist"
-          incr error
-        } else {
-          lappend ifilename $filename
+
+##-----------------------------------------------------------------------
+## csv2tbl
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::csv2tbl::csv2tbl {args} {
+
+  variable SCRIPT_VERSION
+  variable VERBOSE
+  variable DEBUG
+  variable channel
+
+  set VERBOSE 0
+  set DEBUG 0
+
+  set error 0
+  set show_help 0
+  set show_long_help 0
+  set ifilename [list]
+  set ofilename {}
+  set mode {w}
+  set csvDelimiter {,}
+  set merge 0
+  set stdout 0
+  set outputMode {multiple} ; # single|multiple|stdout
+  set channel {}
+  set table {classic}
+  set alignment {left}
+  set usePrettyTable 0
+  set parseHeader 1
+  set transpose 0
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -csv -
+      --csv {
+        while {![string match "-*" [set filename [lshift args]]]} {
+          if {$filename == {}} {
+            break
+          } elseif {![file exists $filename]} {
+            puts " -E- file '$filename' does not exist"
+            incr error
+          } else {
+            lappend ifilename $filename
+          }
+        }
+        # The last argument needs to be put back on the stack
+        if {$filename != {}} { unlshift args $filename }
+      }
+      -o -
+      --o -
+      -out -
+      --out {
+        set ofilename [lshift args]
+      }
+      -delimiter -
+      --delimiter {
+        set csvDelimiter [lshift args]
+      }
+      -a -
+      --a -
+      -append -
+      --append {
+        set mode {a}
+      }
+      -noheader -
+      --noheader {
+          set parseHeader 0
+      }
+      -transpose -
+      --transpose {
+          set transpose 1
+      }
+      -v -
+      -verbose {
+          set VERBOSE 1
+      }
+      -stdout -
+      --stdout {
+          set stdout 1
+      }
+      -m -
+      --m -
+      -merge -
+      --merge {
+          set merge 1
+      }
+      -lean -
+      --lean {
+           set table {lean}
+      }
+      -classic -
+      --classic {
+           set table {classic}
+      }
+      -format -
+      --format {
+           set table [lshift args]
+           switch $table {
+             lean -
+             classic {
+             }
+             default {
+               puts " -E- invalid format '$table'. The valid formats are: classic|lean"
+               incr error
+             }
+           }
+      }
+      -left -
+      -align_left {
+           set alignment {left}
+      }
+      -right -
+      -align_right {
+           set alignment {right}
+      }
+      -d -
+      -debug {
+          set DEBUG 1
+          set VERBOSE 1
+      }
+      -h -
+      -help {
+          incr show_help
+      }
+      -longhelp {
+          incr show_help
+          incr show_long_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            # Expand the pattern (if any)
+            foreach file [glob -nocomplain $name] {
+              if {![file exists $file]} {
+                puts " -W- file '$file' does not exist"
+              } else {
+                lappend ifilename $file
+              }
+            }
+#             puts " -E- option '$name' is not a valid option"
+#             incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: csv2tbl
+                  [<filename> [<filename> ...]]
+                  [-csv <filename> [<filename> ...]]
+                  [-delimiter <csv-delimiter>]
+                  [-out <filename>]
+                  [-format classic|lean][-lean][-classic]
+                  [-align_left|-left]
+                  [-align_right|-right]
+                  [-stdout]
+                  [-append|-a]
+                  [-merge]
+                  [-transpose]
+                  [-noheader]
+                  [-verbose|-v]
+                  [-help|-h]
+                  [-longhelp]
+
+      Description: Utility to convert CSV formated files to tables formated reports
+
+      Version: %s
+
+        If -out/-stdout is not specified then each report is saved in the same
+        directory as the CSV file with .rpt
+
+        Use -stdout to redirect output to stdout
+        Use -noheader when the CSV file has no header
+        Use -transpose to transpose the CSV
+
+      Example:
+         csv2tbl -csv file1.csv -delimiter ';'
+         csv2tbl -csv *.csv -out result.rpt -merge
+         csv2tbl -csv *.csv -noheader
+
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    if {$show_long_help} { print_help }
+
+    return -code ok
+  }
+
+  if  {$ifilename == {}} {
+    puts " -E- no input file provided"
+    incr error
+  }
+
+  if {$merge} {
+    if  {!$stdout && $ofilename == {}} {
+      puts " -E- -merge must be used with -out or -stdout"
+      incr error
+    }
+  }
+
+  if  {$stdout && $ofilename != {}} {
+    puts " -E- -out and -stdout are mutually exclusive"
+    incr error
+  }
+
+  if {($table == {lean}) || ($alignment == {right})} {
+    if {[catch {package require prettyTable} errorstring]} {
+      # The package prettyTable cannot be found
+      puts " -W- package prettyTable cannot be found. Reverting to classic format and left alignment"
+    } else {
+      set usePrettyTable 1
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#    exit -1
+  }
+
+  if {$stdout} {
+    # Redirect to STDOUT
+    set outputMode {stdout}
+    set channel {stdout}
+  } elseif {$ofilename == {}} {
+    # Generate a report file for each CSV file
+    set outputMode {multiple}
+  } else {
+    # Generate a single report file for all the CSV files
+    set outputMode {single}
+    if {[catch {set channel [open $ofilename $mode]} errorstring]} {
+      error " -E- $errorstring"
+#       exit 1
+    }
+    puts $channel "# -------------------------------------------------------"
+    puts $channel [format {# Created on %s with csv2tbl} [clock format [clock seconds]] ]
+    puts $channel "# -------------------------------------------------------\n"
+  }
+
+  if {$usePrettyTable} {
+    # Use prettyTable
+    set tbl [::tb::prettyTable]
+  } else {
+    # Use the table package provided with the script
+    set tbl [::tb::csv2tbl::Table::Create]
+  }
+
+  set first 1
+  foreach filename $ifilename {
+    if {$VERBOSE} {
+      puts " -I- Processing file $filename"
+    }
+    if {$merge} {
+      if {!$first} {
+        $tbl separator
+      }
+      read-csv tbl $filename $csvDelimiter $parseHeader
+      set first 0
+    } else {
+      $tbl reset
+      $tbl title "CSV: [file normalize $filename]"
+      read-csv tbl $filename $csvDelimiter $parseHeader
+      if {$outputMode == {multiple}} {
+        # Generate the report file
+        set ofilename "[file rootname $filename].rpt"
+        if {[catch {set channel [open $ofilename $mode]} errorstring]} {
+          puts " -E- skipping file '$filename' due to following error:"
+          puts " -E- $errorstring"
+          continue
+        }
+        puts $channel "# -------------------------------------------------------"
+        puts $channel [format {# Created on %s with csv2tbl} [clock format [clock seconds]] ]
+        puts $channel "# -------------------------------------------------------\n"
+      }
+      if {$transpose} {
+        # Transpose the table
+        transpose tbl
+      }
+      if {$usePrettyTable} {
+        switch $alignment {
+          right {
+            if {$parseHeader} {
+              puts $channel "[$tbl print -format $table -align_right]\n"
+            } else {
+              puts $channel "[$tbl print -format $table -align_right -noheader]\n"
+            }
+          }
+          default {
+            if {$parseHeader} {
+              puts $channel "[$tbl print -format $table]\n"
+            } else {
+              puts $channel "[$tbl print -format $table -noheader]\n"
+            }
+          }
+        }
+      } else {
+        puts $channel "[$tbl print $parseHeader]\n"
+      }
+      if {$outputMode == {multiple}} {
+        close $channel
+        set channel {}
+      }
+    }
+  }
+
+  if {$merge} {
+    if {$transpose} {
+      # Transpose the table
+      transpose tbl
+    }
+    if {$usePrettyTable} {
+      switch $alignment {
+        right {
+          if {$parseHeader} {
+            puts $channel "[$tbl print -format $table -align_right]\n"
+          } else {
+            puts $channel "[$tbl print -format $table -align_right -noheader]\n"
+          }
+        }
+        default {
+          if {$parseHeader} {
+            puts $channel "[$tbl print -format $table]\n"
+          } else {
+            puts $channel "[$tbl print -format $table -noheader]\n"
+          }
         }
       }
-      # The last argument needs to be put back on the stack
-      if {$filename != {}} { unlshift argv $filename }
-    }
-    -o -
-    --o -
-    -out -
-    --out {
-      set ofilename [lshift argv]
-    }
-    -delimiter -
-    --delimiter {
-      set csvDelimiter [lshift argv]
-    }
-    -a -
-    --a -
-    -append -
-    --append {
-      set mode {a}
-    }
-    -v -
-    -verbose {
-        set VERBOSE 1
-    }
-    -m -
-    --m -
-    -merge -
-    --merge {
-        set merge 1
-    }
-    -d -
-    -debug {
-        set DEBUG 1
-        set VERBOSE 1
-    }
-    -h -
-    -help {
-        incr show_help
-    }
-    -longhelp {
-        incr show_help
-        incr show_long_help
-    }
-    default {
-        if {[string match "-*" $name]} {
-          puts " -E- option '$name' is not a valid option"
-          incr error
-        } else {
-          puts " -E- option '$name' is not a valid option"
-          incr error
-        }
+    } else {
+      puts $channel "[$tbl print $parseHeader]\n"
     }
   }
+
+  if {($channel != {stdout}) && ($channel != {})} { close $channel }
+
+  return -code ok
 }
 
-if {$show_help} {
-  # <-- HELP
-  puts [format {
-    Usage: csv2tbl
-                [-csv <filename> [<filename> ...]]
-                [-delimiter <csv-delimiter>]
-                [-out <filename>]
-                [-merge]
-                [-append|-a]
-                [-verbose|-v]
-                [-help|-h]
-                [-longhelp]
-
-    Description: Utility to convert CSV formated files to tables formated reports
-
-    Version: %s
-
-    Example:
-       csv2tbl -csv file1.csv -delimiter ';'
-       csv2tbl -csv *.csv -out result.rpt -merge
-
-  } $SCRIPT_VERSION ]
-  # HELP -->
-
-  if {$show_long_help} { print_help }
-
-  exit 0
+namespace eval ::tb {
+  namespace import ::tb::csv2tbl::csv2tbl
 }
 
-if  {$ifilename == {}} {
-  puts " -E- no input file provided"
-  incr error
-}
 
-if {$error} {
-  puts "\n Some error(s) occured. Cannot continue.\n"
-  exit -1
-}
 
-if {$ofilename != {}} {
-  if {[catch {set channel [open $ofilename $mode]} errorstring]} {
-    puts " -E- $errorstring"
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+set ::tb::csv2tbl::VERBOSE 0
+set ::tb::csv2tbl::DEBUG 0
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tb::csv2tbl::csv2tbl
+} else {
+  if {[catch {eval [concat ::tb::csv2tbl::csv2tbl $argv]} errorstring]} {
+    puts $errorstring
     exit 1
   }
-  puts $channel "# -------------------------------------------------------"
-  puts $channel [format {# Created on %s with csv2tbl} [clock format [clock seconds]] ]
-  puts $channel "# -------------------------------------------------------\n"
+  exit 0
 }
-
-set tbl [Table::Create]
-
-set first 1
-foreach filename $ifilename {
-  if {$VERBOSE} {
-    puts " -I- Processing file $filename"
-  }
-  if {$merge} {
-    if {!$first} {
-      $tbl separator
-    }
-    read-csv tbl $filename $csvDelimiter
-    set first 0
-  } else {
-    $tbl reset
-    $tbl title "CSV: [file normalize $filename]"
-    read-csv tbl $filename $csvDelimiter
-    puts $channel "[$tbl print]\n"
-  }
-}
-
-if {$merge} {
-  puts $channel [$tbl print]
-}
-
-if {$channel != {stdout}} { close $channel }
-
-exit 0
