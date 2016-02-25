@@ -11,17 +11,19 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.02.11
+## Version:        2016.02.24
 ## Tool Version:   Vivado 2014.1
 ## Description:    This package provides commands for timing correlation
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.02.24 - Removed limit to the number of expansions (internal::route_dbg_p2p_route)
+##              (runtime impact)
 ## 2016.02.11 - Fixed issue with get_p2p_info where options were not passed to
 ##              internal::route_dbg_p2p_route
-## 2014.12.16 - Added pin_info to return pin site information 
-## 2014.09.22 - Added get_est_wire_delay for pin-to-pin estimated wire delays 
+## 2014.12.16 - Added pin_info to return pin site information
+## 2014.09.22 - Added get_est_wire_delay for pin-to-pin estimated wire delays
 ## 2014.09.09 - Save latest p2p report inside ::tb::p2pdelay::report
 ##            - Added method last_report
 ##            - Other minor updates
@@ -52,7 +54,7 @@ if {0} {
   source p2pdelay.tcl
   p2pdelay config -port 12345 -part xc7vx415tffg1158-2L -log p2pdelay.log -nodebug -echo
   p2pdelay start_server -timeout 30
-  
+
   source p2pdelay.tcl
   p2pdelay config -port 12345 -part xc7vx415tffg1158-2L -log p2pdelay.log -nodebug -noecho -options {-removeLUTPinDelay}
   p2pdelay start_server -timeout 30
@@ -145,7 +147,7 @@ proc ::tb::p2pdelay::get_p2p_info {args} {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::p2pdelay {
-  variable version {2016.02.11}
+  variable version {2016.02.24}
   variable params
   variable tcpstate {}
   variable socket {}
@@ -199,7 +201,7 @@ proc ::tb::p2pdelay::p2pdelay { args } {
       ::tb::p2pdelay::get_p2p_info -from "SLICE_X47Y51 AQ" -to "SLICE_X47Y51 A1"
       get_p2p_info -from "SLICE_X47Y51 AQ" -to "SLICE_X47Y51 A1"
       get_p2p_delay -from "SLICE_X47Y51 AQ" -to "SLICE_X47Y51 A1"
-   
+
    Example: Client side (client/server mode)
       p2pdelay config -host localhost -port 12345 -echo
       p2pdelay status
@@ -211,8 +213,8 @@ proc ::tb::p2pdelay::p2pdelay { args } {
       get_p2p_info -from "SLICE_X47Y51 AQ" -to "SLICE_X47Y51 A1"
       get_p2p_delay -from "SLICE_X47Y51 AQ" -to "SLICE_X47Y51 A1"
       p2pdelay stop_server
-    
-    
+
+
    Example: Server side (client/server mode)
       p2pdelay config -port 12345 -part xc7vx415tffg1158-2L -log p2pdelay.log -echo
       p2pdelay start_server -timeout 300
@@ -781,8 +783,24 @@ proc ::tb::p2pdelay::getP2pRouteReport { args } {
     lappend cmdLine $opt
   }
   set pid [uplevel #0 pid]
+
+  # CR 935541:
+  #   P2P router fails to find connection in MIN_DLY mode because source and target
+  #   points are too far, and we run out of expansions.
+  #   This is a basic check we have to control runtime. To skip that check set the
+  #   following param before running p2p router:
+  #   set_param route.maxSingleExpInMillions 0
+  catch {
+    set tmp [get_param route.maxSingleExpInMillions]
+    set_param route.maxSingleExpInMillions 0
+  }
+
   if {$params(debug)} { puts stderr " -D- ::internal::route_dbg_p2p_route $cmdLine" }
   eval [concat ::internal::route_dbg_p2p_route $cmdLine > p2p${pid}.out]
+
+  # Restore expansion value
+  catch { set_param route.maxSingleExpInMillions $tmp }
+
   set FH [open p2p${pid}.out]
   set content [read $FH]
   close $FH
@@ -1186,7 +1204,7 @@ proc ::tb::p2pdelay::method:configure {args} {
               [-help|-h]
 
   Description: Configure p2pdelay
-  
+
     Use -options to provide additional command line option to ::internal::route_dbg_p2p_route
 
   Example:
@@ -1346,7 +1364,7 @@ proc ::tb::p2pdelay::method:get_p2p_info {args} {
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   return [getP2pInfo -from $from -to $to -host $host -port $port -options $opt]
 }
 
@@ -1494,7 +1512,7 @@ proc ::tb::p2pdelay::method:get_p2p_delay {args} {
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   return [lindex [getP2pInfo -from $from -to $to -host $host -port $port -options $opt] 0]
 }
 
@@ -1641,7 +1659,7 @@ proc ::tb::p2pdelay::method:get_est_wire_delay {args} {
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   if {($port == {}) || ($host == {})} {
     set delay [getP2pEstWireDelay -from $from -to $to]
   } else {
@@ -1768,7 +1786,7 @@ proc ::tb::p2pdelay::method:pin_info {args} {
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   return $pininfo
 }
 
