@@ -11,13 +11,14 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.02.24
+## Version:        2016.02.26
 ## Tool Version:   Vivado 2014.1
 ## Description:    This package provides commands for timing correlation
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.02.26 - Improved pin_info when multiple site pins are connected to a pin
 ## 2016.02.24 - Removed limit to the number of expansions (internal::route_dbg_p2p_route)
 ##              (runtime impact)
 ## 2016.02.11 - Fixed issue with get_p2p_info where options were not passed to
@@ -147,7 +148,7 @@ proc ::tb::p2pdelay::get_p2p_info {args} {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::p2pdelay {
-  variable version {2016.02.24}
+  variable version {2016.02.26}
   variable params
   variable tcpstate {}
   variable socket {}
@@ -1764,7 +1765,28 @@ proc ::tb::p2pdelay::method:pin_info {args} {
           incr error
         }
         1 {
-          set pininfo [split [lindex [get_site_pin -quiet -of [get_pin -quiet $pinname]] 0] /]
+          set sitepins [get_site_pin -quiet -of [get_pin -quiet $pinname]]
+          if {[llength $sitepins] == 1} {
+            set pininfo [split [get_site_pin -quiet -of [get_pin -quiet $pinname]] /]
+          } else {
+            # Multiple site pins are returned. This can happen, for example, with CARRY8/COUT
+            # that connects to 2 site pins COUT and HMUX inside the site
+            # By default, take the first one
+            set pininfo [split [lindex [get_site_pin -quiet -of [get_pin -quiet $pinname]] 0] /]
+            # Now let's find the correct one (if any found)
+            # This can be runtime intensive!
+            foreach sitepin $sitepins {
+              # Get node outside of site
+              set nodes [get_nodes -quiet -of $sitepin]
+              # Is there a net connected to it?
+              set net [get_nets -quiet -of $nodes]
+              if {$net != {}} {
+                set pininfo [split $sitepin /]
+                break
+              }
+            }
+          }
+#           set pininfo [split [lindex [get_site_pin -quiet -of [get_pin -quiet $pinname]] 0] /]
         }
         default {
           puts " -E- multiple pins ([llength $pin]) match '$pinname'"
