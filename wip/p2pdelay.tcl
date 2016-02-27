@@ -18,7 +18,7 @@
 ########################################################################################
 
 ########################################################################################
-## 2016.02.26 - Improved pin_info when multiple site pins are connected to a pin
+## 2016.02.26 - Improved support when multiple site pins are connected to a pin
 ## 2016.02.24 - Removed limit to the number of expansions (internal::route_dbg_p2p_route)
 ##              (runtime impact)
 ## 2016.02.11 - Fixed issue with get_p2p_info where options were not passed to
@@ -624,10 +624,12 @@ proc ::tb::p2pdelay::getP2pInfo { args } {
     }
     1 {
       if {[get_pins -quiet $from] != {}} {
-        set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
+        set from [::tb::p2pdelay::method:pin_info -pin $from]
+#         set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
       } elseif {$from == {}} {
         set from [get_pins -quiet -leaf -of [get_nets -quiet -of [get_pins -quiet $options(-to)]] -filter {DIRECTION==OUT}]
-        set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
+        set from [::tb::p2pdelay::method:pin_info -pin $from]
+#         set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
       }
     }
     2 {
@@ -644,7 +646,8 @@ proc ::tb::p2pdelay::getP2pInfo { args } {
     }
     1 {
       if {[get_pins -quiet $to] != {}} {
-        set to [split [lindex [get_site_pin -quiet -of [get_pin -quiet $to]] 0] /]
+        set to [::tb::p2pdelay::method:pin_info -pin $to]
+#         set to [split [lindex [get_site_pin -quiet -of [get_pin -quiet $to]] 0] /]
       } else {
         set to {}
       }
@@ -1319,10 +1322,12 @@ proc ::tb::p2pdelay::method:get_p2p_info {args} {
     }
     1 {
       if {[get_pins -quiet $from] != {}} {
-        set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
+        set from [::tb::p2pdelay::method:pin_info -pin $from]
+#         set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
       } elseif {$from == {}} {
         set from [get_pins -quiet -leaf -of [get_nets -quiet -of [get_pins -quiet $options(-to)]] -filter {DIRECTION==OUT}]
-        set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
+        set from [::tb::p2pdelay::method:pin_info -pin $from]
+#         set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
       }
     }
     2 {
@@ -1340,7 +1345,8 @@ proc ::tb::p2pdelay::method:get_p2p_info {args} {
     }
     1 {
       if {[get_pins -quiet $to] != {}} {
-        set to [split [lindex [get_site_pin -quiet -of [get_pin -quiet $to]] 0] /]
+        set to [::tb::p2pdelay::method:pin_info -pin $to]
+#         set to [split [lindex [get_site_pin -quiet -of [get_pin -quiet $to]] 0] /]
       } else {
         set to {}
       }
@@ -1467,10 +1473,12 @@ proc ::tb::p2pdelay::method:get_p2p_delay {args} {
     }
     1 {
       if {[get_pins -quiet $from] != {}} {
-        set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
+        set from [::tb::p2pdelay::method:pin_info -pin $from]
+#         set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
       } elseif {$from == {}} {
         set from [get_pins -quiet -leaf -of [get_nets -quiet -of [get_pins -quiet $options(-to)]] -filter {DIRECTION==OUT}]
-        set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
+        set from [::tb::p2pdelay::method:pin_info -pin $from]
+#         set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
       }
     }
     2 {
@@ -1488,7 +1496,8 @@ proc ::tb::p2pdelay::method:get_p2p_delay {args} {
     }
     1 {
       if {[get_pins -quiet $to] != {}} {
-        set to [split [lindex [get_site_pin -quiet -of [get_pin -quiet $to]] 0] /]
+        set to [::tb::p2pdelay::method:pin_info -pin $to]
+#         set to [split [lindex [get_site_pin -quiet -of [get_pin -quiet $to]] 0] /]
       } else {
         set to {}
       }
@@ -1614,10 +1623,12 @@ proc ::tb::p2pdelay::method:get_est_wire_delay {args} {
     }
     1 {
       if {[get_pins -quiet $from] != {}} {
-        set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
+        set from [::tb::p2pdelay::method:pin_info -pin $from]
+#         set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
       } elseif {$from == {}} {
         set from [get_pins -quiet -leaf -of [get_nets -quiet -of [get_pins -quiet $options(-to)]] -filter {DIRECTION==OUT}]
-        set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
+        set from [::tb::p2pdelay::method:pin_info -pin $from]
+#         set from [split [lindex [get_site_pin -quiet -of [get_pin -quiet $from]] 0] /]
       }
     }
     2 {
@@ -1635,7 +1646,8 @@ proc ::tb::p2pdelay::method:get_est_wire_delay {args} {
     }
     1 {
       if {[get_pins -quiet $to] != {}} {
-        set to [split [lindex [get_site_pin -quiet -of [get_pin -quiet $to]] 0] /]
+        set to [::tb::p2pdelay::method:pin_info -pin $to]
+#         set to [split [lindex [get_site_pin -quiet -of [get_pin -quiet $to]] 0] /]
       } else {
         set to {}
       }
