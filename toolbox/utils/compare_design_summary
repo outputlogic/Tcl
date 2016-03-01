@@ -23,6 +23,7 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
+## 2016.02.29 - Added support for ordered metrics
 ## 2016.01.21 - Added support for -suppress
 ##            - Enable CSV files to be specified without -input
 ##            - Changed table header to include filename
@@ -41,7 +42,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::compare_design_summary {
   namespace export -force compare_design_summary
-  variable version {2016.01.21}
+  variable version {2016.02.29}
   variable params
   variable output {}
   variable reports
@@ -278,17 +279,7 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
     }
     $tbl header $header
 #     $tbl header [concat [list {Id} {Description} ] [iota 0 [expr $numColumns -1]] ]
-    foreach category [presort_list [list tag \
-                                         vivado \
-                                         design \
-                                         utilization \
-                                         timing \
-                                         clkinteraction \
-                                         checktiming \
-                                         congestion \
-                                         route \
-                                         constraints \
-                                   ] $categories] {
+    foreach category [presort_list [orderedCategories] $categories] {
       switch $category {
         xxx {
           continue
@@ -297,7 +288,7 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
         }
       }
       $tbl separator
-      foreach id [lsort [array names metricNames $category.*]] {
+      foreach id [presort_list [orderedMetrics] [lsort [array names metricNames $category.*]] ] {
         # id = 'design.ram.blockram'
         set row [list]
         for {set index 0} {$index < $numColumns} {incr index} {
@@ -834,6 +825,218 @@ proc ::Table::list2csv { list {sepChar ,} } {
     set sep $sepChar
   }
   return $out
+}
+
+# Keep the list below in sync between report_design_summary.tcl
+# and compare_design_summary
+proc ::tb::utils::compare_design_summary::orderedCategories {} {
+  # Ordered list of categories
+  set L [list \
+          tag \
+          vivado \
+          design \
+          utilization \
+          timing \
+          clkinteraction \
+          checktiming \
+          cdc \
+          congestion \
+          route \
+          constraints \
+        ]
+
+  return $L
+}
+
+# Keep the list below in sync between report_design_summary.tcl
+# and compare_design_summary
+proc ::tb::utils::compare_design_summary::orderedMetrics {} {
+  # Ordered list of metrics
+  set L [list \
+          tag.project \
+          tag.version \
+          tag.experiment \
+          tag.step \
+          tag.directive \
+          tag.runtime \
+           \
+          vivado.version \
+          vivado.build \
+          vivado.plateform \
+          vivado.os \
+          vivado.osVersion \
+          vivado.top \
+           \
+          design.part.architecture.name \
+          design.part.architecture \
+          design.part \
+          design.part.speed.class \
+          design.part.speed.label \
+          design.part.speed.id \
+          design.part.speed.date \
+          design.cells.blackbox \
+          design.cells.hier \
+          design.cells.primitive \
+          design.clocks \
+          design.clocks.primary \
+          design.clocks.usergenerated \
+          design.clocks.autoderived \
+          design.clocks.virtual \
+          design.ips.list \
+          design.ips \
+          design.nets \
+          design.nets.slls \
+          design.pblocks \
+          design.ports \
+          design.slrs \
+           \
+          utilization.clb.ff \
+          utilization.clb.ff.pct \
+          utilization.clb.lut \
+          utilization.clb.lut.pct \
+          utilization.ctrlsets.lost \
+          utilization.ctrlsets.uniq \
+          utilization.dsp \
+          utilization.dsp.pct \
+          utilization.io \
+          utilization.io.pct \
+          utilization.ram.blockram \
+          utilization.ram.distributedram \
+          utilization.ram.tile \
+          utilization.ram.tile.pct \
+           \
+          timing.wns \
+          timing.tns \
+          timing.tnsFallingEp \
+          timing.tnsTotalEp \
+          timing.wns.spclock \
+          timing.wns.epclock \
+          timing.whs \
+          timing.ths \
+          timing.thsFallingEp \
+          timing.thsTotalEp \
+          timing.whs.spclock \
+          timing.whs.epclock \
+          timing.wpws \
+          timing.tpws \
+          timing.tpwsFailingEp \
+          timing.tpwsTotalEp \
+           \
+          clkinteraction.timed \
+          clkinteraction.timed_unsafe \
+          clkinteraction.asynchronous_groups \
+          clkinteraction.exclusive_groups \
+          clkinteraction.false_path \
+          clkinteraction.max_delay_datapath_only \
+          clkinteraction.partial_false_path \
+          clkinteraction.partial_false_path_unsafe \
+           \
+          checktiming.constant_clock \
+          checktiming.generated_clocks \
+          checktiming.latch_loops \
+          checktiming.loops \
+          checktiming.multiple_clock \
+          checktiming.no_clock \
+          checktiming.no_input_delay \
+          checktiming.no_output_delay \
+          checktiming.partial_input_delay \
+          checktiming.partial_output_delay \
+          checktiming.pulse_width_clock \
+          checktiming.unconstrained_internal_endpoints \
+           \
+          cdc.cdc-1 \
+          cdc.cdc-2 \
+          cdc.cdc-3 \
+          cdc.cdc-4 \
+          cdc.cdc-5 \
+          cdc.cdc-6 \
+          cdc.cdc-7 \
+          cdc.cdc-8 \
+          cdc.cdc-9 \
+          cdc.cdc-10 \
+          cdc.cdc-11 \
+          cdc.cdc-12 \
+          cdc.cdc-13 \
+          cdc.cdc-14 \
+          cdc.cdc-15 \
+          cdc.cdc-16 \
+          cdc.cdc-17 \
+          cdc.cdc-18 \
+          cdc.cdc-19 \
+          cdc.cdc-20 \
+           \
+          congestion.placer \
+          congestion.router \
+           \
+          route.nets \
+          route.routed \
+          route.fixed \
+          route.errors \
+           \
+          constraints.create_clock \
+          constraints.create_generated_clock \
+          constraints.group_path \
+          constraints.set_bus_skew \
+          constraints.set_case_analysis \
+          constraints.set_clock_groups \
+          constraints.set_clock_latency \
+          constraints.set_clock_sense \
+          constraints.set_clock_uncertainty \
+          constraints.set_data_check \
+          constraints.set_disable_timing \
+          constraints.set_external_delay \
+          constraints.set_false_path \
+          constraints.set_input_delay \
+          constraints.set_input_jitter \
+          constraints.set_max_delay \
+          constraints.set_min_delay \
+          constraints.set_multicycle_path \
+          constraints.set_output_delay \
+          constraints.set_system_jitter \
+           \
+          clockpair.0.wns \
+          clockpair.0.tns \
+          clockpair.0.from \
+          clockpair.0.to \
+          clockpair.1.wns \
+          clockpair.1.tns \
+          clockpair.1.from \
+          clockpair.1.to \
+          clockpair.2.wns \
+          clockpair.2.tns \
+          clockpair.2.from \
+          clockpair.2.to \
+          clockpair.3.wns \
+          clockpair.3.tns \
+          clockpair.3.from \
+          clockpair.3.to \
+          clockpair.4.wns \
+          clockpair.4.tns \
+          clockpair.4.from \
+          clockpair.4.to \
+          clockpair.5.wns \
+          clockpair.5.tns \
+          clockpair.5.from \
+          clockpair.5.to \
+          clockpair.6.wns \
+          clockpair.6.tns \
+          clockpair.6.from \
+          clockpair.6.to \
+          clockpair.7.wns \
+          clockpair.7.tns \
+          clockpair.7.from \
+          clockpair.7.to \
+          clockpair.8.wns \
+          clockpair.8.tns \
+          clockpair.8.from \
+          clockpair.8.to \
+          clockpair.9.wns \
+          clockpair.9.tns \
+          clockpair.9.from \
+          clockpair.9.to \
+        ]
+
+  return $L
 }
 
 ########################################################################################
