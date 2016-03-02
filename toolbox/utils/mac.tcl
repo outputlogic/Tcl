@@ -14,13 +14,14 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.01.19
+## Version:        2016.03.02
 ## Tool Version:   Vivado 2014.1
 ## Description:    This package provides a simple utility for macro creation
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.03.02 - Fixed issue with saving of Hold timing paths
 ## 2016.01.19 - Fixed issue when unrecognized objects were not skipped
 ##            - Added support for clock objects
 ## 2015.10.26 - Initial release
@@ -73,7 +74,7 @@ proc ::tb::mac { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::mac {
-  variable version {2016.01.19}
+  variable version {2016.03.02}
   variable params
   variable macros [list]
   catch {unset params}
@@ -644,11 +645,22 @@ proc ::tb::mac::o2c { objs } {
 # puts "<obj:$obj>[report_property $obj]"
         set startpin [get_property -quiet STARTPOINT_PIN $obj]
         set endpin [get_property -quiet ENDPOINT_PIN $obj]
+        switch [get_property -quiet DELAY_TYPE $obj] {
+        	min {
+        		set delaytype {-hold}
+        	}
+        	max {
+        		set delaytype {-setup}
+        	}
+        	default {
+        		set delaytype {-setup}
+        	}
+        }
 #         set nets [get_nets -quiet -of $obj]
         set nets [get_nets -quiet -of $obj -top_net_of_hierarchical_group -filter {TYPE == SIGNAL}]
 # puts "<startpin:$startpin><endpin:$endpin><nets:$nets>"
 #         set cmd [format {get_timing_paths -quiet -from [get_pins -quiet {%s}] -to [get_pins -quiet {%s}] -through [get_nets -quiet [list %s]]} $startpin $endpin $nets]
-        set cmd [format {get_timing_paths -quiet -from [get_%ss -quiet {%s}] -to [get_%ss -quiet {%s}] -through [get_nets -quiet [list %s]]} [get_property CLASS $startpin] $startpin [get_property CLASS $endpin] $endpin $nets]
+        set cmd [format {get_timing_paths -quiet %s -from [get_%ss -quiet {%s}] -to [get_%ss -quiet {%s}] -through [get_nets -quiet [list %s]]} $delaytype [get_property CLASS $startpin] $startpin [get_property CLASS $endpin] $endpin $nets]
       }
       default {
         puts " -W- skipping object $obj"
