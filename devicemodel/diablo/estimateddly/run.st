@@ -100,3 +100,6 @@ catch { ::tb::report_path_analysis -of $hpaths         -sort_by tns -hold -file 
 catch { ::tb::report_path_analysis -of $hpaths -R -csv -sort_by tns -hold -file $runDir/report_path_analysis.hold.csv }
 
 tb::report_design_summary -all -file [file rootname [file tail $checkpoint]]_sum.csv -details -csv -verbose -project $project -version $version -experiment $experiment -step place_design
+
+catch { tb::mac set spaths $spaths }
+catch { tb::mac set hpaths $hpaths }
