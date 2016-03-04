@@ -19,6 +19,9 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.03.04 - Added new DRC metrics from report_methodology
+##            - Added support for -drc/-rm/-report_methodology
+##            - Reordered the metric categories
 ## 2016.02.29 - Added tag.directive, tag.runtime metrics
 ##            - Added support for ordered metrics
 ## 2016.02.04 - Renamed -serialize to -return_metrics
@@ -129,6 +132,15 @@
 #       | timing.tpwsFailingEp                         | TPWS Failing Endpoints                                                    | 0                        |
 #       | timing.tpwsTotalEp                           | TPWS Total Endpoints                                                      | 930207                   |
 #       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
+#       | clockpair.0.wns                              | Clock Pair (WNS)                                                          | 0.03                     |
+#       | clockpair.0.tns                              | Clock Pair (TNS)                                                          | 0.00                     |
+#       | clockpair.0.from                             | Clock Pair (From)                                                         | jmmcm_sys_clk122m88      |
+#       | clockpair.0.to                               | Clock Pair (To)                                                           | jmmcm_sys_clk122m88      |
+#       | clockpair.1.wns                              | Clock Pair (WNS)                                                          | 0.04                     |
+#       | clockpair.1.tns                              | Clock Pair (TNS)                                                          | 0.00                     |
+#       | clockpair.1.from                             | Clock Pair (From)                                                         | jmmcm_cbus_clk200m       |
+#       | clockpair.1.to                               | Clock Pair (To)                                                           | jmmcm_cbus_clk200m       |
+#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
 #       | clkinteraction.timed                         | Clock Interaction (Timed)                                                 | 29                       |
 #       | clkinteraction.asynchronous_groups           | Clock Interaction (Asynchronous Groups)                                   | 105                      |
 #       | clkinteraction.partial_false_path            | Clock Interaction (Partial False Path)                                    | 1                        |
@@ -146,6 +158,14 @@
 #       | checktiming.pulse_width_clock                | check_timing (pulse_width_clock)                                          | 0                        |
 #       | checktiming.unconstrained_internal_endpoints | check_timing (unconstrained_internal_endpoints)                           | 18114                    |
 #       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
+#       | congestion.placer                            | Placer Congestion (N-S-E-W)                                               | 4-6-3-1                  |
+#       | congestion.router                            | Router Congestion (N-S-E-W)                                               | 1-0-0-u                  |
+#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
+#       | route.nets                                   | Routable nets                                                             | 1286992                  |
+#       | route.routed                                 | Fully routed nets                                                         | 1286992                  |
+#       | route.fixed                                  | Nets with fixed routing                                                   | n/a                      |
+#       | route.errors                                 | Nets with routing errors                                                  | 0                        |
+#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
 #       | cdc.cdc-1                                    | 1-bit unknown CDC circuitry (Critical)                                    | 13654                    |
 #       | cdc.cdc-2                                    | 1-bit synchronized with missing ASYNC_REG property (Warning)              | 4857                     |
 #       | cdc.cdc-3                                    | 1-bit synchronized with ASYNC_REG property (Info)                         | 2                        |
@@ -161,13 +181,9 @@
 #       | cdc.cdc-14                                   | Multi-bit CDC path on a non-FD primitive (Critical)                       | 160                      |
 #       | cdc.cdc-15                                   | Clock enable controlled CDC structure detected (Warning)                  | 37394                    |
 #       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | congestion.placer                            | Placer Congestion (N-S-E-W)                                               | 4-6-3-1                  |
-#       | congestion.router                            | Router Congestion (N-S-E-W)                                               | 1-0-0-u                  |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | route.nets                                   | Routable nets                                                             | 1286992                  |
-#       | route.routed                                 | Fully routed nets                                                         | 1286992                  |
-#       | route.fixed                                  | Nets with fixed routing                                                   | n/a                      |
-#       | route.errors                                 | Nets with routing errors                                                  | 0                        |
+#       | drc.ckld-1                                   | Clock Net has non-BUF driver and too many loads (Warning)                 | 1                        |
+#       | drc.timing-17                                | Non-clocked sequential cell (Advisory)                                    | 88                       |
+#       | drc.timing-20                                | Non-clocked latch (Warning)                                               | 2                        |
 #       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
 #       | constraints.create_clock                     | create_clock                                                              | 22                       |
 #       | constraints.create_generated_clock           | create_generated_clock                                                    | 0                        |
@@ -190,15 +206,6 @@
 #       | constraints.set_output_delay                 | set_output_delay                                                          | 0                        |
 #       | constraints.set_system_jitter                | set_system_jitter                                                         | 0                        |
 #       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | clockpair.0.wns                              | Clock Pair (WNS)                                                          | 0.03                     |
-#       | clockpair.0.tns                              | Clock Pair (TNS)                                                          | 0.00                     |
-#       | clockpair.0.from                             | Clock Pair (From)                                                         | jmmcm_sys_clk122m88      |
-#       | clockpair.0.to                               | Clock Pair (To)                                                           | jmmcm_sys_clk122m88      |
-#       | clockpair.1.wns                              | Clock Pair (WNS)                                                          | 0.04                     |
-#       | clockpair.1.tns                              | Clock Pair (TNS)                                                          | 0.00                     |
-#       | clockpair.1.from                             | Clock Pair (From)                                                         | jmmcm_cbus_clk200m       |
-#       | clockpair.1.to                               | Clock Pair (To)                                                           | jmmcm_cbus_clk200m       |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
 
 namespace eval ::tb {
 #   namespace export -force report_design_summary
@@ -210,7 +217,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_design_summary {
   namespace export -force report_design_summary
-  variable version {2016.02.29}
+  variable version {2016.03.04}
   variable params
   variable output {}
   variable reports
@@ -266,6 +273,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set reportClockInteraction {}
   set reportRouteStatus {}
   set reportCDC {}
+  set reportMethodology {}
   set error 0
   set help 0
 #   if {[llength $args] == 0} {
@@ -295,6 +303,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
                                              congestion \
                                              check_timing \
                                              cdc \
+                                             drc \
                                              route_status] ]
       }
       {^-ex(c(l(u(de?)?)?)?)?$} {
@@ -310,6 +319,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       }
       {^-cdc?$} {
         lappend sections {cdc}
+      }
+      {^-drc?$} {
+        lappend sections {drc}
       }
       {^-cl(o(c(k(_(i(n(t(e(r(a(c(t(i(on?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
         lappend sections {clock_interaction}
@@ -424,6 +436,14 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
           incr error
         }
       }
+      -rm -
+      -report_methodology {
+        set reportMethodology [lshift args]
+        if {![file exists $reportMethodology]} {
+          puts " -E- file '$reportMethodology' does not exist"
+          incr error
+        }
+      }
       {^-tclpre$} {
         set prescript [lshift args]
       }
@@ -468,6 +488,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-constraints]
               [-check_timing]
               [-cdc]
+              [-drc]
               [-clock_interaction]
               [-route]
               [-exclude <list_sections>]
@@ -487,6 +508,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-rru <filename>|-report_ram_utilization <filename>]
               [-rrs <filename>|-report_route_status <filename>]
               [-rcdc <filename>|-report_cdc <filename>]
+              [-rm <filename>|-report_methodology <filename>]
             +--------------------+
               [-details]
               [-file <filename>]
@@ -509,13 +531,13 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     Use -details with -file to append full reports
     Use -project/-version/-experiment/-step/-directive/-runtime to save informative tags
     Use -hide_missing to suppress metrics that have not been found
-    Use -rts/-ct/-rda/-rrs/-rci/-ru/-rru/-rcdc to import on-disk reports
+    Use -rts/-ct/-rda/-rrs/-rci/-ru/-rru/-rcdc/-rm to import on-disk reports
     Use -incremental for incremental mode
     Use -tclpre/-tclpost to provide a user scripts to be sourced
-    at the beginning and at the end
+      at the beginning and at the end
     Use -tclprecmd/-tclpostcmd to provide a command to be executed
-    at the beginning and at the end
-    Use -return_metrics to return the list of metrics
+      at the beginning and at the end
+    Use -return_metrics to return a Tcl list of metrics
     Use -add_metrics to add custom metrics
 
   Example:
@@ -524,6 +546,15 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 } ]
     # HELP -->
     return -code ok
+  }
+
+  # Remove sections that have been excluded
+  set sections [lsort -unique $sections]
+  foreach el $excludesections {
+    set posn [lsearch -exact $sections $el]
+    if {$posn != -1} {
+      set sections [lreplace $sections $posn $posn]
+    }
   }
 
   if {($filename == {}) && $showdetails} {
@@ -559,6 +590,17 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     incr error
   }
 
+  if {[lsearch $sections {drc}] != -1} {
+    # If -drc has been selected, make sure Vivado version is above 2016.1
+    # (report_methodology from 2016.1 and above)
+    # package vcompare [package present Vivado] {1.2016.1}
+    set ver [regsub {\..+$} [version -short] {}]
+    if { [regexp {^[0-9]+$} $ver] && ($ver < 2016) && ($reportMethodology == {})} {
+      puts " -E- -drc without -report_methodology can only be used with Vivado 2016.1 and above"
+      incr error
+    }
+  }
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
@@ -567,15 +609,6 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     # If Vivado package is not found, then the script is not
     # running inside a Vivado session
     set params(vivado) 0
-  }
-
-  # Remove sections that have been excluded
-  set sections [lsort -unique $sections]
-  foreach el $excludesections {
-    set posn [lsearch -exact $sections $el]
-    if {$posn != -1} {
-      set sections [lreplace $sections $posn $posn]
-    }
   }
 
   # Remove metrics and reports (if not in incremental mode)
@@ -590,6 +623,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   if {[file exists $reportClockInteraction]} { importReport {report_clock_interaction} $reportClockInteraction }
   if {[file exists $reportRouteStatus]}      { importReport {report_route_status}      $reportRouteStatus }
   if {[file exists $reportCDC]}              { importReport {report_cdc}               $reportCDC }
+  if {[file exists $reportMethodology]}      { importReport {report_methodology}       $reportMethodology }
 
   set startTime [clock seconds]
   set output [list]
@@ -1302,6 +1336,33 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     ########################################################################################
     ##
+    ## Report methodology DRCs metrics
+    ##
+    ########################################################################################
+
+    if {[lsearch $sections {drc}] != -1} {
+      # Get report
+      set report [getReport {report_methodology}]
+
+      # 1 CKLD-2 [Warning] [Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads]
+      # 1 PDRC-190 [Warning] [Suboptimally placed synchronized register chain]
+      # 127 SYNTH-4 [Warning] [Shallow depth for a dedicated block RAM]
+      # 1000 TIMING-10 [Warning] [Missing property on synchronizer]
+      # 12 XDCB-1 [Warning] [Runtime intensive exceptions]
+
+      foreach line [split $report \n] {
+        if {[regexp {^\s*([0-9]+)\s+([^s]+)\s+\[(.+)\]\s+\[(.+)\]\s*$} $line - num drc severity msg]} {
+          addMetric [format {drc.%s} [string tolower $drc]] [format {%s (%s)} $msg $severity]
+          setMetric [format {drc.%s} [string tolower $drc]] $num
+        } else {
+          puts " -W- invalid DRC format for '[string trim $line]'"
+        }
+      }
+
+    }
+
+    ########################################################################################
+    ##
     ## Optional post script / command
     ##
     ########################################################################################
@@ -1424,8 +1485,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
                          WHS \
                          report_clock_interaction \
                          check_timing \
-                         report_cdc \
                          report_design_analysis \
+                         report_cdc \
+                         report_methodology \
                          report_route_status \
                    ] {
         if {[info exists reports($name)]} {
@@ -1508,9 +1570,18 @@ proc ::tb::utils::report_design_summary::importReport {name filename} {
 #     }
     if {$params(verbose)} { puts " -I- Found report '$name'. Overridding existing report with new one" }
   }
-  set FH [open $filename {r}]
-  set report [read $FH]
-  close $FH
+  switch $name {
+    report_methodology {
+      # The report_methodology report can be fairly large
+      # so create a summary table out of it
+      set report [createSummaryDRCReport $filename]
+    }
+    default {
+      set FH [open $filename {r}]
+      set report [read $FH]
+      close $FH
+    }
+  }
   set reports($name) $report
   return $report
 }
@@ -1542,6 +1613,21 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
   set res {}
   set startTime [clock seconds]
   switch $name {
+    report_methodology {
+      catch {
+        set file [format {report_methodology.%s} [clock seconds]]
+        report_methodology -quiet -file $file
+        # The report_methodology report can be fairly large
+        # so create a summary table out of it
+        set res [createSummaryDRCReport $file]
+        if {!$params(debug)} {
+          # Keep the file in debug mode
+          file delete $file
+        } else {
+          dputs " -D- writing report_methodology file '$file'"
+        }
+      }
+    }
     report_cdc {
       # Only get the first table of the detailed report:
       #  ID      Severity  Count  Description
@@ -2133,6 +2219,107 @@ proc ::tb::utils::report_design_summary::parseClockInteractionReport {report} {
   return $table
 }
 
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::createSummaryDRCReport
+#------------------------------------------------------------------------
+# Create a summary from the report_methodology report to reduce the
+# memory footprint
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::createSummaryDRCReport {file} {
+  # Abstract original report_methodology report:
+  #   2. REPORT DETAILS
+  #   -----------------
+  #   CKLD-2#1 Warning
+  #   Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads
+  #   Clock net FC_TSCLK_IBUF_inst/O is directly driven by an IO rather than a Clock Buffer or may be an IO driving a mix of Clock Buffer and non-Clock loads. This connectivity should be reviewed and corrected as appropriate. Driver(s): FC_TSCLK_IBUF_inst/IBUFCTRL_INST/O
+  #   Related violations: <none>
+  #
+  #   PDRC-190#1 Warning
+  #   Suboptimally placed synchronized register chain
+  #   The FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/shift_reg_in_reg[2] in site SLICE_X105Y474 is part of a synchronized register chain that is suboptimally placed as the load FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/shift_reg_in_reg[1] is not placed in the same (SLICE) site.
+  #   Related violations: <none>
+  #
+  #   SYNTH-6#1 Warning
+  #   Timing of a block RAM might be sub-optimal
+  #   The timing for the instance gen_phy_user.user/phy_slr_1_1/user_fault_monitor/from_rom_rdata_reg, implemented as a block RAM, might be sub-optimal as no output register was merged into the block
+  #   Related violations: <none>
+  #
+  #   SYNTH-8#1 Warning
+  #   Resource sharing
+  #   The adder gen_phy_user.user/phy_slr_0_1/gen_ports[0].mld_test_pattern_1/TxPreMLD_i/TSXSUMADJ/Cnt_SOFoffsetP1_reg[3]_i_1_CARRY8 is shared. Consider applying a KEEP on the inputs of the operator to prevent sharing.
+  #   Related violations: <none>
+  set FH [open $file {r}]
+  set content [list]
+  catch {unset drcs}
+  catch {unset drcmsg}
+  catch {unset drcseverity}
+  set keys [list]
+  set loop 1
+  set found 0
+  set drcname {n/a}; set drcnum {n/a}; set severity {n/a}
+  while {$loop && ![eof $FH]} {
+    gets $FH line
+    if {[regexp {^\s*([^-]+)-([0-9]+)#[0-9]+\s+([\w]+)} $line -- drcname drcnum severity]} {
+      set found 1
+      # Capture the first line of the DRC
+      # e.g:
+      #  PDRC-190#1 Warning
+    } else {
+      if {$found} {
+        # Capture the second line of the DRC
+        # e.g:
+        #  Suboptimally placed synchronized register chain
+        set drcmsg(${drcname}-${drcnum}) [string trim $line]
+        set drcseverity(${drcname}-${drcnum}) [string trim $severity]
+        if {![info exists drcs(${drcname}-${drcnum})]} {
+          set drcs(${drcname}-${drcnum}) 0
+        }
+        incr drcs(${drcname}-${drcnum})
+        lappend keys [list $drcname $drcnum ${drcname}-${drcnum} ]
+        set found 0
+        set drcname {n/a}; set drcnum {n/a}; set severity {n/a}
+      }
+    }
+  }
+  close $FH
+  # Sort by drc name and drc number
+  set keys [lsort -unique $keys]
+  set keys [lsort -increasing -dictionary -index 0 [lsort -increasing -integer -index 1 $keys]]
+  # Recreate a fake summary report which is much smaller
+  # E.g:
+  #   1 CKLD-2 [Warning] [Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads]
+  #   1 CLKC-5 [Warning] [BUFGCE with constant CE has BUFG driver]
+  #   2 CLKC-21 [Warning] [MMCME3 with ZHOLD does not drive sequential IO]
+  #   1 CLKC-29 [Warning] [MMCME3 not driven by IO has BUFG in feedback loop]
+  #   4 CLKC-39 [Warning] [Substitute PLLE3 for MMCME3 check]
+  #   1 PDRC-190 [Warning] [Suboptimally placed synchronized register chain]
+  #   127 SYNTH-4 [Warning] [Shallow depth for a dedicated block RAM]
+  #   249 SYNTH-6 [Warning] [Timing of a block RAM might be sub-optimal]
+  #   721 SYNTH-8 [Warning] [Resource sharing]
+  #   73 SYNTH-9 [Warning] [Small multiplier]
+  #   3 TIMING-3 [Warning] [Invalid primary clock on Clock Modifying Block]
+  #   1000 TIMING-9 [Warning] [Unknown CDC Logic]
+  #   1000 TIMING-10 [Warning] [Missing property on synchronizer]
+  #   96 TIMING-11 [Warning] [Inappropriate max delay with datapath only option]
+  #   11 TIMING-17 [Warning] [Non-clocked sequential cell]
+  #   23 TIMING-18 [Warning] [Missing input or output delay]
+  #   31 TIMING-24 [Warning] [Overridden Max delay datapath only]
+  #   234 TIMING-28 [Warning] [Auto-derived clock referenced by a timing constraint]
+  #   12 XDCB-1 [Warning] [Runtime intensive exceptions]
+  #   2 XDCB-2 [Warning] [Clock defined on multiple objects]
+  #   1 XDCC-4 [Warning] [User Clock constraint overwritten with the same name]
+  #   1 XDCC-8 [Warning] [User Clock constraint overwritten on the same source]
+  #   1 XDCV-2 [Warning] [Incomplete constraint coverage due to missing replicated objects.]
+  foreach el $keys {
+    foreach {- - key} $el { break }
+    lappend content [format {  %s %s [%s] [%s]} $drcs($key) $key $drcseverity($key) $drcmsg($key)]
+  }
+  set res [join $content \n]
+  return $res
+}
+
+
 # Keep the list below in sync between report_design_summary.tcl
 # and compare_design_summary
 proc ::tb::utils::report_design_summary::orderedCategories {} {
@@ -2143,11 +2330,13 @@ proc ::tb::utils::report_design_summary::orderedCategories {} {
           design \
           utilization \
           timing \
+          clockpair \
           clkinteraction \
           checktiming \
-          cdc \
           congestion \
           route \
+          cdc \
+          drc \
           constraints \
         ]
 

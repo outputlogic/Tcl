@@ -23,6 +23,9 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
+## 2016.03.04 - Updated the list of metric categories
+##            - Reordered the metric categories
+##            - CDC/DRC metrics are set to 0 when not found
 ## 2016.02.29 - Added support for ordered metrics
 ## 2016.01.21 - Added support for -suppress
 ##            - Enable CSV files to be specified without -input
@@ -42,7 +45,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::compare_design_summary {
   namespace export -force compare_design_summary
-  variable version {2016.02.29}
+  variable version {2016.03.04}
   variable params
   variable output {}
   variable reports
@@ -293,7 +296,17 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
         set row [list]
         for {set index 0} {$index < $numColumns} {incr index} {
           if {![info exists metrics(${index}:${id})]} {
-            lappend row {n/a}
+            switch $category {
+              cdc -
+              drc {
+                # For CDC/DRC metrics, add '0' when the metric does not exist.
+                # This improves readability
+                lappend row {0}
+              }
+              default {
+                lappend row {n/a}
+              }
+            }
           } else {
             lappend row $metrics(${index}:${id})
           }
@@ -837,11 +850,13 @@ proc ::tb::utils::compare_design_summary::orderedCategories {} {
           design \
           utilization \
           timing \
+          clockpair \
           clkinteraction \
           checktiming \
-          cdc \
           congestion \
           route \
+          cdc \
+          drc \
           constraints \
         ]
 
