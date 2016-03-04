@@ -1792,6 +1792,17 @@ proc ::tb::utils::report_design_summary::presort_list {l1 l2} {
   return $l
 }
 
+# Generate a list of integers
+proc ::tb::utils::report_design_summary::iota {from to} {
+  set out [list]
+  if {$from <= $to} {
+    for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
+  } else {
+    for {set i $from} {$i >= $to} {incr i -1} {lappend out $i}
+  }
+  return $out
+}
+
 proc ::tb::utils::report_design_summary::dputs {args} {
   variable params
   if {$params(debug)} {
@@ -2439,27 +2450,6 @@ proc ::tb::utils::report_design_summary::orderedMetrics {} {
           checktiming.pulse_width_clock \
           checktiming.unconstrained_internal_endpoints \
            \
-          cdc.cdc-1 \
-          cdc.cdc-2 \
-          cdc.cdc-3 \
-          cdc.cdc-4 \
-          cdc.cdc-5 \
-          cdc.cdc-6 \
-          cdc.cdc-7 \
-          cdc.cdc-8 \
-          cdc.cdc-9 \
-          cdc.cdc-10 \
-          cdc.cdc-11 \
-          cdc.cdc-12 \
-          cdc.cdc-13 \
-          cdc.cdc-14 \
-          cdc.cdc-15 \
-          cdc.cdc-16 \
-          cdc.cdc-17 \
-          cdc.cdc-18 \
-          cdc.cdc-19 \
-          cdc.cdc-20 \
-           \
           congestion.placer \
           congestion.router \
            \
@@ -2488,48 +2478,27 @@ proc ::tb::utils::report_design_summary::orderedMetrics {} {
           constraints.set_multicycle_path \
           constraints.set_output_delay \
           constraints.set_system_jitter \
-           \
-          clockpair.0.wns \
-          clockpair.0.tns \
-          clockpair.0.from \
-          clockpair.0.to \
-          clockpair.1.wns \
-          clockpair.1.tns \
-          clockpair.1.from \
-          clockpair.1.to \
-          clockpair.2.wns \
-          clockpair.2.tns \
-          clockpair.2.from \
-          clockpair.2.to \
-          clockpair.3.wns \
-          clockpair.3.tns \
-          clockpair.3.from \
-          clockpair.3.to \
-          clockpair.4.wns \
-          clockpair.4.tns \
-          clockpair.4.from \
-          clockpair.4.to \
-          clockpair.5.wns \
-          clockpair.5.tns \
-          clockpair.5.from \
-          clockpair.5.to \
-          clockpair.6.wns \
-          clockpair.6.tns \
-          clockpair.6.from \
-          clockpair.6.to \
-          clockpair.7.wns \
-          clockpair.7.tns \
-          clockpair.7.from \
-          clockpair.7.to \
-          clockpair.8.wns \
-          clockpair.8.tns \
-          clockpair.8.from \
-          clockpair.8.to \
-          clockpair.9.wns \
-          clockpair.9.tns \
-          clockpair.9.from \
-          clockpair.9.to \
         ]
+
+  # Trick to order clockpair metrics (clockpair.*)
+  foreach idx [iota 0 9] {
+    lappend L [format {clockpair.%s.wns} $idx]
+    lappend L [format {clockpair.%s.tns} $idx]
+    lappend L [format {clockpair.%s.from} $idx]
+    lappend L [format {clockpair.%s.to} $idx]
+  }
+
+  # Trick to order CDC metrics (cdc.*)
+  foreach idx [iota 0 100] {
+    lappend L [format {cdc.cdc-%s} $idx]
+  }
+
+  # Trick to order DRC metrics (drc.*)
+  foreach name [list ckld clkc pdrc synth timing xdcb xdcc xdch xdcv] {
+    foreach idx [iota 0 500] {
+      lappend L [format {drc.%s-%s} $name $idx]
+    }
+  }
 
   return $L
 }
