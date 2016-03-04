@@ -15,12 +15,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.02.25
+## Version:        2016.03.02
 ## Description:    This utility provides to way to convert CSV files to tables
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.03.02 - Fixed issue when reading multiple CSV files with -noheader
 ## 2016.02.25 - Updated help message
 ## 2016.01.12 - Added support for -transpose
 ## 2015.12.18 - Added support for -noheader
@@ -44,7 +45,7 @@ namespace eval ::tb {}
 namespace eval ::tb::csv2tbl {
   namespace export csv2tbl
 
-  variable SCRIPT_VERSION {2016.02.25}
+  variable SCRIPT_VERSION {2016.03.02}
   variable VERBOSE 0
   variable DEBUG 0
   variable channel {}
@@ -382,13 +383,15 @@ proc ::tb::csv2tbl::read-csv {&tbl filename {csvDelimiter ,} {parseHeader 1}} {
       if {[subst $${tbl}::header] != {}} {
         # If we are in merge mode, then check that the header for this CSV file
         # does match the existing header
-        if {![lequal [subst $${tbl}::header] $header]} {
-          if {$VERBOSE} {
-            puts " -I- CSV header: $header"
-            puts " -I- Table header: [subst $${tbl}::header]"
+        if {$parseHeader} {
+          if {![lequal [subst $${tbl}::header] $header]} {
+            if {$params(verbose)} {
+              puts " -I- CSV header: $header"
+              puts " -I- Table header: [subst $${tbl}::header]"
+            }
+            puts " -W- The CSV header does not match. File $filename skipped"
+            return 1
           }
-          puts " -W- The CSV header does not match. File $filename skipped"
-          return 1
         }
       }
       if {$parseHeader} {
