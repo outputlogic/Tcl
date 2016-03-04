@@ -14,7 +14,7 @@ if {![package vsatisfies [package provide Tcl] 8.4]} {
 }
 
 namespace eval ::tb::prettyTable {
-    variable version {2016.01.27}
+    variable version {2016.03.02}
     # Allow Tcl to find tclIndex
     variable home [file join [pwd] [file dirname [info script]]]
     if {[lsearch -exact $::auto_path $home] == -1} {

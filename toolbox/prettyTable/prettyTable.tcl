@@ -265,6 +265,8 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.03.02 - Added -noheader to 'export' method
+##            - Addes support for -noheader when exporting CSV
 ## 2016.01.27 - Fixed missing header when exporting to CSV
 ## 2015.12.10 - Added 'title' method to add/change the table title
 ##            - Added new command line options to 'configure' method to set the default
@@ -327,7 +329,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
-  variable version {2016.01.27}
+  variable version {2016.03.02}
 } ]
 
 #------------------------------------------------------------------------
@@ -714,6 +716,7 @@ proc ::tb::prettyTable::exportToCSV {self args} {
 
 
   array set defaults [list \
+      -header 1 \
       -delimiter {,} \
       -return_var {} \
       -verbose 0 \
@@ -748,14 +751,16 @@ proc ::tb::prettyTable::exportToCSV {self args} {
   }
 #   append res "# title${sepChar}[::tb::prettyTable::list2csv [list $params(title)] $sepChar]\n"
   if {$options(-verbose)} {
-  	# Additional header information are hidden by default
+    # Additional header information are hidden by default
     append res "# header${sepChar}[::tb::prettyTable::list2csv $header $sepChar]\n"
     append res "# indent${sepChar}[::tb::prettyTable::list2csv $params(indent) $sepChar]\n"
     append res "# limit${sepChar}[::tb::prettyTable::list2csv $params(maxNumRows) $sepChar]\n"
     append res "# display_limit${sepChar}[::tb::prettyTable::list2csv $params(maxNumRowsToDisplay) $sepChar]\n"
     append res "# display_columns${sepChar}[::tb::prettyTable::list2csv [list $params(columnsToDisplay)] $sepChar]\n"
   }
-  append res "[::tb::prettyTable::list2csv $header $sepChar]\n"
+  if {$options(-header)} {
+    append res "[::tb::prettyTable::list2csv $header $sepChar]\n"
+  }
   set count 0
   foreach row $table {
     incr count
@@ -1750,7 +1755,7 @@ proc ::tb::prettyTable::method:configure {self args} {
            switch $format {
              lean -
              classic {
-              	set ${self}::params(tableFormat) $format
+                set ${self}::params(tableFormat) $format
              }
              default {
                puts " -E- invalid format '$format'. The valid formats are: classic|lean"
@@ -1982,6 +1987,7 @@ proc ::tb::prettyTable::method:export {self args} {
   set verbose 0
   set filename {}
   set append 0
+  set printHeader 1
   set returnVar {}
   set format {table}
 #   set tableFormat {classic}
@@ -2018,6 +2024,9 @@ proc ::tb::prettyTable::method:export {self args} {
       -table {
            set tableFormat [lshift args]
       }
+      -noheader {
+           set printHeader 0
+      }
       -v -
       -verbose {
            set verbose 1
@@ -2048,6 +2057,7 @@ proc ::tb::prettyTable::method:export {self args} {
               [-append]
               [-return_var <tcl_var_name>]
               [-columns <list_of_columns_to_display>]
+              [-noheader]
               [-verbose|-v]
               [-help|-h]
 
@@ -2095,16 +2105,32 @@ proc ::tb::prettyTable::method:export {self args} {
   switch $format {
     table {
       if {$returnVar != {}} {
-        $self print -return_var res -columns $columnsToDisplay -format $tableFormat
+        if {$printHeader} {
+          $self print -return_var res -columns $columnsToDisplay -format $tableFormat
+        } else {
+          $self print -return_var res -columns $columnsToDisplay -format $tableFormat -noheader
+        }
       } else {
-        set res [$self print -columns $columnsToDisplay -format $tableFormat]
+        if {$printHeader} {
+          set res [$self print -columns $columnsToDisplay -format $tableFormat]
+        } else {
+          set res [$self print -columns $columnsToDisplay -format $tableFormat -noheader]
+        }
       }
     }
     csv {
       if {$returnVar != {}} {
-        ::tb::prettyTable::exportToCSV $self -delimiter $csvDelimiter -return_var res -verbose $verbose
+        if {$printHeader} {
+          ::tb::prettyTable::exportToCSV $self -delimiter $csvDelimiter -return_var res -verbose $verbose
+        } else {
+          ::tb::prettyTable::exportToCSV $self -delimiter $csvDelimiter -return_var res -verbose $verbose -header 0
+        }
       } else {
-        set res [::tb::prettyTable::exportToCSV $self -delimiter $csvDelimiter -verbose $verbose]
+        if {$printHeader} {
+          set res [::tb::prettyTable::exportToCSV $self -delimiter $csvDelimiter -verbose $verbose]
+        } else {
+          set res [::tb::prettyTable::exportToCSV $self -delimiter $csvDelimiter -verbose $verbose -header 0]
+        }
       }
     }
     tcl {
