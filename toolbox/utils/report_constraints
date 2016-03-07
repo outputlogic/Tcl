@@ -23,6 +23,7 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
+## 2016.03.07 - Fixed issue with bus bits reported as constraint
 ## 2016.01.28 - Ordered XDC files when reading DCP
 ## 2016.01.26 - Renamed script to report_constraints
 ##            - Renamed namespace to report_constraints
@@ -101,7 +102,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_constraints {
   namespace export -force report_constraints
-  variable version {2016.01.28}
+  variable version {2016.03.07}
   variable params
   variable output {}
   variable metrics
@@ -642,7 +643,7 @@ proc ::tb::utils::report_constraints::getVivadoCommands {filename {showproperty 
       global commands
       global showproperty
       set cmd [lindex $args 0]
-      if {[regexp {^[0-9]$} $cmd]} {
+      if {[regexp {^[0-9]+$} $cmd]} {
         return -code ok
       }
       if {($cmd == {set_max_delay}) && ([lsearch -exact $args {-datapath_only}] != -1)} {
@@ -653,6 +654,7 @@ proc ::tb::utils::report_constraints::getVivadoCommands {filename {showproperty 
       if {$cmd == {set_property}} {
         set value [lindex $args 1]
         if {$value == {-quiet}} { set value [lindex $args 2] }
+#         if {($value == {-dict}) || ($value == {-dictionary})} { set value [lindex $args 3] }
         # Skip properties SRC_FILE_INFO and src_info
         if {($value == {SRC_FILE_INFO}) || ($value == {src_info})} {
           return -code ok
