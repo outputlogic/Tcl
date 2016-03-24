@@ -19,6 +19,9 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.03.23 - Added columns 'Tiles Delta X', 'Tiles Delta Y'
+##            - Added columns 'INT Distance (X+Y)', 'INT Delta X', 'INT Delta Y', 'INT Inbox'
+##            - Fixed extraction of INTerconnect data ('Driver INT', 'Receiver INT')
 ## 2016.02.29 - Added columns 'Levels', 'Net vs. Estimated', 'Net vs. P2P'
 ## 2016.02.26 - Initial release
 ########################################################################################
@@ -35,15 +38,15 @@
 #  | Total number of paths processed: 500                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 #  | Total number of nets processed: 531                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 #  | Total number of nets reported in the table: 101                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-#  +---------------+--------------------------+--------+----------------+----------------+--------------------+------------------------------+------------+---------------------------+------------+--------+---------------+-------------------+----------------+------------+-----------------+-----------+-------------------+-------------------+---------------------+-------------------+-------------+--------+----------------------+--------------+-------------+--------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-#  | Design        | Part                     | Path # | Driver Tile    | Receiver Tile  | Driver Site        | Receiver Site                | Driver Pin | Receiver Pin              | Path Slack | Levels | Routable Nets | Driver Incr Delay | Net Incr Delay | Delay Type | Estimated Delay | P2P Delay | Estimated vs. P2P | Error vs. P2P (%) | Absolute Error (ns) | Net vs. Estimated | Net vs. P2P | Fanout | Tiles Distance (X+Y) | SLR Crossing | Driver INT  | Receiver INT | Net                                                                                                                                                            | Driver                                       | Receiver                                                                                                                                                                         |
-#  +---------------+--------------------------+--------+----------------+----------------+--------------------+------------------------------+------------+---------------------------+------------+--------+---------------+-------------------+----------------+------------+-----------------+-----------+-------------------+-------------------+---------------------+-------------------+-------------+--------+----------------------+--------------+-------------+--------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-#  | Huawei_docsis | xcku115-flva1517-2-i-es2 | 1      | CLEL_R_X64Y143 | DSP_X59Y285    | SLICE_X96Y143 AQ   | DSP48E2_X16Y114 RSTB_B       | FDPE/Q     | DSP_A_B_DATA/RSTB         | -1.220     | 0      | 1             | 0.115             | 2.718          | routed     | 1.991           | 2.296     | 0.87              | 13.28             | 0.305               | 1.37              | 1.18        | 118718 | 217                  | 0            | INT_X64Y143 | INT_X59Y286  | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[2].hb15_inst/phase0_filter[2].mac_systolic_chainin_inst/instance_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/RSTB    | u_clk_ku115/u0_rst_clk_352m/rst_reg_reg[3]/Q | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[2].hb15_inst/phase0_filter[2].mac_systolic_chainin_inst/instance_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/DSP_A_B_DATA_INST/RSTB    |
-#  | Huawei_docsis | xcku115-flva1517-2-i-es2 | 20     | CLEL_R_X64Y143 | DSP_X59Y280    | SLICE_X96Y143 AQ   | DSP48E2_X16Y112 RSTCTRL_B    | FDPE/Q     | DSP_ALU/RSTCTRL           | -1.103     | 0      | 1             | 0.115             | 2.752          | routed     | 1.946           | 2.24      | 0.87              | 13.13             | 0.294               | 1.41              | 1.23        | 118718 | 212                  | 0            | INT_X64Y143 | INT_X59Y282  | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[2].hb15_inst/phase0_filter[1].mac_systolic_inst/instance_dsp48_preadd_mult_pcin_postadd_pcout_1/DSP48E2_inst/RSTCTRL     | u_clk_ku115/u0_rst_clk_352m/rst_reg_reg[3]/Q | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[2].hb15_inst/phase0_filter[1].mac_systolic_inst/instance_dsp48_preadd_mult_pcin_postadd_pcout_1/DSP48E2_inst/DSP_ALU_INST/RSTCTRL          |
-#  | Huawei_docsis | xcku115-flva1517-2-i-es2 | 24     | CLEL_R_X64Y143 | DSP_X59Y265    | SLICE_X96Y143 AQ   | DSP48E2_X16Y106 RSTB_B       | FDPE/Q     | DSP_A_B_DATA/RSTB         | -1.091     | 0      | 1             | 0.115             | 2.585          | routed     | 1.771           | 2.058     | 0.86              | 13.95             | 0.287               | 1.46              | 1.26        | 118718 | 196                  | 0            | INT_X64Y143 | INT_X59Y266  | u_d30dphy_top/u_duc/u_stage2/hb2_inst/inst_1lane_filter[2].hb7_1lane_4ch_inst/mult_add[0].dsp_sum2_inst/u_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/RSTB | u_clk_ku115/u0_rst_clk_352m/rst_reg_reg[3]/Q | u_d30dphy_top/u_duc/u_stage2/hb2_inst/inst_1lane_filter[2].hb7_1lane_4ch_inst/mult_add[0].dsp_sum2_inst/u_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/DSP_A_B_DATA_INST/RSTB |
-#  | Huawei_docsis | xcku115-flva1517-2-i-es2 | 27     | CLEL_R_X64Y143 | DSP_X59Y220    | SLICE_X96Y143 AQ   | DSP48E2_X16Y89 RSTB_B        | FDPE/Q     | DSP_A_B_DATA/RSTB         | -1.088     | 0      | 1             | 0.115             | 2.596          | routed     | 1.441           | 1.631     | 0.88              | 11.65             | 0.190               | 1.80              | 1.59        | 118718 | 150                  | 0            | INT_X64Y143 | INT_X59Y223  | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[0].hb15_inst/phase0_filter[2].mac_systolic_chainin_inst/instance_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/RSTB    | u_clk_ku115/u0_rst_clk_352m/rst_reg_reg[3]/Q | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[0].hb15_inst/phase0_filter[2].mac_systolic_chainin_inst/instance_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/DSP_A_B_DATA_INST/RSTB    |
+#  +---------------+--------------------------+--------+----------------+----------------+--------------------+------------------------------+------------+---------------------------+------------+--------+---------------+-------------------+----------------+------------+-----------------+-----------+-------------------+-------------------+---------------------+-------------------+-------------+--------+--------------+----------------------+---------------+---------------+-------+-------------+--------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+#  | Design        | Part                     | Path # | Driver Tile    | Receiver Tile  | Driver Site        | Receiver Site                | Driver Pin | Receiver Pin              | Path Slack | Levels | Routable Nets | Driver Incr Delay | Net Incr Delay | Delay Type | Estimated Delay | P2P Delay | Estimated vs. P2P | Error vs. P2P (%) | Absolute Error (ns) | Net vs. Estimated | Net vs. P2P | Fanout | SLR Crossing | Tiles Distance (X+Y) | Tiles Delta X | Tiles Delta Y | Inbox | Driver INT  | Receiver INT | Net                                                                                                                                                            | Driver                                       | Receiver                                                                                                                                                                         |
+#  +---------------+--------------------------+--------+----------------+----------------+--------------------+------------------------------+------------+---------------------------+------------+--------+---------------+-------------------+----------------+------------+-----------------+-----------+-------------------+-------------------+---------------------+-------------------+-------------+--------+--------------+----------------------+---------------+---------------+-------+-------------+--------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+#  | Huawei_docsis | xcku115-flva1517-2-i-es2 | 1      | CLEL_R_X64Y143 | DSP_X59Y285    | SLICE_X96Y143 AQ   | DSP48E2_X16Y114 RSTB_B       | FDPE/Q     | DSP_A_B_DATA/RSTB         | -1.220     | 0      | 1             | 0.115             | 2.718          | routed     | 1.991           | 2.296     | 0.87              | 13.28             | 0.305               | 1.37              | 1.18        | 118718 | 0            | 217                  | 200           | 17            | 0     | INT_X64Y143 | INT_X59Y286  | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[2].hb15_inst/phase0_filter[2].mac_systolic_chainin_inst/instance_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/RSTB    | u_clk_ku115/u0_rst_clk_352m/rst_reg_reg[3]/Q | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[2].hb15_inst/phase0_filter[2].mac_systolic_chainin_inst/instance_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/DSP_A_B_DATA_INST/RSTB    |
+#  | Huawei_docsis | xcku115-flva1517-2-i-es2 | 20     | CLEL_R_X64Y143 | DSP_X59Y280    | SLICE_X96Y143 AQ   | DSP48E2_X16Y112 RSTCTRL_B    | FDPE/Q     | DSP_ALU/RSTCTRL           | -1.103     | 0      | 1             | 0.115             | 2.752          | routed     | 1.946           | 2.24      | 0.87              | 13.13             | 0.294               | 1.41              | 1.23        | 118718 | 0            | 212                  | 200           | 12            | 0     | INT_X64Y143 | INT_X59Y282  | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[2].hb15_inst/phase0_filter[1].mac_systolic_inst/instance_dsp48_preadd_mult_pcin_postadd_pcout_1/DSP48E2_inst/RSTCTRL     | u_clk_ku115/u0_rst_clk_352m/rst_reg_reg[3]/Q | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[2].hb15_inst/phase0_filter[1].mac_systolic_inst/instance_dsp48_preadd_mult_pcin_postadd_pcout_1/DSP48E2_inst/DSP_ALU_INST/RSTCTRL          |
+#  | Huawei_docsis | xcku115-flva1517-2-i-es2 | 24     | CLEL_R_X64Y143 | DSP_X59Y265    | SLICE_X96Y143 AQ   | DSP48E2_X16Y106 RSTB_B       | FDPE/Q     | DSP_A_B_DATA/RSTB         | -1.091     | 0      | 1             | 0.115             | 2.585          | routed     | 1.771           | 2.058     | 0.86              | 13.95             | 0.287               | 1.46              | 1.26        | 118718 | 0            | 196                  | 100           | 96            | 0     | INT_X64Y143 | INT_X59Y266  | u_d30dphy_top/u_duc/u_stage2/hb2_inst/inst_1lane_filter[2].hb7_1lane_4ch_inst/mult_add[0].dsp_sum2_inst/u_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/RSTB | u_clk_ku115/u0_rst_clk_352m/rst_reg_reg[3]/Q | u_d30dphy_top/u_duc/u_stage2/hb2_inst/inst_1lane_filter[2].hb7_1lane_4ch_inst/mult_add[0].dsp_sum2_inst/u_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/DSP_A_B_DATA_INST/RSTB |
+#  | Huawei_docsis | xcku115-flva1517-2-i-es2 | 27     | CLEL_R_X64Y143 | DSP_X59Y220    | SLICE_X96Y143 AQ   | DSP48E2_X16Y89 RSTB_B        | FDPE/Q     | DSP_A_B_DATA/RSTB         | -1.088     | 0      | 1             | 0.115             | 2.596          | routed     | 1.441           | 1.631     | 0.88              | 11.65             | 0.190               | 1.80              | 1.59        | 118718 | 0            | 150                  | 140           | 10            | 0     | INT_X64Y143 | INT_X59Y223  | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[0].hb15_inst/phase0_filter[2].mac_systolic_chainin_inst/instance_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/RSTB    | u_clk_ku115/u0_rst_clk_352m/rst_reg_reg[3]/Q | u_d30dphy_top/u_duc/u_stage1_sr2/hb15[0].hb15_inst/phase0_filter[2].mac_systolic_chainin_inst/instance_dsp48_preadd_mult_rnd_pcin_postadd/DSP48E2_inst/DSP_A_B_DATA_INST/RSTB    |
 #  ...
-#  +---------------+--------------------------+--------+----------------+----------------+--------------------+------------------------------+------------+---------------------------+------------+--------+---------------+-------------------+----------------+------------+-----------------+-----------+-------------------+-------------------+---------------------+-------------------+-------------+--------+----------------------+--------------+-------------+--------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+#  +---------------+--------------------------+--------+----------------+----------------+--------------------+------------------------------+------------+---------------------------+------------+--------+---------------+-------------------+----------------+------------+-----------------+-----------+-------------------+-------------------+---------------------+-------------------+-------------+--------+--------------+----------------------+---------------+---------------+-------+-------------+--------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 #  +-------------------------------------------------+  +-----------------------------------------+
 #  | Primitives                                      |  | Primitives                              |
 #  | EstDly/P2PDly < 0.9                             |  | EstDly/P2PDly > 1.1                     |
@@ -92,7 +95,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_net_correlation {
   namespace export -force report_net_correlation
-  variable version {2016.02.29}
+  variable version {2016.03.23}
   variable params
   variable output {}
   variable nNets 0
@@ -124,6 +127,9 @@ proc ::tb::utils::report_net_correlation::report_net_correlation {args} {
   set margin 0.1
   # Minimum difference between estimated and p2p delays: 20ps
   set delta 0.020
+  # Inbox dimensions (X, Y) for estimated delay : values for UltraScale and UltraScale Plus
+  set inboxSizeX 20
+  set inboxSizeY 26
   set design {}
   set returnstring 0
   set error 0
@@ -264,7 +270,7 @@ proc ::tb::utils::report_net_correlation::report_net_correlation {args} {
     ##
     ########################################################################################
 
-    set tbl [GetNetCorrelation -paths $paths -margin $margin -delta $delta -design $design]
+    set tbl [GetNetCorrelation -paths $paths -margin $margin -delta $delta -inboxX $inboxSizeX -inboxY $inboxSizeY -design $design]
 
     if {$design == {}} {
       # If no design name, then hide the first 2 columns
@@ -457,13 +463,15 @@ proc ::tb::utils::report_net_correlation::GetNetCorrelation { args } {
   variable nTotalNets
   variable arrStats
   # Margin: 10% / Delta: 20ps
-  array set defaults [list paths [list] margin 0.1 delta 0.020 design {}]
+  array set defaults [list paths [list] margin 0.1 delta 0.020 inboxX 20 inboxY 26 design {}]
   array set options [array get defaults]
   array set options $args
   set paths $options(-paths)
   set margin $options(-margin)
   set delta $options(-delta)
   set design $options(-design)
+  set inboxSizeX $options(-inboxX)
+  set inboxSizeY $options(-inboxY)
 
   if {($paths == {})} {
     error " error - empty path"
@@ -475,7 +483,7 @@ proc ::tb::utils::report_net_correlation::GetNetCorrelation { args } {
   } else {
     set tbl [tb::prettyTable "Net Correlation ($design)\nEstDly/P2PDly < [expr 1.0 - $margin]\nEstDly/P2PDly > [expr 1.0 + $margin]" ]
   }
-  $tbl header [list {Design} {Part} {Path #} {Driver Tile} {Receiver Tile} {Driver Site} {Receiver Site} {Driver Pin} {Receiver Pin} {Path Slack} {Levels} {Routable Nets} {Driver Incr Delay} {Net Incr Delay} {Delay Type} {Estimated Delay} {P2P Delay} {Estimated vs. P2P} {Error vs. P2P (%)} {Absolute Error (ns)} {Net vs. Estimated} {Net vs. P2P} {Fanout} {Tiles Distance (X+Y)} {SLR Crossing} {Driver INT} {Receiver INT} {Net} {Driver} {Receiver}  ]
+  $tbl header [list {Design} {Part} {Path #} {Driver Tile} {Receiver Tile} {Driver Site} {Receiver Site} {Driver Pin} {Receiver Pin} {Path Slack} {Levels} {Routable Nets} {Driver Incr Delay} {Net Incr Delay} {Delay Type} {Estimated Delay} {P2P Delay} {Estimated vs. P2P} {Error vs. P2P (%)} {Absolute Error (ns)} {Net vs. Estimated} {Net vs. P2P} {Fanout} {SLR Crossing} {INT Inbox} {Tiles Distance (X+Y)} {Tiles Delta X} {Tiles Delta Y} {INT Distance (X+Y)} {INT Delta X} {INT Delta Y} {Driver INT} {Receiver INT} {Net} {Driver} {Receiver}  ]
 
   catch {unset arrStats}
   set arrStats(primitive:over) [list]
@@ -484,6 +492,9 @@ proc ::tb::utils::report_net_correlation::GetNetCorrelation { args } {
   set arrStats(subgroup:under) [list]
   set nNets 0
   set nTotalNets 0
+  set nIntrasiteNets 0
+  set nWithinMarginNets 0
+  set nUnderDeltaNets 0
   set count -1
   foreach path $paths {
     incr count
@@ -536,6 +547,7 @@ proc ::tb::utils::report_net_correlation::GetNetCorrelation { args } {
         # Is the net an intra-site net?
         if {[get_property -quiet ROUTE_STATUS $net] == {INTRASITE}} {
           puts " -I- skipping intra-site net $pintype -> $inputpintype ($netname) (path $count)"
+          incr nIntrasiteNets
           continue
         }
 
@@ -612,6 +624,7 @@ proc ::tb::utils::report_net_correlation::GetNetCorrelation { args } {
           if {($correlation >= [expr 1.0 - $margin]) && ($correlation <= [expr 1.0 + $margin])} {
             # If the ratio is within the margin, skip the net
             puts " -I- skipping net '$netname' (ration = $correlation) (within margin) (path $count)"
+            incr nWithinMarginNets
             continue
           }
         }
@@ -620,15 +633,49 @@ proc ::tb::utils::report_net_correlation::GetNetCorrelation { args } {
         if {[string is double $p2pDelay] && [string is double $estDelay] && ($estDelay != {}) && ($p2pDelay != {})} {
           if {[expr abs(double($estDelay) - double($p2pDelay))] < $delta} {
             puts " -I- skipping net '$netname' (estDelay=$estDelay / p2pDelay=$p2pDelay) (diff<${delta}ns) (path $count)"
+            incr nUnderDeltaNets
             continue
           }
+        }
+
+        set srcTile [get_tiles -quiet -of [get_property -quiet SITE [get_cells -quiet -of $pinobj]]]
+        set destTile [get_tiles -quiet -of [get_property -quiet SITE [get_cells -quiet -of $inputpinobj]]]
+        set srcTile_X [get_property -quiet TILE_X $srcTile]
+        set srcTile_Y [get_property -quiet TILE_Y $srcTile]
+        set destTile_X [get_property -quiet TILE_X $destTile]
+        set destTile_Y [get_property -quiet TILE_Y $destTile]
+        set deltaTileX [expr abs($srcTile_X - $destTile_X)]
+        set deltaTileY [expr abs($srcTile_Y - $destTile_Y)]
+        set srcINT [returnClosestINT $pinobj]
+        set destINT [returnClosestINT $inputpinobj]
+        set srcINT_X {n/a} ; set srcINT_Y {n/a} ; set destINT_X {n/a} ; set destINT_Y {n/a}
+        regexp {^INT_X([0-9]+)Y([0-9]+)} $srcINT - srcINT_X srcINT_Y
+        regexp {^INT_X([0-9]+)Y([0-9]+)} $destINT - destINT_X destINT_Y
+        if {[catch {set deltaIntX [expr abs($srcINT_X - $destINT_X)]}]} {
+          set deltaIntX {n/a}
+        }
+        if {[catch {set deltaIntY [expr abs($srcINT_Y - $destINT_Y)]}]} {
+          set deltaIntY {n/a}
+        }
+        if {[string is double $deltaIntX] && [string is double $deltaIntY] && ($deltaIntX != {}) && ($deltaIntY != {})} {
+          if {($deltaIntX <= $inboxSizeX) && ($deltaIntY <= $inboxSizeY)} {
+            # This in an inbox net
+            set inbox 1
+          } else {
+            # This is an outbox net
+            set inbox 0
+          }
+          set distanceINT [expr $deltaIntX + $deltaIntY]
+        } else {
+          set inbox {n/a}
+          set distanceINT {n/a}
         }
 
         $tbl addrow [list $design \
                           $part \
                           $count \
-                          [get_tiles -quiet -of [get_property -quiet SITE [get_cells -quiet -of $pinobj]]] \
-                          [get_tiles -quiet -of [get_property -quiet SITE [get_cells -quiet -of $inputpinobj]]] \
+                          $srcTile \
+                          $destTile \
                           [tb::p2pdelay pin_info $pinname] \
                           [tb::p2pdelay pin_info $inputpinname] \
                           $pintype \
@@ -647,10 +694,16 @@ proc ::tb::utils::report_net_correlation::GetNetCorrelation { args } {
                           $netDelayOverEstimated \
                           $netDelayOverP2P \
                           $netfanout \
-                          $netlength \
                           $slrcrossing \
-                          [returnClosestINT $pinobj] \
-                          [returnClosestINT $inputpinobj] \
+                          $inbox \
+                          $netlength \
+                          $deltaTileX \
+                          $deltaTileY \
+                          $distanceINT \
+                          $deltaIntX \
+                          $deltaIntY \
+                          $srcINT \
+                          $destINT \
                           $netname \
                           $pinname \
                           $inputpinname \
@@ -695,6 +748,9 @@ proc ::tb::utils::report_net_correlation::GetNetCorrelation { args } {
   append title "\nTotal number of paths processed: [llength $paths]"
   append title "\nTotal number of nets processed: $nTotalNets"
   append title "\nTotal number of nets reported in the table: $nNets"
+  append title "\nTotal number of nets with ratio within margin: $nWithinMarginNets"
+  append title "\nTotal number of nets with absolute error within delta: $nUnderDeltaNets"
+  append title "\nTotal number of intra-site nets: $nIntrasiteNets"
   $tbl title $title
 
   return $tbl
@@ -908,7 +964,10 @@ proc ::tb::utils::report_net_correlation::returnClosestINT {pin} {
   set nodes [get_nodes -quiet -of $sitePin]
   for {set i 0} {$i < 10} {incr i} {
     foreach node $nodes {
-      if {[regexp {^INT_[0-9A-Z_]*X(\d+)Y(\d+).*} [get_property NAME $node] dum x y]} {
+      # We don't want to match names such as INT_INTF_R_PCIE4_X57Y153/LOGIC_OUTS_L29
+      # but instead INT_X57Y153/INT_NODE_SDQ_40_INT_OUT1
+#       if {[regexp {^INT_[0-9A-Z_]*X(\d+)Y(\d+).*} [get_property NAME $node] dum x y]} {}
+      if {[regexp {^INT_X(\d+)Y(\d+).*} [get_property NAME $node] dum x y]} {
         return [lindex [split [get_property -quiet NAME $node] /] 0]
       }
     }
