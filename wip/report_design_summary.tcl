@@ -19,6 +19,7 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.03.14 - Minor changes to prevent failure when not running inside vivado
 ## 2016.03.04 - Added new DRC metrics from report_methodology
 ##            - Added support for -drc/-rm/-report_methodology
 ##            - Reordered the metric categories
@@ -217,7 +218,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_design_summary {
   namespace export -force report_design_summary
-  variable version {2016.03.04}
+  variable version {2016.03.14}
   variable params
   variable output {}
   variable reports
@@ -548,6 +549,12 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     return -code ok
   }
 
+  if {[lsearch -exact [package names] {Vivado}] == -1} {
+    # If Vivado package is not found, then the script is not
+    # running inside a Vivado session
+    set params(vivado) 0
+  }
+
   # Remove sections that have been excluded
   set sections [lsort -unique $sections]
   foreach el $excludesections {
@@ -594,21 +601,17 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     # If -drc has been selected, make sure Vivado version is above 2016.1
     # (report_methodology from 2016.1 and above)
     # package vcompare [package present Vivado] {1.2016.1}
-    set ver [regsub {\..+$} [version -short] {}]
-    if { [regexp {^[0-9]+$} $ver] && ($ver < 2016) && ($reportMethodology == {})} {
-      puts " -E- -drc without -report_methodology can only be used with Vivado 2016.1 and above"
-      incr error
+    if {$params(vivado)} {
+      set ver [regsub {\..+$} [version -short] {}]
+      if { [regexp {^[0-9]+$} $ver] && ($ver < 2016) && ($reportMethodology == {})} {
+        puts " -E- -drc without -report_methodology can only be used with Vivado 2016.1 and above"
+        incr error
+      }
     }
   }
 
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
-  }
-
-  if {[lsearch -exact [package names] {Vivado}] == -1} {
-    # If Vivado package is not found, then the script is not
-    # running inside a Vivado session
-    set params(vivado) 0
   }
 
   # Remove metrics and reports (if not in incremental mode)
@@ -695,8 +698,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {vivado.top}       {Top Module Name}
       addMetric {vivado.dir}       {Project Directory}
 
-      setMetric {vivado.version}   [regsub {^([0-9]+\.[0-9]+)\.0$} [version -short] {\1}]
-      setMetric {vivado.build}     [regsub {SW Build ([0-9]+).+$} [lindex [split [version] \n] 1] {\1}]
+      if {$params(vivado)} {
+        setMetric {vivado.version}   [regsub {^([0-9]+\.[0-9]+)\.0$} [version -short] {\1}]
+        setMetric {vivado.build}     [regsub {SW Build ([0-9]+).+$} [lindex [split [version] \n] 1] {\1}]
+      }
       setMetric {vivado.plateform} $::tcl_platform(platform)
       setMetric {vivado.os}        $::tcl_platform(os)
       setMetric {vivado.osVersion} $::tcl_platform(osVersion)
@@ -1349,8 +1354,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       # 127 SYNTH-4 [Warning] [Shallow depth for a dedicated block RAM]
       # 1000 TIMING-10 [Warning] [Missing property on synchronizer]
       # 12 XDCB-1 [Warning] [Runtime intensive exceptions]
-
       foreach line [split $report \n] {
+        set num {} ; set drc {} ; set severity {} ; set msg {}
         if {[regexp {^\s*([0-9]+)\s+([^s]+)\s+\[(.+)\]\s+\[(.+)\]\s*$} $line - num drc severity msg]} {
           addMetric [format {drc.%s} [string tolower $drc]] [format {%s (%s)} $msg $severity]
           setMetric [format {drc.%s} [string tolower $drc]] $num
@@ -1806,7 +1811,7 @@ proc ::tb::utils::report_design_summary::iota {from to} {
 proc ::tb::utils::report_design_summary::dputs {args} {
   variable params
   if {$params(debug)} {
-    eval [concat puts $args]
+    catch { eval [concat puts $args] }
   }
   return -code ok
 }
