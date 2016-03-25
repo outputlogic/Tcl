@@ -15,14 +15,15 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.03.24
+## Version:        2016.03.25
 ## Description:    Utility to manipulate CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
-## 2016.03.24 - Added support for -callback
+## 2016.03.25 - Added support for -callback
 ##            - Added support for -remove_columns
+##            - Added support for -add_column
 ## 2016.03.03 - Initial release (derived from csv2tbl)
 ########################################################################################
 
@@ -45,10 +46,10 @@ namespace eval ::tb::utils {
 namespace eval ::tb::utils::csvutils {
   namespace export csvutils
 
-  variable version {2016.03.24}
+  variable version {2016.03.25}
   variable channel {}
   variable callbackfile {}
-  array set params [list maxlines -1 verbose 0 debug 0 ]
+  array set params [list maxlines -1 verbose 0 debug 0 addcolumns {} ]
 }
 
 ##-----------------------------------------------------------------------
@@ -72,10 +73,19 @@ set help_message [format {
 ##
 ##   -input             Input CSV file(s)
 ##
-##   -output             Report file to save results
+##   -output            Report file to save results
 ##
-##   -delimiter          CSV delimiter
-##                       Default: ,
+##   -delimiter         CSV delimiter
+##                      Default: ,
+##
+##   -callback          Tcl script with callback proc
+##
+##       Example of callback proc:
+##
+##          proc callback { row } {
+##            if {[lindex $row 11] == {1}} { return {} }
+##            return $row
+##          }
 ##
 #########################################################################
 #########################################################################
@@ -256,6 +266,10 @@ proc ::tb::utils::csvutils::read-csv {&tbl filename {csvDelimiter ,} {parseHeade
             return 1
           }
         }
+      }
+      # Columns to be appended to the header?
+      foreach col $params(addcolumns) {
+        lappend header $col
       }
       if {$parseHeader} {
         $tbl header $header
@@ -497,6 +511,10 @@ proc ::tb::utils::csvutils::csvutils {args} {
       {^-re(m(o(v(e(_(c(o(l(u(m(ns?)?)?)?)?)?)?)?)?)?)?)?$} {
         set removecols [concat $removecols [lshift args]]
       }
+      {^-ad(d(_(c(o(l(u(mn?)?)?)?)?)?)?)?$} {
+        # New column to be appended to the CSV header
+        lappend params(addcolumns) [lshift args]
+      }
       {^-ca(l(l(b(a(ck?)?)?)?)?)?$} {
         set callbackfile [lshift args]
         if {![file exists $callbackfile]} {
@@ -556,6 +574,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
                   [-max_lines <num>]
                   [-transpose]
                   [-remove_columns <pattern>]
+                  [-add_column <string>]
                   [-noheader]
                   [-delimiter <csv-delimiter>]
                   [-callback <filename>]
@@ -578,12 +597,15 @@ proc ::tb::utils::csvutils::csvutils {args} {
         Use -remove_columns to remove columns from CSV
         Use -callback to provide a callback proc for processing rows. the
         file should have a proc 'proc callback {row} { ... return $row }'
+        Use -add_column to append a column to the header. The option can be used
+        multiple times for multiple columns
 
       Example:
          csvutils -input file1.csv -delimiter ';'
          csvutils *.csv -output result.rpt -merge
          csvutils -input *.csv -output result.csv -merge -csv
          csvutils -input *.csv -noheader -remove_columns 0,3-5,7
+         csvutils -input *.csv -noheader -add_column 'col1' -add_column 'col2'
 
     } $version ]
     # HELP -->
