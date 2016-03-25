@@ -21,7 +21,8 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
-## 2016.03.03 - Added support for -remove_columns
+## 2016.03.24 - Added support for -callback
+##            - Added support for -remove_columns
 ## 2016.03.03 - Initial release (derived from csv2tbl)
 ########################################################################################
 
@@ -46,6 +47,7 @@ namespace eval ::tb::utils::csvutils {
 
   variable version {2016.03.24}
   variable channel {}
+  variable callbackfile {}
   array set params [list maxlines -1 verbose 0 debug 0 ]
 }
 
@@ -182,6 +184,12 @@ proc ::tb::utils::csvutils::expand { pattern } {
   return [lsort -unique -integer -increasing $L]
 }
 
+proc ::tb::utils::csvutils::callback { row } {
+  # E.g:
+  #  if {[lindex $row 11] == {1}} { return {} }
+  return $row
+}
+
 ##-----------------------------------------------------------------------
 ## split-csv
 ##-----------------------------------------------------------------------
@@ -256,13 +264,39 @@ proc ::tb::utils::csvutils::read-csv {&tbl filename {csvDelimiter ,} {parseHeade
         # of columns and add the first line as a row
         set L [list] ; foreach el $header { lappend L {} }
         $tbl header $L
-        $tbl addrow $header
-        incr count
+        # Call callback proc to decide whether the row should be added or not
+        if {[catch {set L [callback $header]} errorstring]} {
+          # If an error is catched, then don't add the row
+          if {$params(verbose)} {
+            puts " -W- Callback failed: $errorstring"
+          }
+        } else {
+          if {$L != [list]} {
+            # Add row if returned list is not empty
+            $tbl addrow $L
+            incr count
+          }
+        }
+#         $tbl addrow [callback $header]
+#         incr count
       }
       set first 0
     } else {
-      $tbl addrow [split-csv $line $csvDelimiter]
-      incr count
+      # Call callback proc to decide whether the row should be added or not
+      if {[catch {set L [callback [split-csv $line $csvDelimiter]]} errorstring]} {
+        # If an error is catched, then don't add the row
+        if {$params(verbose)} {
+          puts " -W- Callback failed: $errorstring"
+        }
+      } else {
+        if {$L != [list]} {
+          # Add row if returned list is not empty
+          $tbl addrow $L
+          incr count
+        }
+      }
+#       $tbl addrow [callback [split-csv $line $csvDelimiter] ]
+#       incr count
     }
     # Did we reach the max number of lines to read per CSV?
     if {($params(maxlines) >= 0) && ($count >= $params(maxlines))} {
@@ -355,8 +389,8 @@ proc ::tb::utils::csvutils::csvutils {args} {
 
   variable version
   variable params
-
   variable channel
+  variable callbackfile
 
   set params(verbose) 0
   set params(debug) 0
@@ -377,6 +411,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
   set parseHeader 1
   set transpose 0
   set removecols [list]
+  set callbackfile {}
   if {[llength $args] == 0} {
     incr show_help
   }
@@ -462,6 +497,15 @@ proc ::tb::utils::csvutils::csvutils {args} {
       {^-re(m(o(v(e(_(c(o(l(u(m(ns?)?)?)?)?)?)?)?)?)?)?)?$} {
         set removecols [concat $removecols [lshift args]]
       }
+      {^-ca(l(l(b(a(ck?)?)?)?)?)?$} {
+        set callbackfile [lshift args]
+        if {![file exists $callbackfile]} {
+          puts " -E- file '$callbackfile' does not exist"
+          incr error
+        } else {
+          set callbackfile [file normalize $callbackfile]
+        }
+      }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
       }
@@ -514,6 +558,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
                   [-remove_columns <pattern>]
                   [-noheader]
                   [-delimiter <csv-delimiter>]
+                  [-callback <filename>]
                   [-verbose|-v]
                   [-help|-h]
                   [-longhelp]
@@ -531,6 +576,8 @@ proc ::tb::utils::csvutils::csvutils {args} {
         Use -csv with -merge to generate a CSV merged file
         Use -max_lines to limit the number of lines imported per CSV
         Use -remove_columns to remove columns from CSV
+        Use -callback to provide a callback proc for processing rows. the
+        file should have a proc 'proc callback {row} { ... return $row }'
 
       Example:
          csvutils -input file1.csv -delimiter ';'
@@ -576,6 +623,14 @@ proc ::tb::utils::csvutils::csvutils {args} {
   if {$error} {
     error "\n Some error(s) occured. Cannot continue.\n"
 #    exit -1
+  }
+
+  # Sourcing file with callback function
+  if {$callbackfile != {}} {
+    namespace eval ::tb::utils::csvutils {
+      if {$params(verbose)} { puts " -I- Sourcing callback file $::tb::utils::csvutils::callbackfile" }
+      source $::tb::utils::csvutils::callbackfile
+    }
   }
 
   if {$stdout} {
