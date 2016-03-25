@@ -27,6 +27,7 @@ exec tclsh "$0" "$@"
 ##            - Added support for -array
 ##            - Added support for -indent
 ##            - Added support for -no_separator
+##            - Removed limitation that -csv must be used with -merge
 ## 2016.03.03 - Initial release (derived from csv2tbl)
 ########################################################################################
 
@@ -641,11 +642,6 @@ proc ::tb::utils::csvutils::csvutils {args} {
   if {$merge} {
     if  {!$stdout && $ofilename == {}} {
       puts " -E- -merge must be used with -output or -stdout"
-      incr error
-    }
-  } else {
-    if {$outputFormat == {csv}} {
-      puts " -E- -csv must be used with -merge"
       incr error
     }
   }
