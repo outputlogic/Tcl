@@ -9,7 +9,7 @@ namespace eval ::tclapp::xilinx::designutils {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.01.27
+## Version:        2016.03.24
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -252,6 +252,10 @@ namespace eval ::tclapp::xilinx::designutils {
 ########################################################################################
 
 ########################################################################################
+## 2016.03.24 - Added 'numcols' method
+##            - Fixed help message for 'numrows' method
+## 2016.03.02 - Added -noheader to 'export' method
+##            - Addes support for -noheader when exporting CSV
 ## 2016.01.27 - Fixed missing header when exporting to CSV
 ## 2015.12.10 - Added 'title' method to add/change the table title
 ##            - Added new command line options to 'configure' method to set the default
@@ -314,7 +318,7 @@ eval [list namespace eval ::tclapp::xilinx::designutils::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
-  variable version {2016.01.27}
+  variable version {2016.03.24}
 } ]
 
 #------------------------------------------------------------------------
@@ -701,6 +705,7 @@ proc ::tclapp::xilinx::designutils::prettyTable::exportToCSV {self args} {
 
 
   array set defaults [list \
+      -header 1 \
       -delimiter {,} \
       -return_var {} \
       -verbose 0 \
@@ -735,14 +740,16 @@ proc ::tclapp::xilinx::designutils::prettyTable::exportToCSV {self args} {
   }
 #   append res "# title${sepChar}[::tclapp::xilinx::designutils::prettyTable::list2csv [list $params(title)] $sepChar]\n"
   if {$options(-verbose)} {
-  	# Additional header information are hidden by default
+    # Additional header information are hidden by default
     append res "# header${sepChar}[::tclapp::xilinx::designutils::prettyTable::list2csv $header $sepChar]\n"
     append res "# indent${sepChar}[::tclapp::xilinx::designutils::prettyTable::list2csv $params(indent) $sepChar]\n"
     append res "# limit${sepChar}[::tclapp::xilinx::designutils::prettyTable::list2csv $params(maxNumRows) $sepChar]\n"
     append res "# display_limit${sepChar}[::tclapp::xilinx::designutils::prettyTable::list2csv $params(maxNumRowsToDisplay) $sepChar]\n"
     append res "# display_columns${sepChar}[::tclapp::xilinx::designutils::prettyTable::list2csv [list $params(columnsToDisplay)] $sepChar]\n"
   }
-  append res "[::tclapp::xilinx::designutils::prettyTable::list2csv $header $sepChar]\n"
+  if {$options(-header)} {
+    append res "[::tclapp::xilinx::designutils::prettyTable::list2csv $header $sepChar]\n"
+  }
   set count 0
   foreach row $table {
     incr count
@@ -990,7 +997,7 @@ proc ::tclapp::xilinx::designutils::prettyTable::method:addrow {self args} {
 #------------------------------------------------------------------------
 # ::tclapp::xilinx::designutils::prettyTable::method:numrows
 #------------------------------------------------------------------------
-# Usage: <prettyTableObject> numrows <list>
+# Usage: <prettyTableObject> numrows
 #------------------------------------------------------------------------
 # Return the number of rows of the table
 #------------------------------------------------------------------------
@@ -1001,8 +1008,26 @@ proc ::tclapp::xilinx::designutils::prettyTable::method:numrows {self args} {
   # Categories: xilinxtclstore, designutils
 
 
-  # Add a row to the table
+  # Get the number of rows
   return [subst $${self}::numRows]
+}
+
+#------------------------------------------------------------------------
+# ::tclapp::xilinx::designutils::prettyTable::method:numcols
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> numcols
+#------------------------------------------------------------------------
+# Return the number of columns of the table
+#------------------------------------------------------------------------
+proc ::tclapp::xilinx::designutils::prettyTable::method:numcols {self args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Get the number of columns
+  return [llength [subst $${self}::header]]
 }
 
 #------------------------------------------------------------------------
@@ -1737,7 +1762,7 @@ proc ::tclapp::xilinx::designutils::prettyTable::method:configure {self args} {
            switch $format {
              lean -
              classic {
-              	set ${self}::params(tableFormat) $format
+                set ${self}::params(tableFormat) $format
              }
              default {
                puts " -E- invalid format '$format'. The valid formats are: classic|lean"
@@ -1969,6 +1994,7 @@ proc ::tclapp::xilinx::designutils::prettyTable::method:export {self args} {
   set verbose 0
   set filename {}
   set append 0
+  set printHeader 1
   set returnVar {}
   set format {table}
 #   set tableFormat {classic}
@@ -2005,6 +2031,9 @@ proc ::tclapp::xilinx::designutils::prettyTable::method:export {self args} {
       -table {
            set tableFormat [lshift args]
       }
+      -noheader {
+           set printHeader 0
+      }
       -v -
       -verbose {
            set verbose 1
@@ -2035,6 +2064,7 @@ proc ::tclapp::xilinx::designutils::prettyTable::method:export {self args} {
               [-append]
               [-return_var <tcl_var_name>]
               [-columns <list_of_columns_to_display>]
+              [-noheader]
               [-verbose|-v]
               [-help|-h]
 
@@ -2082,16 +2112,32 @@ proc ::tclapp::xilinx::designutils::prettyTable::method:export {self args} {
   switch $format {
     table {
       if {$returnVar != {}} {
-        $self print -return_var res -columns $columnsToDisplay -format $tableFormat
+        if {$printHeader} {
+          $self print -return_var res -columns $columnsToDisplay -format $tableFormat
+        } else {
+          $self print -return_var res -columns $columnsToDisplay -format $tableFormat -noheader
+        }
       } else {
-        set res [$self print -columns $columnsToDisplay -format $tableFormat]
+        if {$printHeader} {
+          set res [$self print -columns $columnsToDisplay -format $tableFormat]
+        } else {
+          set res [$self print -columns $columnsToDisplay -format $tableFormat -noheader]
+        }
       }
     }
     csv {
       if {$returnVar != {}} {
-        ::tclapp::xilinx::designutils::prettyTable::exportToCSV $self -delimiter $csvDelimiter -return_var res -verbose $verbose
+        if {$printHeader} {
+          ::tclapp::xilinx::designutils::prettyTable::exportToCSV $self -delimiter $csvDelimiter -return_var res -verbose $verbose
+        } else {
+          ::tclapp::xilinx::designutils::prettyTable::exportToCSV $self -delimiter $csvDelimiter -return_var res -verbose $verbose -header 0
+        }
       } else {
-        set res [::tclapp::xilinx::designutils::prettyTable::exportToCSV $self -delimiter $csvDelimiter -verbose $verbose]
+        if {$printHeader} {
+          set res [::tclapp::xilinx::designutils::prettyTable::exportToCSV $self -delimiter $csvDelimiter -verbose $verbose]
+        } else {
+          set res [::tclapp::xilinx::designutils::prettyTable::exportToCSV $self -delimiter $csvDelimiter -verbose $verbose -header 0]
+        }
       }
     }
     tcl {

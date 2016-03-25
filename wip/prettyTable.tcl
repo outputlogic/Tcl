@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.01.27
+## Version:        2016.03.24
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,6 +265,8 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.03.24 - Added 'numcols' method
+##            - Fixed help message for 'numrows' method
 ## 2016.03.02 - Added -noheader to 'export' method
 ##            - Addes support for -noheader when exporting CSV
 ## 2016.01.27 - Fixed missing header when exporting to CSV
@@ -329,7 +331,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
-  variable version {2016.03.02}
+  variable version {2016.03.24}
 } ]
 
 #------------------------------------------------------------------------
@@ -1008,7 +1010,7 @@ proc ::tb::prettyTable::method:addrow {self args} {
 #------------------------------------------------------------------------
 # ::tb::prettyTable::method:numrows
 #------------------------------------------------------------------------
-# Usage: <prettyTableObject> numrows <list>
+# Usage: <prettyTableObject> numrows
 #------------------------------------------------------------------------
 # Return the number of rows of the table
 #------------------------------------------------------------------------
@@ -1019,8 +1021,26 @@ proc ::tb::prettyTable::method:numrows {self args} {
   # Categories: xilinxtclstore, designutils
 
 
-  # Add a row to the table
+  # Get the number of rows
   return [subst $${self}::numRows]
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:numcols
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> numcols
+#------------------------------------------------------------------------
+# Return the number of columns of the table
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:numcols {self args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Get the number of columns
+  return [llength [subst $${self}::header]]
 }
 
 #------------------------------------------------------------------------
