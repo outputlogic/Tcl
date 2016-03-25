@@ -15,12 +15,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.03.03
+## Version:        2016.03.24
 ## Description:    Utility to manipulate CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.03.03 - Added support for -remove_columns
 ## 2016.03.03 - Initial release (derived from csv2tbl)
 ########################################################################################
 
@@ -43,7 +44,7 @@ namespace eval ::tb::utils {
 namespace eval ::tb::utils::csvutils {
   namespace export csvutils
 
-  variable version {2016.03.03}
+  variable version {2016.03.24}
   variable channel {}
   array set params [list maxlines -1 verbose 0 debug 0 ]
 }
@@ -103,7 +104,7 @@ proc ::tb::utils::csvutils::unlshift { ls data } {
 }
 
 ##-----------------------------------------------------------------------
-## K lequal
+## K lequal ldiff iota min max expand
 ##-----------------------------------------------------------------------
 ## List functions
 ##-----------------------------------------------------------------------
@@ -127,6 +128,58 @@ proc ::tb::utils::csvutils::lequal {l1 l2} {
     }
 
     return [expr {[llength $l2] == 0}]
+}
+
+proc ::tb::utils::csvutils::ldiff {a b} {
+#   upvar $la a
+#   upvar $lb b
+  set diff [list]
+  foreach i $a {
+    if { [lsearch -exact $b $i]==-1} {
+      lappend diff $i
+    }
+  }
+  foreach i $b {
+    if { [lsearch -exact $a $i]==-1} {
+      if { [lsearch -exact $diff $i]==-1} {
+        lappend diff $i
+      }
+    }
+  }
+  return $diff
+}
+
+proc ::tb::utils::csvutils::iota {from to} {
+  set out [list]
+  if {$from <= $to} {
+    for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
+  } else {
+    for {set i $from} {$i >= $to} {incr i -1} {lappend out $i}
+  }
+  return $out
+}
+
+proc ::tb::utils::csvutils::min {x y} {expr {$x<$y?$x:$y}}
+proc ::tb::utils::csvutils::max {x y} {expr {$x>$y?$x:$y}}
+
+# E.g:
+#   expand 0-5,8-10,13
+#   => 0 1 2 3 4 5 8 9 10 13
+proc ::tb::utils::csvutils::expand { pattern } {
+  set L [list]
+  foreach grp [split $pattern ,] {
+    if {[regexp {^[0-9]+$} $grp]} {
+      # Simple number
+      lappend L $grp
+      continue
+    }
+    if {[regexp {^([0-9]+)-([0-9]+)$} $grp - num1 num2]} {
+      set L [concat $L [iota [min $num1 $num2] [max $num1 $num2]]]
+      continue
+    }
+    puts " -W- Wrong pattern '$grp'"
+  }
+  return [lsort -unique -integer -increasing $L]
 }
 
 ##-----------------------------------------------------------------------
@@ -323,6 +376,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
   set alignment {left}
   set parseHeader 1
   set transpose 0
+  set removecols [list]
   if {[llength $args] == 0} {
     incr show_help
   }
@@ -405,6 +459,9 @@ proc ::tb::utils::csvutils::csvutils {args} {
       {^-ma(x(_(l(i(n(es?)?)?)?)?)?)?$} {
         set params(maxlines) [lshift args]
       }
+      {^-re(m(o(v(e(_(c(o(l(u(m(ns?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set removecols [concat $removecols [lshift args]]
+      }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
       }
@@ -454,6 +511,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
                   [-merge]
                   [-max_lines <num>]
                   [-transpose]
+                  [-remove_columns <pattern>]
                   [-noheader]
                   [-delimiter <csv-delimiter>]
                   [-verbose|-v]
@@ -472,12 +530,13 @@ proc ::tb::utils::csvutils::csvutils {args} {
         Use -transpose to transpose the CSV
         Use -csv with -merge to generate a CSV merged file
         Use -max_lines to limit the number of lines imported per CSV
+        Use -remove_columns to remove columns from CSV
 
       Example:
          csvutils -input file1.csv -delimiter ';'
          csvutils *.csv -output result.rpt -merge
          csvutils -input *.csv -output result.csv -merge -csv
-         csvutils -input *.csv -noheader
+         csvutils -input *.csv -noheader -remove_columns 0,3-5,7
 
     } $version ]
     # HELP -->
@@ -533,9 +592,9 @@ proc ::tb::utils::csvutils::csvutils {args} {
       error " -E- $errorstring"
 #       exit 1
     }
-    puts $channel "# ------------------------------------------------------------"
-    puts $channel [format {# Created on %s with csvutils} [clock format [clock seconds]] ]
-    puts $channel "# ------------------------------------------------------------\n"
+    puts $channel "# ----------------------------------------------------------------------"
+    puts $channel [format {# Created on %s with csvutils (%s)} [clock format [clock seconds]] $::tb::utils::csvutils::version ]
+    puts $channel "# ----------------------------------------------------------------------\n"
   }
 
   set tbl [::tb::prettyTable]
@@ -563,13 +622,20 @@ proc ::tb::utils::csvutils::csvutils {args} {
           puts " -E- $errorstring"
           continue
         }
-        puts $channel "# ------------------------------------------------------------"
-        puts $channel [format {# Created on %s with csvutils} [clock format [clock seconds]] ]
-        puts $channel "# ------------------------------------------------------------\n"
+        puts $channel "# ----------------------------------------------------------------------"
+        puts $channel [format {# Created on %s with csvutils (%s)} [clock format [clock seconds]] $::tb::utils::csvutils::version ]
+        puts $channel "# ----------------------------------------------------------------------\n"
       }
       if {$transpose} {
         # Transpose the table
         transpose tbl
+      }
+      if {$removecols != {}} {
+        # Remove columns based on provided pattern
+        set cols [iota 0 [$tbl numcols]]
+        set toberemoved [expand $removecols]
+        set display [ldiff $cols $toberemoved]
+        $tbl configure -display_columns $display
       }
       switch $outputFormat {
         table {
@@ -615,6 +681,13 @@ proc ::tb::utils::csvutils::csvutils {args} {
     if {$transpose} {
       # Transpose the table
       transpose tbl
+    }
+    if {$removecols != {}} {
+      # Remove columns based on provided pattern
+      set cols [iota 0 [$tbl numcols]]
+      set toberemoved [expand $removecols]
+      set display [ldiff $cols $toberemoved]
+      $tbl configure -display_columns $display
     }
     switch $outputFormat {
       table {
