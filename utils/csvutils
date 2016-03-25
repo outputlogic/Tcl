@@ -626,16 +626,16 @@ proc ::tb::utils::csvutils::csvutils {args} {
         puts $channel [format {# Created on %s with csvutils (%s)} [clock format [clock seconds]] $::tb::utils::csvutils::version ]
         puts $channel "# ----------------------------------------------------------------------\n"
       }
-      if {$transpose} {
-        # Transpose the table
-        transpose tbl
-      }
       if {$removecols != {}} {
         # Remove columns based on provided pattern
         set cols [iota 0 [$tbl numcols]]
         set toberemoved [expand $removecols]
         set display [ldiff $cols $toberemoved]
         $tbl configure -display_columns $display
+      }
+      if {$transpose} {
+        # Transpose the table
+        transpose tbl
       }
       switch $outputFormat {
         table {
@@ -678,16 +678,16 @@ proc ::tb::utils::csvutils::csvutils {args} {
   }
 
   if {$merge} {
-    if {$transpose} {
-      # Transpose the table
-      transpose tbl
-    }
     if {$removecols != {}} {
       # Remove columns based on provided pattern
       set cols [iota 0 [$tbl numcols]]
       set toberemoved [expand $removecols]
       set display [ldiff $cols $toberemoved]
       $tbl configure -display_columns $display
+    }
+    if {$transpose} {
+      # Transpose the table
+      transpose tbl
     }
     switch $outputFormat {
       table {
