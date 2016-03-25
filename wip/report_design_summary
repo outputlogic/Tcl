@@ -3,7 +3,8 @@
 exec tclsh "$0" "$@"
 
 ########################################################################################
-## 2016.02.29 - Added -directive
+## 2016.03.25 - Added support for -exclude
+## 2016.02.29 - Added support for -directive
 ## 2016.01.29 - Added support for -script
 ## 2016.01.19 - Initial release
 ########################################################################################
@@ -271,6 +272,7 @@ set experiment {}
 set version {}
 set step {}
 set directive {}
+set exclude {}
 set script {}
 set error 0
 set help 0
@@ -313,6 +315,12 @@ while {[llength $::argv]} {
     -d -
     -directive {
          set directive [lshift ::argv]
+    }
+    -ex -
+    -exclude {
+      foreach el [lshift ::argv] {
+        lappend exclude $el
+      }
     }
     -scr -
     -script {
@@ -359,6 +367,7 @@ Usage: report_design_summary
             [-experiment|-e <string>]
             [-step|-s <string>]
             [-directive|-d <string>]
+            [-exclude <list_sections>]
             [-script <filename>]
             [-lsf]
             [-lsf-mem <number>]
@@ -373,10 +382,14 @@ Description: Extract design summary from checkpoint
   -project/-version/-experiments/-step/-directive are just strings saved inside CSV
     file for tagging purpose. This make the comparaison between summary files easier.
   -script: user script
+  -exclude: remove sections from summary report.
+    List of sections: utilization constraints timing clock_interaction congestion
+                      check_timing cdc drc route_status
 
 Example:
    report_design_summary -dcp post_route.dcp -step route_design -directive Explore
    report_design_summary -dcp post_route.dcp -file summary.csv -step route_design -lsf -lsf-mem 12000 -lsf-queue long
+   report_design_summary -dcp post_route.dcp -step route_design -directive Explore -exclude 'drc cdc'
 } ]
   # HELP -->
 
@@ -421,6 +434,7 @@ if {$version != {}} { set cmdLine [concat $cmdLine -version [list $version] ] }
 if {$experiment != {}} { set cmdLine [concat $cmdLine -experiment [list $experiment] ] }
 if {$step != {}} { set cmdLine [concat $cmdLine -step [list $step] ] }
 if {$directive != {}} { set cmdLine [concat $cmdLine -directive [list $directive] ] }
+if {$exclude != {}} { set cmdLine [concat $cmdLine -exclude [list $exclude] ] }
 if {$script != {}} { set cmdLine [concat $cmdLine -script [list $script] ] }
 
 #-------------------------------------------------------
