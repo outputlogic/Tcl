@@ -19,6 +19,7 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.03.25 - Fixed error when calculating distance between Tiles
 ## 2016.03.23 - Added columns 'Tiles Delta X', 'Tiles Delta Y'
 ##            - Added columns 'INT Distance (X+Y)', 'INT Delta X', 'INT Delta Y', 'INT Inbox'
 ##            - Fixed extraction of INTerconnect data ('Driver INT', 'Receiver INT')
@@ -95,7 +96,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_net_correlation {
   namespace export -force report_net_correlation
-  variable version {2016.03.23}
+  variable version {2016.03.25}
   variable params
   variable output {}
   variable nNets 0
@@ -640,12 +641,13 @@ proc ::tb::utils::report_net_correlation::GetNetCorrelation { args } {
 
         set srcTile [get_tiles -quiet -of [get_property -quiet SITE [get_cells -quiet -of $pinobj]]]
         set destTile [get_tiles -quiet -of [get_property -quiet SITE [get_cells -quiet -of $inputpinobj]]]
-        set srcTile_X [get_property -quiet TILE_X $srcTile]
-        set srcTile_Y [get_property -quiet TILE_Y $srcTile]
-        set destTile_X [get_property -quiet TILE_X $destTile]
-        set destTile_Y [get_property -quiet TILE_Y $destTile]
+        set srcTile_X [get_property -quiet INT_TILE_X $srcTile]
+        set srcTile_Y [get_property -quiet INT_TILE_Y $srcTile]
+        set destTile_X [get_property -quiet INT_TILE_X $destTile]
+        set destTile_Y [get_property -quiet INT_TILE_Y $destTile]
         set deltaTileX [expr abs($srcTile_X - $destTile_X)]
         set deltaTileY [expr abs($srcTile_Y - $destTile_Y)]
+        set distanceTile [expr $deltaTileX + $deltaTileY]
         set srcINT [returnClosestINT $pinobj]
         set destINT [returnClosestINT $inputpinobj]
         set srcINT_X {n/a} ; set srcINT_Y {n/a} ; set destINT_X {n/a} ; set destINT_Y {n/a}
@@ -696,7 +698,7 @@ proc ::tb::utils::report_net_correlation::GetNetCorrelation { args } {
                           $netfanout \
                           $slrcrossing \
                           $inbox \
-                          $netlength \
+                          $distanceTile \
                           $deltaTileX \
                           $deltaTileY \
                           $distanceINT \
