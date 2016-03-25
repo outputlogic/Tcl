@@ -26,6 +26,7 @@ exec tclsh "$0" "$@"
 ##            - Added support for -add_column
 ##            - Added support for -array
 ##            - Added support for -indent
+##            - Added support for -no_separator
 ## 2016.03.03 - Initial release (derived from csv2tbl)
 ########################################################################################
 
@@ -426,6 +427,8 @@ proc ::tb::utils::csvutils::csvutils {args} {
   set alignment {left}
   set parseHeader 1
   set transpose 0
+  # Add separator between CSV files (merge mode)
+  set addseparator 1
   set removecols [list]
   set callbackfile {}
   if {[llength $args] == 0} {
@@ -471,6 +474,9 @@ proc ::tb::utils::csvutils::csvutils {args} {
       }
       {^-m(e(r(ge?)?)?)?$} {
         set merge 1
+      }
+      {^-no(_(s(e(p(a(r(a(t(or?)?)?)?)?)?)?)?)?)?$} {
+        set addseparator 0
       }
       {^-le(an?)?$} {
         set table {lean}
@@ -579,6 +585,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
                   [-stdout]
                   [-append]
                   [-merge]
+                  [-no_separator]
                   [-max_lines <num>]
                   [-indent <num>]
                   [-transpose]
@@ -609,6 +616,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
         Use -add_column to append a column to the header. The option can be used
         multiple times for multiple columns
         Use -indent to indent the table
+        Use -no_separator with -merge to remove separator between CSV files
 
       Example:
          csvutils -input file1.csv -delimiter ';'
@@ -694,7 +702,10 @@ proc ::tb::utils::csvutils::csvutils {args} {
     }
     if {$merge} {
       if {!$first} {
-        $tbl separator
+        if {$addseparator} {
+          # Add separator between CSV files
+          $tbl separator
+        }
       }
       read-csv tbl $filename $csvDelimiter $parseHeader
       set first 0
