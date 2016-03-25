@@ -912,10 +912,10 @@ proc ::tb::utils::report_net_correlation::dist_tiles { tile1 tile2 } {
   if {($tile1 == {}) || ($tile2 == {})} {
     error " error - empty tile(s)"
   }
-  set TILE_X1 [get_property -quiet TILE_X $tile1]
-  set TILE_Y1 [get_property -quiet TILE_Y $tile1]
-  set TILE_X2 [get_property -quiet TILE_X $tile2]
-  set TILE_Y2 [get_property -quiet TILE_Y $tile2]
+  set TILE_X1 [get_property -quiet INT_TILE_X $tile1]
+  set TILE_Y1 [get_property -quiet INT_TILE_Y $tile1]
+  set TILE_X2 [get_property -quiet INT_TILE_X $tile2]
+  set TILE_Y2 [get_property -quiet INT_TILE_Y $tile2]
   # X+Y distance
   set distance [format {%d} [expr abs($TILE_X1 - $TILE_X2) + abs($TILE_Y1 - $TILE_Y2) ] ]
   return $distance
