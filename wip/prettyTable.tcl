@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.03.24
+## Version:        2016.03.25
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,7 +265,8 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
-## 2016.03.24 - Added 'numcols' method
+## 2016.03.25 - Added 'numcols' method
+##            - Added new format for 'export' method (array)
 ##            - Fixed help message for 'numrows' method
 ## 2016.03.02 - Added -noheader to 'export' method
 ##            - Addes support for -noheader when exporting CSV
@@ -331,7 +332,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
-  variable version {2016.03.24}
+  variable version {2016.03.25}
 } ]
 
 #------------------------------------------------------------------------
@@ -849,6 +850,62 @@ proc ::tb::prettyTable::exportToLIST {self args} {
       append res "${indentString}# ++++++++++++++++++++++++++++++++++++++++++++++++++\n"
     }
   }
+  if {$options(-return_var) != {}} {
+    # The report is returned through the upvar
+    return {}
+  } else {
+    return $res
+  }
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::exportToTCLArray
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Dump the content of the prettyTable object as a fragment Tcl code to
+# set a Tcl array
+# The result is returned as a single string or through upvar
+# The result can be used as, for example: array set myarray [source res.ftcl]
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::exportToArray {self args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  array set defaults [list \
+      -return_var {} \
+    ]
+  array set options [array get defaults]
+  array set options $args
+
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::params params
+  upvar #0 ${self}::separators separators
+  upvar #0 ${self}::numRows numRows
+
+  # 'options(-return_var)' holds the variable name from the caller's environment
+  # that should receive the content of the report
+  if {$options(-return_var) != {}} {
+    # The caller's environment is 1 levels up
+    upvar 1 $options(-return_var) res
+  }
+  set res {}
+
+  append res [format {#  This file can be imported with:  array set myarray [source <file>]}]
+  append res [format "\nreturn \[list \\\n"]
+  append res [format "  {header} { %s } \\\n" $header]
+  append res [format "  {rows} \[list \\\n"]
+  set count -1
+  foreach row $table {
+    incr count
+    append res "[format {    %s { %s } %s} $count $row \\]\n"
+  }
+  append res "    \] \\\n"
+  append res "  \]\n"
   if {$options(-return_var) != {}} {
     # The report is returned through the upvar
     return {}
@@ -2070,7 +2127,7 @@ proc ::tb::prettyTable::method:export {self args} {
   if {$help} {
     puts [format {
   Usage: <prettyTableObject> export
-              -format table|csv|tcl|list
+              -format table|csv|tcl|list|array
               [-table classic|lean]
               [-delimiter <csv_delimiter>]
               [-file <filename>]
@@ -2110,8 +2167,8 @@ proc ::tb::prettyTable::method:export {self args} {
   }
 
   # No header has been defined
-  if {[lsearch [list {table} {tcl} {csv} {list}] $format] == -1} {
-    error " -E- invalid format '$format'. The valid formats are: table | csv | tcl | list"
+  if {[lsearch [list {table} {tcl} {csv} {list} {array}] $format] == -1} {
+    error " -E- invalid format '$format'. The valid formats are: table | csv | tcl | list | array"
   }
 
   # The -return_var option provides the variable name from the caller's environment
@@ -2165,6 +2222,13 @@ proc ::tb::prettyTable::method:export {self args} {
         ::tb::prettyTable::exportToLIST $self -delimiter $csvDelimiter -return_var res -columns $columnsToDisplay
       } else {
         set res [::tb::prettyTable::exportToLIST $self -delimiter $csvDelimiter -columns $columnsToDisplay]
+      }
+    }
+    array {
+      if {$returnVar != {}} {
+        ::tb::prettyTable::exportToArray $self -return_var res -columns $columnsToDisplay
+      } else {
+        set res [::tb::prettyTable::exportToArray $self -columns $columnsToDisplay]
       }
     }
     default {
