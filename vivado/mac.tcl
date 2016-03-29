@@ -14,13 +14,14 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.03.02
+## Version:        2016.03.29
 ## Tool Version:   Vivado 2014.1
 ## Description:    This package provides a simple utility for macro creation
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.03.29 - Modified output .mac format to make it usable without this utility
 ## 2016.03.02 - Fixed issue with saving of Hold timing paths
 ## 2016.01.19 - Fixed issue when unrecognized objects were not skipped
 ##            - Added support for clock objects
@@ -74,7 +75,7 @@ proc ::tb::mac { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::mac {
-  variable version {2016.03.02}
+  variable version {2016.03.29}
   variable params
   variable macros [list]
   catch {unset params}
@@ -338,8 +339,8 @@ proc ::tb::mac::method:set { name { objs {} } } {
   }
 #   puts $cmds
   set proc [format "proc ::%s { {force 0} } \{" $name]
-#   append proc "\n ::tb::mac::static L ; if {!\$force && \[info exists L\]} { puts {Returning existing value} ; return \$L }"
-  append proc "\n ::tb::mac::static L ; if {!\$force && \[info exists L\]} { return \$L }"
+#   append proc "\n ::tb::mac::static L ; if {!\$force && \[info exists L\]} { return \$L }"
+  append proc "\n if {\[info proc ::tb::mac::static\] != {}} { ::tb::mac::static L ; if {!\$force && \[info exists L\]} { return \$L } }"
   append proc "\n proc T obj { upvar 1 L L; upvar 1 idx idx ; incr idx ; if {\$obj != {}} { lappend L \$obj } else { error {} } }"
   append proc "\n proc E {} { upvar error error ; upvar idx idx ; puts \" -W- $name: failed to create object \$idx\" ; incr error }"
   append proc "\n set L \[list\]; set error 0 ; set idx -1"
@@ -362,7 +363,7 @@ proc ::tb::mac::method:set { name { objs {} } } {
     set filename [file normalize [file join $params(repository) ${name}.mac]]
     if {[catch {
       set FH [open $filename {w}]
-      puts $FH "::tb::mac register $name"
+      puts $FH "if {\[info proc ::tb::mac\] != {}} { ::tb::mac register $name }"
       puts $FH $proc
       close $FH
       if {$params(verbose)} {
