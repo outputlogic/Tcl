@@ -1,3 +1,4 @@
+
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
@@ -21,7 +22,9 @@
 ########################################################################################
 
 ########################################################################################
-## 2016.03.29 - Modified output .mac format to make it usable without this utility
+## 2016.03.29 - Modified output .mac format to make the macro file usable without
+##              this utility
+##            - Fixed format for get_timing_path -through for rare issues
 ## 2016.03.02 - Fixed issue with saving of Hold timing paths
 ## 2016.01.19 - Fixed issue when unrecognized objects were not skipped
 ##            - Added support for clock objects
@@ -647,21 +650,21 @@ proc ::tb::mac::o2c { objs } {
         set startpin [get_property -quiet STARTPOINT_PIN $obj]
         set endpin [get_property -quiet ENDPOINT_PIN $obj]
         switch [get_property -quiet DELAY_TYPE $obj] {
-        	min {
-        		set delaytype {-hold}
-        	}
-        	max {
-        		set delaytype {-setup}
-        	}
-        	default {
-        		set delaytype {-setup}
-        	}
+          min {
+            set delaytype {-hold}
+          }
+          max {
+            set delaytype {-setup}
+          }
+          default {
+            set delaytype {-setup}
+          }
         }
 #         set nets [get_nets -quiet -of $obj]
         set nets [get_nets -quiet -of $obj -top_net_of_hierarchical_group -filter {TYPE == SIGNAL}]
 # puts "<startpin:$startpin><endpin:$endpin><nets:$nets>"
 #         set cmd [format {get_timing_paths -quiet -from [get_pins -quiet {%s}] -to [get_pins -quiet {%s}] -through [get_nets -quiet [list %s]]} $startpin $endpin $nets]
-        set cmd [format {get_timing_paths -quiet %s -from [get_%ss -quiet {%s}] -to [get_%ss -quiet {%s}] -through [get_nets -quiet [list %s]]} $delaytype [get_property CLASS $startpin] $startpin [get_property CLASS $endpin] $endpin $nets]
+        set cmd [format {get_timing_paths -quiet %s -from [get_%ss -quiet {%s}] -to [get_%ss -quiet {%s}] -through [get_nets -quiet {%s}]} $delaytype [get_property CLASS $startpin] $startpin [get_property CLASS $endpin] $endpin $nets]
       }
       default {
         puts " -W- skipping object $obj"
