@@ -1,6 +1,6 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 ####################################################################################################
 # HEADER_BEGIN
@@ -18,11 +18,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
+## Version:        2016.04.04
 ## Description:    Compare design summary reports
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.03.04 - Updated the list of metric categories
 ##            - Reordered the metric categories
 ##            - CDC/DRC metrics are set to 0 when not found
@@ -45,7 +47,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::compare_design_summary {
   namespace export -force compare_design_summary
-  variable version {2016.03.04}
+  variable version {2016.04.04}
   variable params
   variable output {}
   variable reports
@@ -1021,6 +1023,8 @@ proc ::tb::utils::compare_design_summary::orderedMetrics {} {
 if {[file tail [info script]]!=[file tail $argv0]} {
   # This file is sourced
 } else {
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  ::tb::utils::compare_design_summary::lshift ::argv
   if {[catch {eval [concat ::tb::utils::compare_design_summary::compare_design_summary -standalone $argv]} errorstring]} {
     puts $errorstring
     exit 1
