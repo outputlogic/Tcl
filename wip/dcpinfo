@@ -1,6 +1,6 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 ####################################################################################################
 # HEADER_BEGIN
@@ -15,11 +15,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
+## Version:        2016.04.04
 ## Description:    This utility provides information on DCP
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.02.04 - Initial release
 ########################################################################################
 
@@ -33,7 +35,7 @@ namespace eval ::tb {}
 namespace eval ::tb::dcpinfo {
   namespace export dcpinfo
 
-  variable SCRIPT_VERSION {2016.02.04}
+  variable SCRIPT_VERSION {2016.04.04}
   variable VERBOSE 0
   variable DEBUG 0
 }
@@ -221,6 +223,8 @@ if {[file tail [info script]]!=[file tail $argv0]} {
   if {!$QUIET} { puts " INFO - sourcing [info script]" }
 #   ::tb::dcpinfo::dcpinfo
 } else {
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  ::tb::dcpinfo::lshift ::argv
   if {[catch {eval [concat ::tb::dcpinfo::dcpinfo $argv]} errorstring]} {
     puts $errorstring
     # Close SQlite database

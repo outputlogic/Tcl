@@ -1,6 +1,11 @@
 #!/bin/sh
 # use -*-Tcl-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
+
+########################################################################################
+## 2016.04.04 - Modified sh exec command to execute script
+## 2015.04.14 - Initial release
+########################################################################################
 
 # Convert a file to a template:
 #    cvs2smtpl -i <input file> -o <output file> [-<string>=<value>] [-<string>=<value>] ...
@@ -19,7 +24,7 @@ proc main {args} {
 
   set verbose 0
   set debug 0
-  set SCRIPT_VERSION {04-14-2015}
+  set SCRIPT_VERSION {2016.04.04}
 
   set ifilename {}
   set ofilename {}
@@ -200,6 +205,9 @@ proc main {args} {
 
   return -code ok
 }
+
+# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+::lshift ::argv
 
 eval [concat main $argv]
 

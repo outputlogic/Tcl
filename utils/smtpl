@@ -1,11 +1,11 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -15,11 +15,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
+## Version:        2016.04.04
 ## Description:    Utility to manipulate Smart Templates
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.04 - Modified sh exec command to execute script
 ## 2015.10.17 - Added support for PHP post-processing
 ##            - Added -nophp/-nopp command line option
 ##            - Added -opp command line option
@@ -61,7 +63,7 @@ proc main {args} {
 
   set verbose 0
   set debug 0
-  set SCRIPT_VERSION {10-17-2015}
+  set SCRIPT_VERSION {2016.04.04}
 
   set ifilename {}
   set ofilename {}
@@ -376,6 +378,9 @@ proc main {args} {
 
   return -code ok
 }
+
+# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+::lshift ::argv
 
 eval [concat main $argv]
 

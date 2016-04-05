@@ -1,6 +1,6 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 ####################################################################################################
 # HEADER_BEGIN
@@ -15,12 +15,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.03.25
+## Version:        2016.04.04
 ## Description:    Utility to manipulate CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.03.25 - Added support for -callback
 ##            - Added support for -remove_columns
 ##            - Added support for -add_column
@@ -50,7 +51,7 @@ namespace eval ::tb::utils {
 namespace eval ::tb::utils::csvutils {
   namespace export csvutils
 
-  variable version {2016.03.25}
+  variable version {2016.04.04}
   variable channel {}
   variable callbackfile {}
   array set params [list indent 0 maxlines -1 verbose 0 debug 0 addcolumns {} ]
@@ -852,6 +853,8 @@ if {[file tail [info script]]!=[file tail $argv0]} {
   if {!$QUIET} { puts " INFO - sourcing [info script]" }
 #   ::tb::utils::csvutils::csvutils
 } else {
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  ::tb::utils::csvutils::lshift ::argv
   if {[catch {eval [concat ::tb::utils::csvutils::csvutils $argv]} errorstring]} {
     puts $errorstring
     exit 1

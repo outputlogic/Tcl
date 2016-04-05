@@ -1,6 +1,36 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2016.04.04
+## Description:    Utility to manipulate Smart Templates
+##
+########################################################################################
+
+########################################################################################
+## 2016.04.04 - Modified sh exec command to execute script
+## 2015.10.17 - Added support for PHP post-processing
+##            - Added -nophp/-nopp command line option
+##            - Added -opp command line option
+## 2015.04.16 - Initial release
+########################################################################################
+
+# #!/bin/sh
+# # Run smtpl from the users PATH \
+# exec smtpl -offset $LINENO -i "$0" ${1+"$@"} --<VAR>=<Default_Value> ... (e.g --ROOTDIR=`pwd`)
 
 set WDIR [file dirname [file normalize [info script]]]
 
@@ -11,7 +41,7 @@ proc lshift { inputlist } {
   return $arg
 }
 
-proc getListVars { str } {
+proc getTemplateVars { str } {
   set res [lsort -unique [regexp -inline -all -- {\%\{[^\{\}\s\%]+\}} $str]]
   set matches [list]
   foreach el $res {
@@ -22,18 +52,32 @@ proc getListVars { str } {
   return $matches
 }
 
+proc in { L elm } {
+  foreach e $L {
+    if {$elm == [lindex $e 0] } { return 1 }
+  }
+  return 0
+}
+
 proc main {args} {
 
   set verbose 0
   set debug 0
-  set SCRIPT_VERSION {04-14-2015}
+  set SCRIPT_VERSION {2016.04.04}
 
   set ifilename {}
   set ofilename {}
-  set mode {strict} ; # strict | loose
-  set action {replace} ; # replace | check
+  # File to save template after variables replacement and before 
+  # PHP post-processing
+  set oppfilename {}
+  set mode {default} ; # default | string
+  set action {replace} ; # replace | list | interactive
+  set phpPostProcess 1
   set force 0
-  set strings [list]
+  # Number of lines to skip
+  set offset 0
+  catch {unset templateVar}
+  catch {unset templateDefault}
   set error 0
   set show_help 0
   if {[llength $args] == 0} {
@@ -51,25 +95,40 @@ proc main {args} {
       {^-o$} {
         set ofilename [lshift args]
       }
-      {^-l$} -
-      {^-loose$} -
-      {^-l(o(o(se?)?)?)?$} {
-          set mode {loose}
+      {^-opp$} {
+        set oppfilename [lshift args]
       }
-      {^-s$} -
-      {^-strict$} -
-      {^-s(t(r(i(ct?)?)?)?)?$} {
-          set mode {strict}
+      {^-m$} -
+      {^-mode$} -
+      {^-m(o(de?)?)?$} {
+          set mode [string tolower [lshift args]]
+      }
+      {^-S$} {
+          set mode {string}
+      }
+      {^-offset$} {
+          set offset [lshift args]
       }
       {^-f$} -
       {^-force$} -
       {^-f(o(r(ce?)?)?)?$} {
           set force 1
       }
-      {^-c$} -
-      {^-check$} -
-      {^-c(h(e(ck?)?)?)?$} {
-          set action {check}
+      {^-l$} -
+      {^-list$} -
+      {^-l(i(st?)?)?$} {
+          set action {list}
+      }
+      {^-I$} -
+      {^-a$} -
+      {^-ask$} -
+      {^-a(sk?)?$} {
+          set action {interactive}
+      }
+      {^-nopp$} -
+      {^-nophp$} -
+      {^-nopostprocessing$} {
+          set phpPostProcess 0
       }
       {^-v$} -
       {^-verbose$} -
@@ -88,12 +147,16 @@ proc main {args} {
           incr show_help
       }
       default {
-          if {[string match "-*" $name]} {
-#             puts " -E- option '$name' is not a valid option"
-#             incr error
+          if {[string match "--*" $name]} {
+            if {[regexp {^\-\-(.+)=(.*)\s*$} $name - var value]} {
+              set templateDefault($var) $value
+            } else {
+              puts " -E- option '$name' is not a valid option"
+              incr error
+            }
+          } elseif {[string match "-*" $name]} {
             if {[regexp {^\-(.+)=(.*)\s*$} $name - var value]} {
-              lappend strings [list $var $value]
-# puts "<$var>=<$value>"
+              set templateVar($var) $value
             } else {
               puts " -E- option '$name' is not a valid option"
               incr error
@@ -112,20 +175,33 @@ proc main {args} {
       Usage: smtpl
                   -i <filename>
                   [-o <filename>]
-                  [-strict|-s][-loose|-l]
-                  [-check|-c]
+                  [-opp <filename>]
+                  [-mode <default|string>][-S]
+                  [-list|-l]
                   [-force|-f]
+                  [-ask|-a|-I]
+                  [-nopp]
                   [-verbose|-v]
                   [-help|-h]
 
-      Description: Smart template
+      Description: Smart template utility
 
       Version: %s
 
-        xxx
+        Use -list to list all the template variables.
+        Use -I/-ask to run in interactive mode.
+        Use -nopp to prevent PHP post-processing.
+        Use -opp to specify a filename to save the template before PHP
+        post-processing.
+
+        By default, the template variables must be in the format %%{<VAR>}
+        To replace any string in the template regardeless off the above
+        format, use -S or -mode string
 
       Example:
-         smtpl -i <filename> -o <filename> -dir=/home/dpefour
+         smtpl -i <filename> -o <filename> -DIR=/home/dpefour
+         smtpl -i <filename> -o <filename> -I
+         smtpl -i <filename> -o <filename> -DIR=/home/dpefour -nopp
     } $SCRIPT_VERSION ]
     # HELP -->
 
@@ -155,6 +231,29 @@ proc main {args} {
     }
   }
 
+  if {$oppfilename != {}} {
+    if {[file exists $oppfilename] && !$force} {
+      puts " -E- filename '$oppfilename' already exists"
+      incr error
+    } else {
+      set dir [file normalize [file dirname $oppfilename]]
+      if {![file isdirectory $dir] && !$force} {
+        puts " -E- directory '$dir' does not exist (-force)"
+        incr error
+      }
+    }
+  }
+
+  switch $mode {
+    "default" -
+    "string" {
+    }
+    default {
+      puts " -E- invalid mode '$mode'. Valid modes: default string"
+      incr error
+    }
+  }
+
   if {$error} {
     puts "\n Some error(s) occured. Cannot continue.\n"
     exit -1
@@ -164,15 +263,49 @@ proc main {args} {
   set content [read $FH]
   close $FH
 
+  # Skip the first $offset lines of the script
+  set content [join [lrange [split $content \n] $offset end] \n]
+
+  if {$action == {interactive}} {
+    set vars [getTemplateVars $content]
+    foreach var $vars {
+      if {[info exists templateVar($var)]} {
+        puts stdout " -I- Skipping '$var'"
+        continue
+      }
+      if {[info exists templateDefault($var)]} {
+        puts -nonewline " \[$var\]\[$templateDefault($var)\] : "
+        flush stdout
+        gets stdin line
+        if {[regexp {^$} $line]} {
+          set line $templateDefault($var)
+        }
+      } else {
+        puts -nonewline " \[$var\] : "
+        flush stdout
+        gets stdin line
+        # Skip empty answers
+        if {[regexp {^$} $line]} { continue }
+      }
+      set answer [string trim $line]
+      set templateVar($var) $answer
+    }
+    set action {replace}
+  }
+
   switch $action {
     replace {
-      set vars [getListVars $content]
-      foreach s $strings {
-        foreach {var value} $s { break }
-        if {[lsearch $vars $var] == -1} {
-          puts " -W- Invalid template variable '$var'"
+      set vars [getTemplateVars $content]
+      foreach var [lsort -unique [concat [array names templateDefault] [array names templateVar]]] {
+        if {[info exists templateVar($var)]} {
+          set value $templateVar($var)
+        } else {
+          set value $templateDefault($var)
         }
-        if {$mode == {strict}} {
+        if {[lsearch $vars $var] == -1} {
+          puts stdout " -W- Invalid template variable '$var'"
+        }
+        if {$mode == {default}} {
           # %{var}
           set count [regsub -all -- [format {%%{%s}} $var] $content $value content]
         } else {
@@ -180,14 +313,40 @@ proc main {args} {
           set count [regsub -all -- [format {%s} $var] $content $value content]
         }
         if {!$count} {
-          puts " -W- No replacement for '$var'"
+          puts stdout " -W- No replacement for '$var'"
         } else {
-          puts " -I- '$var' : $count instance(s)"
+          puts stdout " -I- '$var' : $count instance(s)"
         }
       }
-      set matches [getListVars $content]
+      set matches [getTemplateVars $content]
       if {$matches != [list]} {
-        puts stderr " -W- Some template variable(s) have not been substituted: $matches"
+        puts stdout " -W- Some template variable(s) have not been substituted: $matches"
+      }
+
+      # Save the template before it gets post-process by PHP
+      if {$oppfilename != {}} {
+        set dir [file normalize [file dirname $oppfilename]]
+        if {![file isdirectory $dir]} {
+          puts " -I- Creating directory $dir"
+          file mkdir $dir
+        }
+        set FH [open $oppfilename {w}]
+        puts $FH $content
+        close $FH
+        exec chmod --reference $ifilename $oppfilename
+        puts " -I- File [file normalize $oppfilename] created"
+      } else {
+        puts $content
+      }
+
+      if {$phpPostProcess} {
+        if {[catch {
+          set res [exec php -n [format {<<%s} $content] ]
+          # Replace the content by the PHP stdout
+          set content $res
+        } errorstring]} {
+          puts " -W- PHP post-processing failed: $errorstring"
+        }
       }
 
       if {$ofilename != {}} {
@@ -199,15 +358,16 @@ proc main {args} {
         set FH [open $ofilename {w}]
         puts $FH $content
         close $FH
+        exec chmod --reference $ifilename $ofilename
         puts " -I- File [file normalize $ofilename] created"
       } else {
         puts $content
       }
 
     }
-    check {
+    list {
       puts " -I- Template: [file normalize $ifilename]"
-      set matches [getListVars $content]
+      set matches [getTemplateVars $content]
       puts " -I- List of template variables:"
       foreach el $matches {
         puts "       $el"
@@ -218,6 +378,9 @@ proc main {args} {
 
   return -code ok
 }
+
+# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+::lshift ::argv
 
 eval [concat main $argv]
 

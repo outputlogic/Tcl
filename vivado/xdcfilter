@@ -1,6 +1,6 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 if {[file tail [info script]]!=[file tail $argv0]} {
   # This file is sourced
@@ -45,6 +45,9 @@ proc debug { body } {
 ##
 ###########################################################################
 ###########################################################################
+
+# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+::lshift ::argv
 
 set xdcfilein {}
 set xdcfileout {}

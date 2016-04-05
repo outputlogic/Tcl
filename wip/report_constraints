@@ -1,6 +1,6 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 ####################################################################################################
 # HEADER_BEGIN
@@ -18,11 +18,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
+## Version:        2016.04.04
 ## Description:    Constraints summary from XDC or DCP
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.03.07 - Fixed issue with bus bits reported as constraint
 ## 2016.01.28 - Ordered XDC files when reading DCP
 ## 2016.01.26 - Renamed script to report_constraints
@@ -102,7 +104,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_constraints {
   namespace export -force report_constraints
-  variable version {2016.03.07}
+  variable version {2016.04.04}
   variable params
   variable output {}
   variable metrics
@@ -949,6 +951,8 @@ proc ::Table::list2csv { list {sepChar ,} } {
 if {[file tail [info script]]!=[file tail $argv0]} {
   # This file is sourced
 } else {
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  ::tb::utils::report_constraints::lshift ::argv
   if {[catch {eval [concat ::tb::utils::report_constraints::report_constraints -standalone $argv]} errorstring]} {
     puts $errorstring
     exit 1
