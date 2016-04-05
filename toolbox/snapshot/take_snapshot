@@ -601,8 +601,8 @@ if {$debug} { set cmdLine [concat $cmdLine -debug] }
 if {$standalone} {
   if {[catch {
 #     source /home/dpefour/git/scripts/wip/snapshot/snapshot
-    lappend auto_path /home/dpefour/git/scripts/wip/snapshot
-#     lappend auto_path /home/dpefour/git/scripts/toolbox/snapshot
+#     lappend auto_path /home/dpefour/git/scripts/wip/snapshot
+    lappend auto_path /home/dpefour/git/scripts/toolbox/snapshot
     package require snapshot
     eval [concat snapshot configure $cmdLine]
     if {$reportTimingSummary != {}} {
@@ -665,7 +665,7 @@ set rrs {%s}
 # lappend auto_path /home/dpefour/git/scripts/toolbox/snapshot
 # package require snapshot
 # package require extract
-source /home/dpefour/git/scripts/wip/snapshot/snapshot
+# source /home/dpefour/git/scripts/wip/snapshot/snapshot
 } [clock format [clock seconds]] \
   $cmdLineArguments \
   $checkpoint \
