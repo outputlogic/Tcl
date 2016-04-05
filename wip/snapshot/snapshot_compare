@@ -1,11 +1,11 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -15,12 +15,13 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.12.17
+## Version:        2016.04.04
 ## Description:    Example script to compare multiple snapshots from snapshot database
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.04 - Modified sh exec command to execute script
 ## 2015.12.17 - Reformatted the script so that it can be used standalone or as a
 ##              plugin to the command 'snapshot'
 ## 2015.04.21 - Added support for report_clock_interaction
@@ -800,6 +801,8 @@ if {[file tail [info script]]!=[file tail $argv0]} {
 } else {
   # This file is executed to be used as standalone
   if {[catch {package present toolbox}]} { package require toolbox }
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  ::tb::snapshot::lshift ::argv
   if {[catch {eval [concat ::tb::snapshot::compare -standalone $argv]} errorstring]} {
     puts $errorstring
     exit 1

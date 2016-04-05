@@ -1,8 +1,9 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 ########################################################################################
+## 2016.04.04 - Modified sh exec command to execute script
 ## 2015.12.17 - Added support for -rci/-ru
 ## 2015.12.15 - Minor fix to enable on-file timing reports to be used with a DCP
 ## 2015.12.14 - Added support for -nodcp/-rts/-rda/-rrs
@@ -278,6 +279,9 @@ set data(log_fh) {}
 #-------------------------------------------------------
 # Process command line arguments for take_snapshot
 #-------------------------------------------------------
+
+# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+lshift ::argv
 
 foreach el {db project release version experiment step run description log time timeout} { set $el {} }
 set checkpoint {}
