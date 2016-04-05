@@ -5,7 +5,7 @@ exec tclsh "$0" "$@"
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -15,13 +15,16 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.12.17
+## Version:        2016.02.04
 ## Tool Version:   Vivado 2014.1
 ## Description:    This utility provides a simple way to extract and save metrics
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.02.04 - Added methods 'serialize'/'deserialize'
+##            - Improved reporting when database locks
+##            - Set SQL timeout when opening the database
 ## 2015.12.17 - Renamed namespace variable to prevent name collision with plugin
 ## 2015.12.15 - Added -noreset to 'take_snapshot'
 ##            - Minor reformatting (tabs->spaces)
@@ -391,7 +394,7 @@ proc ::tb::snapshot::take_snapshot { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::snapshot {
-  variable version {2015.12.17}
+  variable version {2016.02.04}
   variable params
   variable metrics
   variable metricTypes
@@ -682,7 +685,7 @@ proc ::tb::snapshot::SQLInit {args} {
 }
 
 #------------------------------------------------------------------------
-# ::tb::snapshot::SQLPragmasSQLPragmas
+# ::tb::snapshot::SQLPragmas
 #------------------------------------------------------------------------
 # **INTERNAL**
 #------------------------------------------------------------------------
@@ -1301,21 +1304,32 @@ proc ::tb::snapshot::execSQL {&SQL {cmd {pragma integrity_check} } } {
   }
 
   set loop 0
+  set first 1
+  set sleep 5
+  set timeout [expr $params(timeout) / $sleep]
   # Wait for the database to be unlocked
 #   while {[catch { uplevel [list ${&SQL} eval $cmd] } errorstring]} {}
   while {[catch { set res [uplevel [list ${&SQL} eval $cmd]] } errorstring]} {
     if {[regexp {database is locked} $errorstring]} {
-      if {$verbose} { print info "SQL database locked ..." }
-      exec sleep 1
+      if {$verbose} { 
+      	print info "SQL database locked \[$loop/$timeout\] \[[clock format [clock seconds]]\] ..." 
+      	if {$first} { print info "SQL command: $cmd" }
+      	set first 0
+      }
+      exec sleep $sleep
       incr loop
     } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
-      if {$verbose} { print info "SQL database read-only ..." }
-      exec sleep 1
+      if {$verbose} { 
+      	print info "SQL database read-only  \[$loop/\$timeout] \[[clock format [clock seconds]]\] ..." 
+      	if {$first} { print info "SQL command: $cmd" }
+      	set first 0
+      }
+      exec sleep $sleep
       incr loop
     } else {
       error $errorstring
     }
-    if {$loop > $params(timeout)} { set res {}; break }
+    if {$loop > $timeout} { set res {}; break }
   }
 #   return 0
   return $res
@@ -1413,6 +1427,7 @@ proc ::tb::snapshot::method:save {args} {
   }
 #   catch {file delete $db}
   sqlite3 SQL $db -create true
+  SQL timeout 1000
   # Add the PARAGMAs
   execSQL SQL [::tb::snapshot::SQLPragmas]
   # Add the TABLEs
@@ -2461,6 +2476,7 @@ proc ::tb::snapshot::method:db2array {&var snapshotid} {
     print info "Database: $db"
   }
   sqlite3 SQL $db -readonly true
+  SQL timeout 1000
   execSQL SQL { pragma integrity_check }
   set dbVersion [execSQL SQL { SELECT value FROM param WHERE property='version' LIMIT 1; } ]
   if {$verbose} { print info "Database version: $dbVersion" }
@@ -2523,6 +2539,55 @@ proc ::tb::snapshot::method:db2array {&var snapshotid} {
   SQL close
   if {$verbose} {
     print info ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::snapshot::method:serialize
+#------------------------------------------------------------------------
+# Usage: snapshot serialize
+#------------------------------------------------------------------------
+# Return the list of metrics and values
+#------------------------------------------------------------------------
+proc ::tb::snapshot::method:serialize {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Export list of metrics
+  variable metrics
+  if {[llength $args] != 0} {
+    error "wrong number of parameters: snapshot serialize"
+  }
+  set L [array get metrics]
+  return $L
+}
+
+#------------------------------------------------------------------------
+# ::tb::snapshot::method:deserialize
+#------------------------------------------------------------------------
+# Usage: snapshot deserialize <list>
+#------------------------------------------------------------------------
+# Set metrics based on input list
+#------------------------------------------------------------------------
+proc ::tb::snapshot::method:deserialize {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Import list of metrics
+  variable metrics
+  if {[llength $args] != 1} {
+    error "wrong number of parameters: snapshot deserialize <list_pair_metric_value>"
+  }
+  if {[catch {
+    array set ar [lindex $args 0]
+    foreach key [lsort [array names ar]] {
+    	::tb::snapshot::method:set $key $ar($key)
+    }
+  } errorstring]} {
+  	error $errorstring
   }
   return -code ok
 }
@@ -2690,6 +2755,7 @@ proc ::tb::snapshot::dbreport {args} {
     print info "Database: $db"
   }
   sqlite3 SQL $db -readonly true
+  SQL timeout 1000
   execSQL SQL { pragma integrity_check }
   set dbVersion [execSQL SQL { SELECT value FROM param WHERE property='version' LIMIT 1; } ]
   if {$verbose} {
