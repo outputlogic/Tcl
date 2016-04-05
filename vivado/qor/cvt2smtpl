@@ -1,6 +1,6 @@
 #!/bin/sh
 # use -*-Tcl-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 # Convert a file to a template:
 #    cvs2smtpl -i <input file> -o <output file> [-<string>=<value>] [-<string>=<value>] ...
@@ -200,6 +200,9 @@ proc main {args} {
 
   return -code ok
 }
+
+# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+::lshift ::argv
 
 eval [concat main $argv]
 

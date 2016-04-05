@@ -1,6 +1,6 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 ####################################################################################################
 # HEADER_BEGIN
@@ -376,6 +376,9 @@ proc main {args} {
 
   return -code ok
 }
+
+# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+::lshift ::argv
 
 eval [concat main $argv]
 
