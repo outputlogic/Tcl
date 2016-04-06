@@ -15,12 +15,13 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.04
+## Version:        2016.04.06
 ## Description:    Utility to manipulate CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.06 - Added support for -trim
 ## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.03.25 - Added support for -callback
 ##            - Added support for -remove_columns
@@ -51,7 +52,7 @@ namespace eval ::tb::utils {
 namespace eval ::tb::utils::csvutils {
   namespace export csvutils
 
-  variable version {2016.04.04}
+  variable version {2016.04.06}
   variable channel {}
   variable callbackfile {}
   array set params [list indent 0 maxlines -1 verbose 0 debug 0 addcolumns {} ]
@@ -210,7 +211,7 @@ proc ::tb::utils::csvutils::callback { row } {
 ##-----------------------------------------------------------------------
 ## Convert a CSV string to a Tcl list based on a field separator
 ##-----------------------------------------------------------------------
-proc ::tb::utils::csvutils::split-csv { str {sepChar ,} } {
+proc ::tb::utils::csvutils::split-csv { str {sepChar ,} {trim 0} } {
   regsub -all {(\A\"|\"\Z)} $str \0 str
   set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
   set str [string map [list $sepChar\"\"\" $sepChar\0\" \
@@ -233,6 +234,16 @@ proc ::tb::utils::csvutils::split-csv { str {sepChar ,} } {
       incr end
   }
   set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  if {$trim} {
+    # Some CSV are formated with space/tab added as padding between
+    # delimiters. This remove those padding at the start/end of the
+    # cell value
+    set L [list]
+    foreach el [split $str \0] {
+      lappend L [string trim $el]
+    }
+    return $L
+  }
   return [split $str \0]
 }
 
@@ -241,7 +252,7 @@ proc ::tb::utils::csvutils::split-csv { str {sepChar ,} } {
 ##-----------------------------------------------------------------------
 ## Read CSV file and return a Table object
 ##-----------------------------------------------------------------------
-proc ::tb::utils::csvutils::read-csv {&tbl filename {csvDelimiter ,} {parseHeader 1}} {
+proc ::tb::utils::csvutils::read-csv {&tbl filename {csvDelimiter ,} {parseHeader 1} {trim 0}} {
   variable params
   variable channel
   if {![file exists $filename]} {
@@ -257,7 +268,7 @@ proc ::tb::utils::csvutils::read-csv {&tbl filename {csvDelimiter ,} {parseHeade
     if {[regexp {^\s*#} $line]} { continue }
     if {[regexp {^\s*$} $line]} { continue }
     if {$first} {
-      set header [split-csv $line $csvDelimiter]
+      set header [split-csv $line $csvDelimiter $trim]
       if {[subst $${tbl}::header] != {}} {
         # If we are in merge mode, then check that the header for this CSV file
         # does match the existing header
@@ -302,7 +313,7 @@ proc ::tb::utils::csvutils::read-csv {&tbl filename {csvDelimiter ,} {parseHeade
       set first 0
     } else {
       # Call callback proc to decide whether the row should be added or not
-      if {[catch {set L [callback [split-csv $line $csvDelimiter]]} errorstring]} {
+      if {[catch {set L [callback [split-csv $line $csvDelimiter $trim]]} errorstring]} {
         # If an error is catched, then don't add the row
         if {$params(verbose)} {
           puts " -W- Callback failed: $errorstring"
@@ -314,7 +325,7 @@ proc ::tb::utils::csvutils::read-csv {&tbl filename {csvDelimiter ,} {parseHeade
           incr count
         }
       }
-#       $tbl addrow [callback [split-csv $line $csvDelimiter] ]
+#       $tbl addrow [callback [split-csv $line $csvDelimiter $trim] ]
 #       incr count
     }
     # Did we reach the max number of lines to read per CSV?
@@ -428,6 +439,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
   set table {classic}
   set alignment {left}
   set parseHeader 1
+  set trimCell 0
   set transpose 0
   # Add separator between CSV files (merge mode)
   set addseparator 1
@@ -521,6 +533,9 @@ proc ::tb::utils::csvutils::csvutils {args} {
       {^-array$} {
         set outputFormat {array}
       }
+      {^-trim?$} {
+        set trimCell 1
+      }
       {^-ma(x(_(l(i(n(es?)?)?)?)?)?)?$} {
         set params(maxlines) [lshift args]
       }
@@ -595,6 +610,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
                   [-add_column <string>]
                   [-noheader]
                   [-delimiter <csv-delimiter>]
+                  [-trim]
                   [-callback <filename>]
                   [-verbose|-v]
                   [-help|-h]
@@ -619,6 +635,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
         multiple times for multiple columns
         Use -indent to indent the table
         Use -no_separator with -merge to remove separator between CSV files
+        Use -trim to remove space/tab padding around cell values
 
       Example:
          csvutils -input file1.csv -delimiter ';'
@@ -704,13 +721,13 @@ proc ::tb::utils::csvutils::csvutils {args} {
           $tbl separator
         }
       }
-      read-csv tbl $filename $csvDelimiter $parseHeader
+      read-csv tbl $filename $csvDelimiter $parseHeader $trimCell
       set first 0
     } else {
       $tbl reset
       $tbl configure -indent $params(indent)
       $tbl title "CSV: [file normalize $filename]"
-      read-csv tbl $filename $csvDelimiter $parseHeader
+      read-csv tbl $filename $csvDelimiter $parseHeader $trimCell
       if {$outputMode == {multiple}} {
         # Generate the report file
         set ofilename "[file rootname $filename].rpt"
