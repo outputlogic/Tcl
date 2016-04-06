@@ -1,27 +1,37 @@
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
+
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 ########################################################################################
 ##
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.02.24
+## Version:        2016.04.05
 ## Description:    This package provides a simple interactive Tcl shell
 ##
 ########################################################################################
 
 ########################################################################################
-## 02/23/2015 - Initial release
+## 2016.04.05 - Added methods locals/printlocals
+##            - Misc enhancements
+## 2015.02.23 - Initial release
 ########################################################################################
 
-# Shell usage:
-#    ishell    (-help for additional help)
+# Check that Vivado is run in tcl mode
+if {![catch {package require Vivado}]} {
+  if {$rdi::mode!="tcl"} {
+    puts " -E- ishell cannot run in GUI or batch mode"
+    return
+  }
+}
 
 namespace eval ::tb {
     namespace export ishell
@@ -55,9 +65,10 @@ proc ::tb::ishell { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::ishell {
-  variable version {2015.02.24}
+  variable version {2016.04.05}
   catch {unset params}
-  array set params [list level 1 prompt {ishell% } verbose 0 debug 0 enable 1]
+  # The commands need to be uplevel-ed 4 levels to be executed
+  array set params [list level 4 prompt {ishell% } history {} verbose 0 debug 0 enable 1]
 } ]
 
 #------------------------------------------------------------------------
@@ -71,9 +82,11 @@ proc ::tb::ishell::ishell { args } {
   # Return Value:
 
   # Check that Vivado is run in tcl mode
-	if {$rdi::mode!="tcl"} {
-		error "-E- ishell cannot run in GUI or batch mode"
-	}
+  if {![catch {package require Vivado}]} {
+    if {$rdi::mode!="tcl"} {
+      error " -E- ishell cannot run in GUI or batch mode"
+    }
+  }
   #-------------------------------------------------------
   # Process command line arguments
   #-------------------------------------------------------
@@ -232,6 +245,35 @@ proc ::tb::ishell::method:? {args} {
 }
 
 #------------------------------------------------------------------------
+# ::tb::ishell::dump
+#------------------------------------------------------------------------
+# Usage: ishell dump
+#------------------------------------------------------------------------
+# Dump shell status
+#------------------------------------------------------------------------
+proc ::tb::ishell::dump {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Dump non-array variables
+  foreach var [lsort [info var ::tb::ishell::*]] {
+    if {![info exists $var]} { continue }
+    if {![array exists $var]} {
+      puts "   $var: [subst $$var]"
+    }
+  }
+  # Dump array variables
+  foreach var [lsort [info var ::tb::ishell::*]] {
+    if {![info exists $var]} { continue }
+    if {[array exists $var]} {
+      parray $var
+    }
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
 # ::tb::ishell::method:version
 #------------------------------------------------------------------------
 # Usage: ishell version
@@ -263,7 +305,8 @@ proc ::tb::ishell::method:reset {args} {
 
   # Reset the shell
   variable params
-  array set params [list level 1 prompt {ishell% } verbose 0 debug 0 enable 1]
+  # The commands need to be uplevel-ed 4 levels to be executed
+  array set params [list level 4 prompt {ishell% } history {} verbose 0 debug 0 enable 1]
   if {$params(verbose)} { puts " -I- ishell reset" }
   return -code ok
 }
@@ -307,18 +350,75 @@ proc ::tb::ishell::method:disable {args} {
 }
 
 #------------------------------------------------------------------------
+# ::tb::ishell::method:locals
+#------------------------------------------------------------------------
+# Usage: ishell locals
+#------------------------------------------------------------------------
+# Get the list of local variables (excluding arrays)
+#------------------------------------------------------------------------
+proc ::tb::ishell::method:locals {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Get list of local variables (no array)
+  variable params
+  set defaults [list -level 3 -verbose $params(verbose) -debug $params(debug)]
+  array set options $defaults
+  array set options $args
+  if {$options(-debug)} { puts " -D- Level: [info level] (-level=$options(-level))" }
+  set env [dict create]
+  foreach name [lsort [uplevel $options(-level) { info locals }]] {
+    upvar $options(-level) $name var
+    catch { dict set env $name $var } ;# no arrays
+    catch {
+      if {$options(-debug)} {
+        puts " -D- $name \t:=\t$var"
+      }
+    }
+  }
+  return $env
+}
+
+#------------------------------------------------------------------------
+# ::tb::ishell::method:printlocals
+#------------------------------------------------------------------------
+# Usage: ishell printlocals
+#------------------------------------------------------------------------
+# Print the list of local variables (excluding arrays)
+#------------------------------------------------------------------------
+proc ::tb::ishell::method:printlocals {{tag {}}} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Print local variables (no array)
+  variable params
+  if {$params(debug)} { puts " -D- Level: [info level]" }
+  set env [::tb::ishell::method:locals -level 4]
+  foreach {name value} $env {
+    if {$tag != {}} {
+      puts " -I- (${tag}) var $name \t:=\t$value"
+    } else {
+      puts " -I- var $name \t:=\t$value"
+    }
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
 # ::tb::ishell::shell
 #------------------------------------------------------------------------
 # **INTERNAL**
 #------------------------------------------------------------------------
 # Interactive Tcl shell
 #------------------------------------------------------------------------
-proc ::tb::ishell::shell { args } {
+proc ::tb::ishell::shell {args} {
 
   variable params
 
   # Interactive shell
-  set defaults [list -prompt $params(prompt) -level $params(level) -verbose $params(verbose)]
+  set defaults [list -prompt $params(prompt) -level $params(level) -verbose $params(verbose) -debug $params(debug)]
   array set options $defaults
   array set options $args
   set command {}
@@ -326,6 +426,7 @@ proc ::tb::ishell::shell { args } {
   # The following message is not saved in the log file.
   #-------------------------------------------------------
   if {$options(-verbose)} { puts "\n  Interactive Tcl shell. Type '?' for help.\n" }
+  if {$options(-debug)} { puts " -I- Level: [info level]" }
   while 1 {
     puts -nonewline $options(-prompt)
     flush stdout
@@ -335,22 +436,58 @@ proc ::tb::ishell::shell { args } {
     # Check that the command is complete before executing it.
     #-------------------------------------------------------
     if {[info complete $command]} {
-      if {[regexp {^\s*(exit|quit)\s*$} $command]} {
+      if {[regexp {^\s*(exit|quit|q)\s*$} $command]} {
         break
+      }
+      # <empty line>
+      if {[regexp {^\s*$} $command]} {
+        set command {}
+        continue
+      }
+      # history
+      if {[regexp {^\s*(history|h)\s*$} $command]} {
+        set idx 0
+        foreach cmd $params(history) {
+          puts " [incr idx] $cmd"
+        }
+        set command {}
+        continue
+      }
+      # !<num>
+      if {[regexp {^\s*\!([0-9]+)\s*$} $command -- idx]} {
+        if {$idx > [llength $params(history)]} {
+          puts " -I- $idx: Event not found."
+          set command {}
+          continue
+        } else {
+          set command [lindex $params(history) [expr $idx -1]]
+        }
+      }
+      # !!
+      if {[regexp {^\s*\!\!\s*$} $command]} {
+        set command [lindex $params(history) end]
       }
       if {[regexp {^\s*\?\s*$} $command]} {
 
         puts [format {
               +-- shell --+
-      exit|quit             exit shell
+      exit|quit             exit interactive shell
+      history               commands history
+      !!                    recall last command
+      !<num>                recall command <num>
 }]
         set command {}
         continue
       }
       #-------------------------------------------------------
-      # Command executed at level #0.
+      # Command executed at upper level.
       #-------------------------------------------------------
-      catch {uplevel $options(-level) $command} res
+      if {[catch {uplevel $options(-level) $command} res]} {
+        # Command errored out
+      } else {
+        # Command completed successfully
+        lappend params(history) $command
+      }
       if {$res != {}} {
         puts $res
       }
@@ -417,17 +554,20 @@ proc ::tb::ishell::method:start {args} {
   if {$help} {
     puts [format {
   Usage: ishell start
+              [-prompt <string>|-p <string>]
+              [-name <string>|-n <string>]
               [-help|-h]
 
   Description: Start the interactive shell
 
   Example:
      ishell start
+     ishell start -prompt {debug%% }
 } ]
     # HELP -->
     return {}
   }
-  
+
   if {$params(enable) == 0} {
     if {$params(verbose)} { puts " -I- ishell disabled" }
     return -code ok

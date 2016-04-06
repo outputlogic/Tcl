@@ -1,24 +1,37 @@
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
+
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 ########################################################################################
 ##
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2015.02.24
+## Version:        2016.04.05
 ## Description:    This package provides a simple interactive Tcl shell
 ##
 ########################################################################################
 
 ########################################################################################
-## 02/23/2015 - Initial release
+## 2016.04.05 - Added methods locals/printlocals
+##            - Misc enhancements
+## 2015.02.23 - Initial release
 ########################################################################################
+
+# Check that Vivado is run in tcl mode
+if {![catch {package require Vivado}]} {
+  if {$rdi::mode!="tcl"} {
+    puts " -E- ishell cannot run in GUI or batch mode"
+    return
+  }
+}
 
 namespace eval ::tb {
     namespace export ishell
@@ -52,7 +65,7 @@ proc ::tb::ishell { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::ishell {
-  variable version {2015.02.24}
+  variable version {2016.04.05}
   catch {unset params}
   # The commands need to be uplevel-ed 4 levels to be executed
   array set params [list level 4 prompt {ishell% } history {} verbose 0 debug 0 enable 1]
@@ -68,6 +81,12 @@ proc ::tb::ishell::ishell { args } {
   # Argument Usage:
   # Return Value:
 
+  # Check that Vivado is run in tcl mode
+  if {![catch {package require Vivado}]} {
+    if {$rdi::mode!="tcl"} {
+      error " -E- ishell cannot run in GUI or batch mode"
+    }
+  }
   #-------------------------------------------------------
   # Process command line arguments
   #-------------------------------------------------------
@@ -331,13 +350,70 @@ proc ::tb::ishell::method:disable {args} {
 }
 
 #------------------------------------------------------------------------
+# ::tb::ishell::method:locals
+#------------------------------------------------------------------------
+# Usage: ishell locals
+#------------------------------------------------------------------------
+# Get the list of local variables (excluding arrays)
+#------------------------------------------------------------------------
+proc ::tb::ishell::method:locals {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Get list of local variables (no array)
+  variable params
+  set defaults [list -level 3 -verbose $params(verbose) -debug $params(debug)]
+  array set options $defaults
+  array set options $args
+  if {$options(-debug)} { puts " -D- Level: [info level] (-level=$options(-level))" }
+  set env [dict create]
+  foreach name [lsort [uplevel $options(-level) { info locals }]] {
+    upvar $options(-level) $name var
+    catch { dict set env $name $var } ;# no arrays
+    catch {
+      if {$options(-debug)} {
+        puts " -D- $name \t:=\t$var"
+      }
+    }
+  }
+  return $env
+}
+
+#------------------------------------------------------------------------
+# ::tb::ishell::method:printlocals
+#------------------------------------------------------------------------
+# Usage: ishell printlocals
+#------------------------------------------------------------------------
+# Print the list of local variables (excluding arrays)
+#------------------------------------------------------------------------
+proc ::tb::ishell::method:printlocals {{tag {}}} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Print local variables (no array)
+  variable params
+  if {$params(debug)} { puts " -D- Level: [info level]" }
+  set env [::tb::ishell::method:locals -level 4]
+  foreach {name value} $env {
+    if {$tag != {}} {
+      puts " -I- (${tag}) var $name \t:=\t$value"
+    } else {
+      puts " -I- var $name \t:=\t$value"
+    }
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
 # ::tb::ishell::shell
 #------------------------------------------------------------------------
 # **INTERNAL**
 #------------------------------------------------------------------------
 # Interactive Tcl shell
 #------------------------------------------------------------------------
-proc ::tb::ishell::shell { args } {
+proc ::tb::ishell::shell {args} {
 
   variable params
 
@@ -360,7 +436,7 @@ proc ::tb::ishell::shell { args } {
     # Check that the command is complete before executing it.
     #-------------------------------------------------------
     if {[info complete $command]} {
-      if {[regexp {^\s*(exit|quit)\s*$} $command]} {
+      if {[regexp {^\s*(exit|quit|q)\s*$} $command]} {
         break
       }
       # <empty line>
@@ -369,7 +445,7 @@ proc ::tb::ishell::shell { args } {
         continue
       }
       # history
-      if {[regexp {^\s*(history)\s*$} $command]} {
+      if {[regexp {^\s*(history|h)\s*$} $command]} {
         set idx 0
         foreach cmd $params(history) {
           puts " [incr idx] $cmd"
