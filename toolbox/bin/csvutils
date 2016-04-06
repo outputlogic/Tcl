@@ -2,6 +2,9 @@
 # use -*-TCL-*- \
 exec tclsh "$0" -- ${1+"$@"}
 
+# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+set ::argv [lrange $::argv 1 end]
+
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
@@ -22,6 +25,8 @@ exec tclsh "$0" -- ${1+"$@"}
 
 ########################################################################################
 ## 2016.04.06 - Added support for -trim
+##            - Added support for -force
+##            - Added support for -backup
 ## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.03.25 - Added support for -callback
 ##            - Added support for -remove_columns
@@ -204,6 +209,38 @@ proc ::tb::utils::csvutils::callback { row } {
   # E.g:
   #  if {[lindex $row 11] == {1}} { return {} }
   return $row
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::csvutils::backup_file
+#------------------------------------------------------------------------
+# Backup a file by renaming the file to <filename>.<index>.<extension>.
+# The function searchs for the first available <index> number.
+#------------------------------------------------------------------------
+proc ::tb::utils::csvutils::backup_file { filename } {
+  set filename [file normalize $filename]
+
+  if {![file exists $filename]} {
+    puts " -W- File '$filename' does not exist"
+    return 0
+  }
+
+  set rootname [file rootname $filename]
+  set extension [file extension $filename]
+
+  set index 1
+
+  while {1} {
+    if {![file exists ${rootname}.${index}${extension}]} {
+      break
+    }
+    incr index
+  }
+
+  puts " -I- Backing up file $filename to ${rootname}.${index}${extension}"
+  set exitCode [file rename -force -- $filename ${rootname}.${index}${extension}]
+
+  return $exitCode
 }
 
 ##-----------------------------------------------------------------------
@@ -432,6 +469,8 @@ proc ::tb::utils::csvutils::csvutils {args} {
   set mode {w}
   set csvDelimiter {,}
   set merge 0
+  set force 0
+  set backup 0
   set stdout 0
   set outputMode {multiple} ; # single|multiple|stdout
   set outputFormat {table}
@@ -489,6 +528,12 @@ proc ::tb::utils::csvutils::csvutils {args} {
       {^-m(e(r(ge?)?)?)?$} {
         set merge 1
       }
+      {^-fo(r(ce?)?)?$} {
+        set force 1
+      }
+      {^-ba(c(k(up?)?)?)?$} {
+        set backup 1
+      }
       {^-no(_(s(e(p(a(r(a(t(or?)?)?)?)?)?)?)?)?)?$} {
         set addseparator 0
       }
@@ -532,6 +577,9 @@ proc ::tb::utils::csvutils::csvutils {args} {
       }
       {^-array$} {
         set outputFormat {array}
+      }
+      {^-table$} {
+        set outputFormat {table}
       }
       {^-trim?$} {
         set trimCell 1
@@ -595,17 +643,21 @@ proc ::tb::utils::csvutils::csvutils {args} {
                   [<filename> [<filename> ...]]
                   [-input <filename> [<filename> ...]]
                   [-output <filename>]
+                  [-stdout]
+                  [-append]
+                  [-force]
+                  [-backup]
+              +--------------------+
                   [-format classic|lean][-lean][-classic]
                   [-align_left|-left]
                   [-align_right|-right]
-                  [-csv][-tcl][-list][-array]
-                  [-stdout]
-                  [-append]
+                  [-csv][-tcl][-list][-array][-table]
                   [-merge]
+                  [-transpose]
+              +--------------------+
                   [-no_separator]
                   [-max_lines <num>]
                   [-indent <num>]
-                  [-transpose]
                   [-remove_columns <pattern>]
                   [-add_column <string>]
                   [-noheader]
@@ -630,12 +682,13 @@ proc ::tb::utils::csvutils::csvutils {args} {
         Use -max_lines to limit the number of lines imported per CSV
         Use -remove_columns to remove columns from CSV
         Use -callback to provide a callback proc for processing rows. the
-        file should have a proc 'proc callback {row} { ... return $row }'
+          file should have a proc 'proc callback {row} { ... return $row }'
         Use -add_column to append a column to the header. The option can be used
-        multiple times for multiple columns
+          multiple times for multiple columns
         Use -indent to indent the table
         Use -no_separator with -merge to remove separator between CSV files
         Use -trim to remove space/tab padding around cell values
+        Use -backup with -force to backup file before overriding
 
       Example:
          csvutils -input file1.csv -delimiter ';'
@@ -664,9 +717,19 @@ proc ::tb::utils::csvutils::csvutils {args} {
     }
   }
 
-  if  {$stdout && $ofilename != {}} {
+  if {$backup && !$force} {
+    puts " -E- -backup must be used with -force"
+    incr error
+  }
+
+  if {$stdout && $ofilename != {}} {
     puts " -E- -output and -stdout are mutually exclusive"
     incr error
+  } elseif {$ofilename != {}} {
+    if {[file exists $ofilename] && !$force} {
+      puts " -E- file $ofilename already exist. Use -force to override"
+      incr error
+    }
   }
 
   if {![regexp {^-?[0-9]+$} $params(maxlines)]} {
@@ -697,6 +760,9 @@ proc ::tb::utils::csvutils::csvutils {args} {
   } else {
     # Generate a single report file for all the CSV files
     set outputMode {single}
+    if {$backup && [file exists $ofilename]} {
+      backup_file $ofilename
+    }
     if {[catch {set channel [open $ofilename $mode]} errorstring]} {
       error " -E- $errorstring"
 #       exit 1
@@ -731,6 +797,13 @@ proc ::tb::utils::csvutils::csvutils {args} {
       if {$outputMode == {multiple}} {
         # Generate the report file
         set ofilename "[file rootname $filename].rpt"
+        if {[file exists $ofilename] && !$force} {
+          puts " -W- file $ofilename already exist. Use -force to override"
+          continue
+        }
+        if {$backup && [file exists $ofilename]} {
+          backup_file $ofilename
+        }
         if {[catch {set channel [open $ofilename $mode]} errorstring]} {
           puts " -E- skipping file '$filename' due to following error:"
           puts " -E- $errorstring"
@@ -789,6 +862,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
       }
       if {$outputMode == {multiple}} {
         close $channel
+        puts " -I- Generated file [file normalize $ofilename]"
         set channel {}
       }
     }
@@ -844,7 +918,10 @@ proc ::tb::utils::csvutils::csvutils {args} {
     }
   }
 
-  if {($channel != {stdout}) && ($channel != {})} { close $channel }
+  if {($channel != {stdout}) && ($channel != {})} {
+    close $channel
+    puts " Generated file [file normalize $ofilename]"
+  }
 
   return -code ok
 }
@@ -870,8 +947,6 @@ if {[file tail [info script]]!=[file tail $argv0]} {
   if {!$QUIET} { puts " INFO - sourcing [info script]" }
 #   ::tb::utils::csvutils::csvutils
 } else {
-  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
-  ::tb::utils::csvutils::lshift ::argv
   if {[catch {eval [concat ::tb::utils::csvutils::csvutils $argv]} errorstring]} {
     puts $errorstring
     exit 1
