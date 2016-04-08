@@ -1,0 +1,1681 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" -- ${1+"$@"}
+
+# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+set ::argv [lrange $::argv 1 end]
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2016.04.08
+## Description:    Utility to convert Vivado report(s) into CSV file(s)
+##
+########################################################################################
+
+########################################################################################
+## 2016.04.08 - Initial release
+########################################################################################
+
+# if {[file tail [info script]]!=[file tail $argv0]} {
+#   # This file is sourced
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+# }
+
+if {[catch {package require prettyTable}]} {
+  lappend auto_path {/home/dpefour/git/scripts/toolbox}
+  package require prettyTable
+}
+
+namespace eval ::tb {}
+
+namespace eval ::tb::utils {
+  namespace export -force rptutils
+}
+
+namespace eval ::tb::utils::rptutils {
+  namespace export rptutils
+
+  variable version {2016.04.08}
+  variable channel {}
+  array set params [list format {csv} extension {csv} writeheader 1 verbose 0 debug 0 ]
+}
+
+##-----------------------------------------------------------------------
+## Long help function
+##-----------------------------------------------------------------------
+proc ::tb::utils::rptutils::print_help {} {
+
+set help_message [format {
+#########################################################################
+#########################################################################
+##
+## msgutil
+##
+## Example:
+##    rptutils
+##
+## Description:
+##   Utility to convert Vivado report(s) into CSV file(s)
+##
+## Options:
+##
+##   -input             Input report file(s)
+##
+#########################################################################
+#########################################################################
+} ]
+
+  foreach line [split $help_message "\n"] {
+    regsub {##} $line {  } line
+    puts $line
+  }
+
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tb::utils::rptutils::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::utils::rptutils::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## K lequal ldiff iota min max expand
+##-----------------------------------------------------------------------
+## List functions
+##-----------------------------------------------------------------------
+
+proc ::tb::utils::rptutils::K {a b} {return $a}
+
+proc ::tb::utils::rptutils::lequal {l1 l2} {
+    if {[llength $l1] != [llength $l2]} {
+        return false
+    }
+
+    set l2 [lsort $l2]
+
+    foreach elem $l1 {
+        set idx [lsearch -exact -sorted $l2 $elem]
+        if {$idx == -1} {
+            return false
+        } else {
+            set l2 [lreplace [K $l2 [unset l2]] $idx $idx]
+        }
+    }
+
+    return [expr {[llength $l2] == 0}]
+}
+
+proc ::tb::utils::rptutils::ldiff {a b} {
+#   upvar $la a
+#   upvar $lb b
+  set diff [list]
+  foreach i $a {
+    if { [lsearch -exact $b $i]==-1} {
+      lappend diff $i
+    }
+  }
+  foreach i $b {
+    if { [lsearch -exact $a $i]==-1} {
+      if { [lsearch -exact $diff $i]==-1} {
+        lappend diff $i
+      }
+    }
+  }
+  return $diff
+}
+
+proc ::tb::utils::rptutils::iota {from to} {
+  set out [list]
+  if {$from <= $to} {
+    for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
+  } else {
+    for {set i $from} {$i >= $to} {incr i -1} {lappend out $i}
+  }
+  return $out
+}
+
+proc ::tb::utils::rptutils::min {x y} {expr {$x<$y?$x:$y}}
+proc ::tb::utils::rptutils::max {x y} {expr {$x>$y?$x:$y}}
+
+proc ::tb::utils::rptutils::presort_list {l1 l2} {
+  set l [list]
+  foreach el $l1 {
+    if {[lsearch $l2 $el] != -1} {
+      lappend l $el
+    }
+  }
+  foreach el $l2 {
+    if {[lsearch $l $el] == -1} {
+      lappend l $el
+    }
+  }
+  return $l
+}
+
+proc ::tb::utils::rptutils::dputs {args} {
+  variable params
+  if {$params(debug)} {
+    eval [concat puts $args]
+  }
+  return -code ok
+}
+
+proc ::tb::utils::rptutils::getReportFormat { filename } {
+  set filename [file normalize $filename]
+  if {![file exists $filename]} {
+    puts " -W- File $filename does not exists"
+    return -code ok
+  }
+  set format {}
+  set FH [open $filename {r}]
+  set lineno 0
+  while {![eof $FH]} {
+    gets $FH line
+    # E.g: #  | Command      : report_ram_utilization -quiet -return_string
+    if {[regexp {^\s*(#\s*)?\|\s*Command\s*\:\s*(\w+)(\s|$)} $line - - format]} {
+      break
+    }
+    incr lineno
+    if {$lineno > 15} { break }
+  }
+  close $FH
+  return $format
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::backup_file
+#------------------------------------------------------------------------
+# Backup a file by renaming the file to <filename>.<index>.<extension>.
+# The function searchs for the first available <index> number.
+#------------------------------------------------------------------------
+proc ::tb::utils::rptutils::backup_file { filename } {
+  set filename [file normalize $filename]
+
+  if {![file exists $filename]} {
+    puts " -W- File '$filename' does not exist"
+    return 0
+  }
+
+  set rootname [file rootname $filename]
+  set extension [file extension $filename]
+
+  set index 1
+
+  while {1} {
+    if {![file exists ${rootname}.${index}${extension}]} {
+      break
+    }
+    incr index
+  }
+
+  puts " -I- Backing up file $filename to ${rootname}.${index}${extension}"
+  set exitCode [file rename -force -- $filename ${rootname}.${index}${extension}]
+
+  return $exitCode
+}
+
+proc ::tb::utils::rptutils::createHeader {} {
+  variable params
+  if {!$params(writeheader)} { return {} }
+  set header {}
+  append header "# ----------------------------------------------------------------------\n"
+  append header [format "# Created on %s with rptutils (%s)\n" [clock format [clock seconds]] $::tb::utils::rptutils::version ]
+  append header "# ----------------------------------------------------------------------\n"
+  return $header
+}
+
+proc ::tb::utils::rptutils::join-csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::extract_columns
+#------------------------------------------------------------------------
+# Extract position of columns based on the column separator string
+#  str:   string to be used to extract columns
+#  match: column separator string
+#------------------------------------------------------------------------
+
+# E.g:
+#    WNS(ns)      TNS(ns)  TNS Failing Endpoints
+#    -------      -------  ---------------------
+#     -0.261       -0.261                      1
+#
+#  extract_columns [string trimright $line] { }
+#   => {11 24}
+#  extract_columns2 [string trimright $line] {-} =>
+#   => {4 17 26}
+
+# This columns returned by extract_columns are the right-most position of each column
+# E.e: extract_columns2 [string trimright $line] { }
+# match: separator character between columns
+proc ::tb::utils::rptutils::extract_columns { str match } {
+  set col 0
+  set columns [list]
+  set previous -1
+  while {[set col [string first $match $str [expr $previous +1]]] != -1} {
+    if {[expr $col - $previous] > 1} {
+      lappend columns $col
+    }
+    set previous $col
+  }
+  return $columns
+}
+
+# This columns returned by extract_columns are the left-most position of each column
+# E.e: extract_columns2 [string trimright $line] {-}
+# match: character that delimit the columns
+proc ::tb::utils::rptutils::extract_columns2 { str match } {
+  set col 0
+  set columns [list]
+  set previous -2
+  while {[set col [string first $match $str [expr $previous +1]]] != -1} {
+    if {[expr $col - $previous] > 1} {
+      lappend columns $col
+    }
+    set previous $col
+  }
+  return $columns
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::extract_row
+#------------------------------------------------------------------------
+# Extract all the cells of a row (string) based on the position
+# of the columns
+#------------------------------------------------------------------------
+# To be used with extract_columns
+proc ::tb::utils::rptutils::extract_row {str columns} {
+  lappend columns [string length $str]
+  set row [list]
+  set pos 0
+  foreach col $columns {
+    set value [string trim [string range $str $pos $col]]
+    lappend row $value
+    set pos [incr col 2]
+  }
+  return $row
+}
+
+# To be used with extract_columns2
+proc ::tb::utils::rptutils::extract_row2 {str columns} {
+# puts "<columns:$columns>"
+# puts "<str><$str>"
+  set row [list]
+  for {set i 0} {$i < [expr [llength $columns] -1]} {incr i} {
+    set value [string trim [string range $str [lindex $columns $i] [expr [lindex $columns [expr $i +1]] -1] ] ]
+    lappend row $value
+# puts "<[lindex $columns $i] -> [expr [lindex $columns [expr $i +1]] -1]><$value>"
+  }
+  set value [string trim [string range $str [lindex $columns end] end] ]
+  lappend row $value
+# puts "<columns:$columns><$row>"
+  return $row
+}
+
+#########################################################################
+#########################################################################
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::processClockInteractionReport
+#------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------
+proc ::tb::utils::rptutils::processClockInteractionReport {filein channel} {
+  variable params
+
+  set FH [open $filein {r}]
+  set report [read $FH]
+  close $FH
+  puts $channel "#####################################"
+  puts $channel "# Summary table"
+  puts $channel "#####################################"
+  set tbl [::tb::prettyTable]
+  set rows [createSummaryClockInteractionReport $filein]
+  $tbl header [list {Inter-Clock Constraints} {Count}]
+  foreach row $rows {
+    $tbl addrow $row
+  }
+  foreach line [split [$tbl print] \n] {
+    puts $channel [format {# %s} $line]
+  }
+  puts $channel "#"
+  foreach line [split [$tbl export -format $params(format)] \n] {
+    puts $channel [format {# %s} $line]
+  }
+  catch {$tbl destroy}
+
+  puts $channel ""
+  puts $channel "#####################################"
+  puts $channel "# Detailed table"
+  puts $channel "#####################################"
+  set rows [parseClockInteractionReport $report]
+  set tbl [::tb::prettyTable]
+  $tbl header [lindex $rows 0]
+  foreach row [lrange $rows 1 end] {
+    $tbl addrow $row
+  }
+  puts $channel [$tbl export -format $params(format)]
+  # Delete table
+  catch {$tbl destroy}
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::parseClockInteractionReport
+#------------------------------------------------------------------------
+# Extract the clock table from report_clock_interaction and return
+# a Tcl list
+#------------------------------------------------------------------------
+proc ::tb::utils::rptutils::parseClockInteractionReport {report} {
+  set columns [list]
+  set table [list]
+  set report [split $report \n]
+  set SM {header}
+  for {set index 0} {$index < [llength $report]} {incr index} {
+    set line [lindex $report $index]
+    switch $SM {
+      header {
+        if {[regexp {^\-+\s+\-+\s+\-+} $line]} {
+          set columns [extract_columns [string trimright $line] { }]
+          set header1 [extract_row [lindex $report [expr $index -2]] $columns]
+          set header2 [extract_row [lindex $report [expr $index -1]] $columns]
+          set row [list]
+          foreach h1 $header1 h2 $header2 {
+            lappend row [string trim [format {%s %s} [string trim [format {%s} $h1]] [string trim [format {%s} $h2]]] ]
+          }
+          lappend table $row
+          set SM {table}
+        }
+      }
+      table {
+        # Check for empty line or for line that match '<empty>'
+        if {(![regexp {^\s*$} $line]) && (![regexp -nocase {^\s*No clocks found.\s*$} $line])} {
+          set row [extract_row $line $columns]
+          lappend table $row
+        }
+      }
+      end {
+      }
+    }
+  }
+  return $table
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::createSummaryClockInteractionReport
+#------------------------------------------------------------------------
+# Create a summary from the report_clock_interaction report
+#------------------------------------------------------------------------
+proc ::tb::utils::rptutils::createSummaryClockInteractionReport {filein} {
+  set FH [open $filein {r}]
+  set report [read $FH]
+  close $FH
+
+  set clock_interaction_table [parseClockInteractionReport $report]
+  set colFromClock -1
+  set colToClock -1
+  set colCommonPrimaryClock -1
+  set colInterClockConstraints -1
+  set colTNSFailingEndpoints -1
+  set colTNSTotalEndpoints -1
+  set colWNSClockEdges -1
+  set colWNS -1
+  set colTNS -1
+  set colWNSPathRequirement -1
+  if {$clock_interaction_table != {}} {
+    set header [lindex $clock_interaction_table 0]
+    for {set i 0} {$i < [llength $header]} {incr i} {
+      # Header from report_clock_interaction:
+      #   {From Clock} {To Clock} {WNS Clock Edges} WNS(ns) TNS(ns) {TNS Failing Endpoints} {TNS Total Endpoints} {WNS Path Requirement(ns)} {Common Primary Clock} {Inter-Clock Constraints}
+      switch -regexp -- [lindex $header $i] {
+        "From Clock" {
+          set colFromClock $i
+        }
+        "To Clock" {
+          set colToClock $i
+        }
+        "Common Primary Clock" {
+          set colCommonPrimaryClock $i
+        }
+        "Inter-Clock Constraints" {
+          set colInterClockConstraints $i
+        }
+        "TNS Failing Endpoints" {
+          set colTNSFailingEndpoints $i
+        }
+        "TNS Total Endpoints" {
+          set colTNSTotalEndpoints $i
+        }
+        "WNS Clock Edges" {
+          set colWNSClockEdges $i
+        }
+        "WNS\\\(ns\\\)" {
+          set colWNS $i
+        }
+        "TNS\\\(ns\\\)" {
+          set colTNS $i
+        }
+        "WNS Path Requirement" {
+          set colWNSPathRequirement $i
+        }
+        default {
+        }
+      }
+    }
+  }
+
+  set n 0
+  set clockPairs [list]
+  catch {unset clockInteractionReport}
+  foreach row [lrange $clock_interaction_table 1 end] {
+    incr n
+    set fromClock [lindex $row $colFromClock]
+    set toClock [lindex $row $colToClock]
+#     set failingEndpoints [lindex $row $colTNSFailingEndpoints]
+#     set totalEndpoints [lindex $row $colTNSTotalEndpoints]
+#     set commonPrimaryClock [lindex $row $colCommonPrimaryClock]
+    set interClockConstraints [lindex $row $colInterClockConstraints]
+#     set wnsClockEdges [lindex $row $colWNSClockEdges]
+    set wns [lindex $row $colWNS]
+    set tns [lindex $row $colTNS]
+#     set wnsPathRequirement [lindex $row $colWNSPathRequirement]
+#     # Save the clock pair
+#     lappend clockPairs [list $fromClock $toClock]
+    dputs " -D- Processing report_clock_interaction \[$n/[expr [llength $clock_interaction_table] -1]\]: $fromClock -> $toClock \t ($interClockConstraints)"
+    if {[string is double $wns] && ($wns != {})} {
+      # Clock domain pairs failing WNS
+      lappend clockPairs [list $wns [list $fromClock $toClock $wns $tns] ]
+    }
+    if {![info exists clockInteractionReport($interClockConstraints)]} {
+      set clockInteractionReport($interClockConstraints) 0
+    }
+    incr clockInteractionReport($interClockConstraints)
+  }
+
+  set result [list]
+  foreach name [array names clockInteractionReport] {
+    regsub -all { } [string tolower $name] {_} string
+    regsub -all {\(} $string {} string
+    regsub -all {\)} $string {} string
+    lappend result [list $name $clockInteractionReport($name)]
+  }
+
+  return $result
+}
+
+#########################################################################
+#########################################################################
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::processCDCReport
+#------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------
+# merge = 1 : merge all the detailed tables into a single table
+proc ::tb::utils::rptutils::processCDCReport {filein channel {merge 0}} {
+  variable params
+
+  # Convert the text report into a Tcl list of elements. Each list
+  # element is a single CDC table.
+  set FH [open $filein {r}]
+  set report_cdc [read $FH]
+  close $FH
+  array set cdcTables [parseCDCReport $report_cdc $merge]
+
+  set tbl [::tb::prettyTable]
+  set count 0
+  set first 1
+  foreach key [presort_list {summary} [array names cdcTables]] {
+
+    switch $key {
+      summary {
+        set table $cdcTables($key)
+      }
+      default {
+        # 'key' Format: <sourceClock>:<destinationClock>
+        foreach {cdcType table} $cdcTables($key) { break }
+        foreach {sourceClock destinationClock} [split $key : ] { break }
+      }
+    }
+
+    $tbl header [lindex $table 0]
+    foreach row [lrange $table 1 end] {
+      $tbl addrow $row
+    }
+
+    if {$params(verbose)} {
+      $tbl configure -indent 2
+      switch $key {
+        summary {
+          puts " -I- Summary:"
+        }
+        default {
+          puts " -I- CDC: $sourceClock -> $destinationClock"
+          puts " -I- CDC Type: $cdcType"
+        }
+      }
+      puts [$tbl print]
+    }
+
+    switch $key {
+      summary {
+        puts $channel "#####################################"
+        puts $channel "# Summary table"
+        puts $channel "#####################################"
+      }
+      default {
+        puts $channel "#####################################"
+        puts $channel "# CDC table: $sourceClock -> $destinationClock"
+        puts $channel "# CDC Type: $cdcType"
+        puts $channel "#####################################"
+      }
+    }
+    set content {}
+    $tbl export -format $params(format) -return_var content
+    puts $channel $content
+
+    # Empty table
+    catch {$tbl reset}
+
+    incr count
+  }
+
+  if {$params(verbose)} {
+    puts " -I- $count tables exported"
+  }
+
+  # Delete table
+  catch {$tbl destroy}
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::parseCDCReport
+#------------------------------------------------------------------------
+# Extract the clock table from report_cdcn and return a Tcl list
+#------------------------------------------------------------------------
+# merge = 1 : merge all the detailed tables into a single table
+proc ::tb::utils::rptutils::parseCDCReport {report {merge 0}} {
+  set columns [list]
+  catch {unset tables}
+  set table [list]
+  set report [split $report \n]
+  set sourceClock {}
+  set destinationClock {}
+  set cdcType {}
+  set SM {header}
+  for {set index 0} {$index < [llength $report]} {incr index} {
+    set line [lindex $report $index]
+    switch $SM {
+      header {
+        # E.g: Source Clock: wbClk
+        if {[regexp -nocase {^Source Clock:\s*([^\s].*)\s*$} $line - sourceClock]} {
+        }
+        # E.g: Destination Clock: bftClk
+        if {[regexp -nocase {^Destination Clock:\s*([^\s].*)\s*$} $line - destinationClock]} {
+        }
+        # E.g: CDC Type: No Common Primary Clock
+        if {[regexp -nocase {^CDC Type:\s*([^\s].*)\s*$} $line - cdcType]} {
+        }
+        if {[regexp {^\-+\s+\-+\s+\-+\s+\-+\s*$} $line]} {
+          # Match table header for summary table
+          #   ID  Count  Description  Detail
+          #   --  -----  -----------  ------
+          set columns [extract_columns [string trimright $line] { }]
+          set header [extract_row [lindex $report [expr $index -1]] $columns]
+          set row [list]
+          foreach h $header {
+            lappend row [string trim [format {%s} $h]]
+          }
+          lappend table $row
+          set SM {table}
+        } elseif {[regexp {^\-+\s+\-+\s+\-+\s+\-+\s*\-+} $line]} {
+          # Match table header for detailed tables
+          #   Row  ID  Severity  Description  Depth  Exception  Source (From)  Destination (To)
+          #   ---  --  --------  -----------  -----  ---------  -------------  ----------------
+          set columns [extract_columns [string trimright $line] { }]
+          set header [extract_row [lindex $report [expr $index -1]] $columns]
+          set row [list]
+          if {$merge} {
+            set row [list {CDC Type} {Source Clock} {Destination Clock}]
+          }
+          foreach h $header {
+            lappend row [string trim [format {%s} $h]]
+          }
+          if {$table == {}} {
+            # Only set the header if the table is empty
+            lappend table $row
+          }
+          set SM {table}
+        }
+      }
+      table {
+        # Check for empty line or for line that match '<empty>'
+        if {(![regexp {^\s*$} $line]) && (![regexp -nocase {^\s*No clocks found.\s*$} $line])} {
+          set row [extract_row $line $columns]
+          if {($sourceClock != {}) || ($destinationClock != {})} {
+            if {$merge} {
+              set row [linsert $row 0 $cdcType $sourceClock $destinationClock]
+            }
+          }
+          lappend table $row
+          set SM {table}
+        } else {
+          if {($sourceClock == {}) && ($destinationClock == {})} {
+            set tables(summary) $table
+            set table [list]
+          } else {
+            if {$merge == 0} {
+              # Only save the current table if not running in merge mode
+              set tables(${sourceClock}:${destinationClock}) [list $cdcType $table]
+              set table [list]
+            } else {
+            }
+          }
+          set sourceClock {}
+          set destinationClock {}
+          set cdcType {}
+          set SM {header}
+        }
+      }
+      end {
+      }
+    }
+  }
+  if {$merge && ($table != {})} {
+    # Save the table in merge mode
+    set tables(*:*) [list {N/A} $table]
+  }
+  return [array get tables]
+}
+
+#########################################################################
+#########################################################################
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::processDRCReport
+#------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------
+proc ::tb::utils::rptutils::processDRCReport {filein channel} {
+  variable params
+
+  set FH [open $filein {r}]
+  set report [read $FH]
+  close $FH
+  set rows [createSummaryDRCReport $filein]
+
+  #  ID      Severity  Count  Description
+  #  ------  --------  -----  -------------------------------------------------------
+  #  CDC-1   Critical      1  1-bit unknown CDC circuitry
+  #  CDC-3   Info         37  1-bit synchronized with ASYNC_REG property
+  #  CDC-6   Warning       1  Multi-bit synchronized with ASYNC_REG property
+  #  CDC-9   Info          1  Asynchronous reset synchronized with ASYNC_REG property
+  #  CDC-15  Warning       1  Clock enable controlled CDC structure detected
+
+  puts $channel "#####################################"
+  puts $channel "# Summary table"
+  puts $channel "#####################################"
+  set tbl [::tb::prettyTable]
+  $tbl header [list {ID} {Severity} {Count} {Description}]
+  foreach row $rows {
+    $tbl addrow $row
+  }
+  foreach line [split [$tbl print] \n] {
+    puts $channel [format {# %s} $line]
+  }
+  puts $channel "#"
+  foreach line [split [$tbl export -format $params(format)] \n] {
+    puts $channel [format {# %s} $line]
+  }
+  catch {$tbl destroy}
+
+  puts $channel ""
+  puts $channel "#####################################"
+  puts $channel "# Detailed table"
+  puts $channel "#####################################"
+  set FHin [open $filein {r}]
+  set content [list]
+  set loop 1
+  set stage 0
+  set drcname {n/a}; set drcnum {n/a}; set severity {n/a}
+  set category {n/a}; set msg {n/a}; set related {n/a}
+  while {$loop && ![eof $FHin]} {
+    gets $FHin line
+    switch $stage {
+      0 {
+        if {[regexp {^\s*([^-]+)-([0-9]+)#[0-9]+\s+([\w]+)} $line -- drcname drcnum severity]} {
+          incr stage
+        }
+      }
+      1 {
+        set category [string trim $line]
+        incr stage
+      }
+      2 {
+        set msg [string trim $line]
+        incr stage
+      }
+      3 {
+        if {[regexp {^\s*Related\s+violations\s*:\s+(.+)$} $line -- related]} {
+          set related [string trim $related]
+          lappend content [list $drcname $drcnum $severity $category $msg $related]
+          set stage 0
+        } elseif {[regexp {^\s*([^-]+)-([0-9]+)#[0-9]+\s+([\w]+)} $line]} {
+          lappend content [list $drcname $drcnum $severity $category $msg {}]
+          regexp {^\s*([^-]+)-([0-9]+)#[0-9]+\s+([\w]+)} $line -- drcname drcnum severity
+          set stage 1
+        }
+      }
+    }
+  }
+  close $FHin
+
+  set tbl [::tb::prettyTable]
+  $tbl header [list {ID} {#} {Severity} {Category} {Details} {Related Violations}]
+  foreach row $content {
+    $tbl addrow $row
+  }
+  puts $channel [$tbl export -format $params(format)]
+  catch {$tbl destroy}
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::createSummaryDRCReport
+#------------------------------------------------------------------------
+# Create a summary from the report_methodology report to reduce the
+# memory footprint
+#------------------------------------------------------------------------
+proc ::tb::utils::rptutils::createSummaryDRCReport {filein} {
+  # Abstract original report_methodology report:
+  #   2. REPORT DETAILS
+  #   -----------------
+  #   CKLD-2#1 Warning
+  #   Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads
+  #   Clock net FC_TSCLK_IBUF_inst/O is directly driven by an IO rather than a Clock Buffer or may be an IO driving a mix of Clock Buffer and non-Clock loads. This connectivity should be reviewed and corrected as appropriate. Driver(s): FC_TSCLK_IBUF_inst/IBUFCTRL_INST/O
+  #   Related violations: <none>
+  #
+  #   PDRC-190#1 Warning
+  #   Suboptimally placed synchronized register chain
+  #   The FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/shift_reg_in_reg[2] in site SLICE_X105Y474 is part of a synchronized register chain that is suboptimally placed as the load FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/shift_reg_in_reg[1] is not placed in the same (SLICE) site.
+  #   Related violations: <none>
+  #
+  #   SYNTH-6#1 Warning
+  #   Timing of a block RAM might be sub-optimal
+  #   The timing for the instance gen_phy_user.user/phy_slr_1_1/user_fault_monitor/from_rom_rdata_reg, implemented as a block RAM, might be sub-optimal as no output register was merged into the block
+  #   Related violations: <none>
+  #
+  #   SYNTH-8#1 Warning
+  #   Resource sharing
+  #   The adder gen_phy_user.user/phy_slr_0_1/gen_ports[0].mld_test_pattern_1/TxPreMLD_i/TSXSUMADJ/Cnt_SOFoffsetP1_reg[3]_i_1_CARRY8 is shared. Consider applying a KEEP on the inputs of the operator to prevent sharing.
+  #   Related violations: <none>
+  set FH [open $filein {r}]
+  set content [list]
+  catch {unset drcs}
+  catch {unset drcmsg}
+  catch {unset drcseverity}
+  set keys [list]
+  set loop 1
+  set found 0
+  set drcname {n/a}; set drcnum {n/a}; set severity {n/a}
+  while {$loop && ![eof $FH]} {
+    gets $FH line
+    if {[regexp {^\s*([^-]+)-([0-9]+)#[0-9]+\s+([\w]+)} $line -- drcname drcnum severity]} {
+      set found 1
+      # Capture the first line of the DRC
+      # e.g:
+      #  PDRC-190#1 Warning
+    } else {
+      if {$found} {
+        # Capture the second line of the DRC
+        # e.g:
+        #  Suboptimally placed synchronized register chain
+        set drcmsg(${drcname}-${drcnum}) [string trim $line]
+        set drcseverity(${drcname}-${drcnum}) [string trim $severity]
+        if {![info exists drcs(${drcname}-${drcnum})]} {
+          set drcs(${drcname}-${drcnum}) 0
+        }
+        incr drcs(${drcname}-${drcnum})
+        lappend keys [list $drcname $drcnum ${drcname}-${drcnum} ]
+        set found 0
+        set drcname {n/a}; set drcnum {n/a}; set severity {n/a}
+      }
+    }
+  }
+  close $FH
+  # Sort by drc name and drc number
+  set keys [lsort -unique $keys]
+  set keys [lsort -increasing -dictionary -index 0 [lsort -increasing -integer -index 1 $keys]]
+  # Recreate a fake summary report which is much smaller
+  # E.g:
+  #   1 CKLD-2 [Warning] [Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads]
+  #   1 CLKC-5 [Warning] [BUFGCE with constant CE has BUFG driver]
+  #   2 CLKC-21 [Warning] [MMCME3 with ZHOLD does not drive sequential IO]
+  #   1 CLKC-29 [Warning] [MMCME3 not driven by IO has BUFG in feedback loop]
+  #   4 CLKC-39 [Warning] [Substitute PLLE3 for MMCME3 check]
+  #   1 PDRC-190 [Warning] [Suboptimally placed synchronized register chain]
+  #   127 SYNTH-4 [Warning] [Shallow depth for a dedicated block RAM]
+  #   249 SYNTH-6 [Warning] [Timing of a block RAM might be sub-optimal]
+  #   721 SYNTH-8 [Warning] [Resource sharing]
+  #   73 SYNTH-9 [Warning] [Small multiplier]
+  #   3 TIMING-3 [Warning] [Invalid primary clock on Clock Modifying Block]
+  #   1000 TIMING-9 [Warning] [Unknown CDC Logic]
+  #   1000 TIMING-10 [Warning] [Missing property on synchronizer]
+  #   96 TIMING-11 [Warning] [Inappropriate max delay with datapath only option]
+  #   11 TIMING-17 [Warning] [Non-clocked sequential cell]
+  #   23 TIMING-18 [Warning] [Missing input or output delay]
+  #   31 TIMING-24 [Warning] [Overridden Max delay datapath only]
+  #   234 TIMING-28 [Warning] [Auto-derived clock referenced by a timing constraint]
+  #   12 XDCB-1 [Warning] [Runtime intensive exceptions]
+  #   2 XDCB-2 [Warning] [Clock defined on multiple objects]
+  #   1 XDCC-4 [Warning] [User Clock constraint overwritten with the same name]
+  #   1 XDCC-8 [Warning] [User Clock constraint overwritten on the same source]
+  #   1 XDCV-2 [Warning] [Incomplete constraint coverage due to missing replicated objects.]
+  foreach el $keys {
+    foreach {- - key} $el { break }
+#     lappend content [format {  %s %s [%s] [%s]} $drcs($key) $key $drcseverity($key) $drcmsg($key)]
+    lappend content [list $key $drcseverity($key) $drcs($key) $drcmsg($key)]
+  }
+#   set res [join $content \n]
+  return $content
+}
+
+#########################################################################
+#########################################################################
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::processTimingSummaryReport
+#------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------
+proc ::tb::utils::rptutils::processTimingSummaryReport {filein channel} {
+  variable params
+
+  set FH [open $filein {r}]
+  set report [read $FH]
+  close $FH
+#   foreach section [list {Design Timing Summary}] {}
+  foreach section [list {Design Timing Summary} {Clock Summary} {Intra Clock Table} {Inter Clock Table} {Other Path Groups Table}] {
+    puts $channel ""
+    puts $channel "#####################################"
+    puts $channel "# $section"
+    puts $channel "#####################################"
+    set rows [parseTimingSummaryReport $report $section]
+    set tbl [::tb::prettyTable]
+    $tbl header [lindex $rows 0]
+    foreach row [lrange $rows 1 end] {
+      $tbl addrow $row
+    }
+    puts $channel [$tbl export -format $params(format)]
+    # Delete table
+    catch {$tbl destroy}
+  }
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::parseTimingSummaryReport
+#------------------------------------------------------------------------
+# Extract ravious tables from report_timing_summary and return
+# a Tcl list
+#------------------------------------------------------------------------
+proc ::tb::utils::rptutils::parseTimingSummaryReport {report section} {
+  set columns [list]
+  set table [list]
+  set report [split $report \n]
+  set SM {search}
+  for {set index 0} {$index < [llength $report]} {incr index} {
+    set line [lindex $report $index]
+    switch $SM {
+      search {
+        if {[regexp [format {^\s*\|\s*%s} $section] $line]
+             && [regexp {^\s*\|\s+----+} [lindex $report [expr $index +1]]] } {
+          set SM {header}
+# puts "<search><$line>"
+        }
+      }
+      header {
+        if {[regexp {^\s*\-+\s+\-+\s+\-+} $line]} {
+#           set columns [extract_columns [string trimright $line] { }]
+          set columns [extract_columns2 [string trimright $line] {-}]
+          set header [extract_row2 [lindex $report [expr $index -1]] $columns]
+          set table [list $header ]
+# puts "<search><$header>"
+# puts "<1:[extract_columns [string trimright $line] { }]>"
+# puts "<2:[extract_columns2 [string trimright $line] {-}]>"
+          if {[regexp {^\s*$} [lindex $report [expr $index +1]]]} {
+            # If the index+1 line is empty, it means that the table is empty
+            set SM {end}
+          } else {
+            set SM {table}
+          }
+        }
+      }
+      table {
+        # Check for empty line or for line that match '<empty>'
+        if {(![regexp {^\s*$} $line]) && (![regexp -nocase {^\s*No clocks found.\s*$} $line])} {
+          switch $section {
+            "Design Timing Summary" {
+              set row [extract_row2 $line $columns]
+              lappend table $row
+            }
+            "Clock Summary" -
+            "Intra Clock Table" -
+            "Inter Clock Table" -
+            "Other Path Groups Table" {
+              set row [extract_row2 $line $columns]
+#               set row [regsub -all {[ \t\n]+} $line { }]
+              lappend table $row
+            }
+            default {
+              puts " -W- Unknown report section $section. Aborting"
+              set SM {end}
+            }
+          }
+        } else {
+          set SM {end}
+        }
+      }
+      end {
+      }
+    }
+  }
+  return $table
+}
+
+#########################################################################
+#########################################################################
+
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::processDefaultReport
+#------------------------------------------------------------------------
+#
+#------------------------------------------------------------------------
+proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -1} {pattern .+} {inline 0} {report_exception 0}} {
+  variable params
+
+  set FH [open $filein {r}]
+  set report [split [read $FH] \n]
+  close $FH
+
+  set columns [list]
+  set table [list]
+  if {$pattern == {.+}} {
+    set SM {search_table}
+  } else {
+    set SM {search_pattern}
+  }
+  set numtables 0
+  set print 1
+  for {set index 0} {$index < [llength $report]} {incr index} {
+    set line [lindex $report $index]
+    set print 1
+    switch $SM {
+      search_pattern {
+        if {[regexp -nocase -- $pattern $line]} {
+# puts "<index:$index><pattern:$pattern><$line>"
+          # Pattern found, now search for the table
+          set SM {search_table}
+        }
+      }
+      search_table {
+        if {[regexp {^\s*\+--*\+--*\+} $line]
+             && [regexp {^\s*\|.+\|.+\|} [lindex $report [expr $index +1]]]
+             && [regexp {^\s*\+--*\+--*\+} [lindex $report [expr $index +2]]]
+             && [regexp {^\s*\|.+\|.+\|} [lindex $report [expr $index +3]]]
+             && [regexp {^\s*\+--*\+--*\+} [lindex $report [expr $index +4]]]} {
+          # Get the list of columns for the 2 lines
+          set col1 [extract_columns2 [string trimright $line] {-}]
+          set col2 [extract_columns2 [string trimright [lindex $report [expr $index +2]]] {-}]
+          # Are the list the same?
+          if {$col1 == $col2} {
+            # E.g: (report_pipeline_analysis)
+            # +----------------------------+---------------+------------------+------------------+------------------+-----------+----------------+----------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------+
+            # | Clock                      | Added Latency | Ideal Fmax (MHz) | Ideal Delay (ns) | Requirement (ns) | WNS (ns)* | Added Pipe Reg | Total Pipe Reg | Pipeline Insertion Startpoint                                                                                                                                         | Pipeline Insertion Endpoint                                                                                             |
+            # +----------------------------+---------------+------------------+------------------+------------------+-----------+----------------+----------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------+
+            # | clk_153m6_out_cpri_ref_pll |       0       |      153.58      |       6.511      |       6.500      |   -0.011  |       n/a      |        0       | bb200_top_i/reiska_top/receive_top_0/U0/inst_data_channel_rx_top/inst_equ_coeff_est/inst_rs1808/rs226.inst_rs/inst/axisc_register_slice_0/m_axis_tdata[1139]_INST_0/O | bb200_top_i/reiska_top/receive_top_0/U0/inst_data_channel_rx_top/inst_equ_coeff_est/inst_mift/tmp_25_reg_12573_reg[8]/D |
+            # +----------------------------+---------------+------------------+------------------+------------------+-----------+----------------+----------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------+
+            # This match the 'classic' format for prettyTable
+            set SM {header_classic}
+            # Removing column separator
+            regsub -all {\+} $line { } line
+            set columns [extract_columns2 [string trimright $line] {-}]
+            set print 0
+          } else {
+            # E.g: (report_clock_utlization)
+            # +-------------------+----------------------+----------------------+----------------------+----------------------+
+            # |                   |        HROUTES       |        HDISTRS       |        VROUTES       |        VDISTRS       |
+            # +-------------------+------+-------+-------+------+-------+-------+------+-------+-------+------+-------+-------+
+            # | Clock Region Name | Used | Avail | Util% | Used | Avail | Util% | Used | Avail | Util% | Used | Avail | Util% |
+            # +-------------------+------+-------+-------+------+-------+-------+------+-------+-------+------+-------+-------+
+            # Do nothing when top header is found and wait for next header line
+            # to be found
+          }
+        } elseif {[regexp {^\s*--*\+--*\+} $line]
+             && [regexp {^\s*[^\|]+\|.+\|} [lindex $report [expr $index +1]]]
+             && [regexp {^\s*[^\|]+\|.+\|} [lindex $report [expr $index +2]]]
+             && [regexp {^\s*--*\+--*\+} [lindex $report [expr $index +3]]] } {
+          # E.g: (report_datasheet)
+          # -------------------+-------------+---------+-------------+---------+----------+
+          #                    |     Max     | Process |     Min     | Process | Edge     |
+          # Pad                |   Delay(ns) | Corner  |   Delay(ns) | Corner  | Skew(ns) |
+          # -------------------+-------------+---------+-------------+---------+----------+
+          # This match the 'classic' format for prettyTable
+          set SM {header_classic}
+          # Removing column separator
+          regsub -all {\+} $line { } line
+          set columns [extract_columns2 [string trimright $line] {-}]
+          set print 0
+# puts "<classic><$line><$columns>"
+        } elseif {[regexp {^\s*\+--*\+--*\+} $line]
+             && [regexp {^\s*\|.+\|.+\|} [lindex $report [expr $index +1]]]
+             && [regexp {^\s*\+--*\+--*\+} [lindex $report [expr $index +2]]] } {
+          # E.g:
+          # +------------+------+-----------+-----+--------------+--------+
+          # | Type       | Used | Available | LOC | Clock Region | Pblock |
+          # +------------+------+-----------+-----+--------------+--------+
+          # This match the 'classic' format for prettyTable
+          set SM {header_classic}
+          # Removing column separator
+          regsub -all {\+} $line { } line
+          set columns [extract_columns2 [string trimright $line] {-}]
+          set print 0
+# puts "<classic><$line><$columns>"
+        } elseif {[regexp {^\-+\s+\-+\s+\-+} $line]} {
+          # E.g:
+          # WNS(ns)  TNS(ns)  TNS Failing Endpoints
+          # -------  -------  ---------------------
+          # This match the 'lean' format for prettyTable
+          set SM {table_lean}
+          set columns [extract_columns2 [string trimright $line] {-}]
+          set header [extract_row2 [lindex $report [expr $index -1]] $columns]
+          set table [list $header ]
+          set print 0
+# puts "<lean><$line><$columns>"
+# puts "<header:$header>"
+        }
+      }
+      header_classic {
+        if {[regexp {^\s*[^\|]+\|.+\|} $line]
+             && [regexp {^\s*[^\|]+\|.+\|} [lindex $report [expr $index +1]]]
+             && [regexp {^\s*--*\+--*\+} [lindex $report [expr $index +2]]]} {
+          # Multi-lines header with no separator on first column
+          # E.g: (report_datasheet)
+          # -------------------+-------------+---------+-------------+---------+----------+
+          #                    |     Max     | Process |     Min     | Process | Edge     |
+          # Pad                |   Delay(ns) | Corner  |   Delay(ns) | Corner  | Skew(ns) |
+          # -------------------+-------------+---------+-------------+---------+----------+
+          # Removing column separator
+          regsub -all {\|} $line { } line1
+          regsub -all {\|} [lindex $report [expr $index +1]] { } line2
+          set header1 [extract_row2 $line1 $columns]
+          set header2 [extract_row2 $line2 $columns]
+          set header [list]
+          foreach h1 $header1 h2 $header2 {
+            lappend header [string trim [format {%s %s} [string trim [format {%s} $h1]] [string trim [format {%s} $h2]]] ]
+          }
+# puts "<header><$header>"
+          lappend table $header
+          set SM {table_classic}
+          set print 0
+          # Skip the next line which is the second header line since
+          # it just got included inside the header
+          incr index
+        } elseif {[regexp {^\s*\|.+\|.+\|} $line]} {
+          # E.g: (report_clock_utlization)
+          # +------------+------+-----------+-----+--------------+--------+
+          # | Type       | Used | Available | LOC | Clock Region | Pblock |
+          # +------------+------+-----------+-----+--------------+--------+
+          # Removing column separator
+          regsub -all {\|} $line { } line
+# puts "<$line>"
+#           set columns [extract_columns [string trimright $line] { }]
+          set header [extract_row2 $line $columns]
+# puts "<header:$header><columns:$columns>"
+          set table [list $header ]
+# puts "<search><$header>"
+# puts "<1:[extract_columns [string trimright $line] { }]>"
+# puts "<2:[extract_columns2 [string trimright $line] {-}]>"
+          set SM {table_classic}
+          set print 0
+        }
+      }
+      table_classic {
+        if {[regexp {^\s*\|.+\|.+\|} $line]} {
+          # E.g: (report_clock_utlization)
+          # | BUFGCE     |   13 |       576 |   0 |            0 |      0 |
+          # | BUFGCE_DIV |    0 |        96 |   0 |            0 |      0 |
+          # Removing column separator
+          regsub -all {\|} $line { } line
+          set row [extract_row2 $line $columns]
+          lappend table $row
+          set print 0
+        } elseif {[regexp {^\s*[^\|]+\|.+\|} $line]} {
+          # E.g: (report_datasheet with no separator on first column)
+          # led_bus[0]         |   7.491 (r) | SLOW    |   2.938 (r) | FAST    |    0.053 |
+          # led_bus[1]         |   7.438 (r) | SLOW    |   2.942 (r) | FAST    |    0.004 |
+# puts "<$line>"
+          # Removing column separator
+          regsub -all {\|} $line { } line
+          set row [extract_row2 $line $columns]
+# puts "<row><$row>"
+          lappend table $row
+          set print 0
+        } elseif {[regexp {^\s*\+--*\+--*\+} $line]
+                   && ![regexp {^\s*\|.+\|.+\|} [lindex $report [expr $index +1]]]} {
+          # E.g: (report_clock_utlization)
+          # | PLL        |    3 |        48 |   0 |            0 |      0 |
+          # +------------+------+-----------+-----+--------------+--------+
+          # The current line is a row separator and the next line does not
+          # match a table row
+          set SM {end_table}
+        } elseif {[regexp {^\s*--*\+--*\+} $line]
+                   && ![regexp {^\s*[^\|]+\|.+\|} [lindex $report [expr $index +1]]]} {
+          # E.g: (report_datasheet with no separator on first column)
+          # Worst Case Summary |   7.632 (r) | SLOW    |   2.938 (r) | FAST    |    0.195 |
+          # -------------------+-------------+---------+-------------+---------+----------+
+          # The current line is a row separator and the next line does not
+          # match a table row
+          set SM {end_table}
+        }
+      }
+      table_lean {
+        # E.g:
+        #        -0.261       -0.261         1
+        # Check for empty line or for line that match '<empty>'
+        if {(![regexp {^\s*$} $line]) && (![regexp -nocase {^\s*No clocks found.\s*$} $line])} {
+          set row [extract_row2 $line $columns]
+# puts "<row:$row>"
+          lappend table $row
+          set print 0
+        } elseif {[regexp {^\s*$} $line]} {
+          set SM {end_table}
+        }
+      }
+      end_table {
+        incr numtables
+        puts $channel ""
+        puts $channel "#####################################"
+        puts $channel "# Table $numtables"
+        puts $channel "#####################################"
+        set tbl [::tb::prettyTable]
+        $tbl header [lindex $table 0]
+        foreach row [lrange $table 1 end] {
+          if {$report_exception} {
+            # Special mode for report_exception. If the first column
+            # of the row is empty, then append the row to the previous one.
+            # This is because report_exception used fixed width columns
+            if {[lindex $row 0] == {}} {
+              $tbl appendrow $row
+            } else {
+              $tbl addrow $row
+            }
+          } else {
+            $tbl addrow $row
+          }
+        }
+        puts $channel [$tbl export -format $params(format)]
+        # Delete table
+        catch {$tbl destroy}
+        set table [list]
+        set columns [list]
+# puts "<maxnumtables:$maxnumtables><numtables:$numtables>"
+        if {$maxnumtables != -1} {
+          if {$numtables >= $maxnumtables} {
+            set SM {end}
+          } else {
+            set SM {search_table}
+          }
+        } else {
+          set SM {search_table}
+        }
+      }
+      end {
+      }
+    }
+    if {$print && $inline} {
+      puts $channel [format {# %s} $line]
+    }
+  }
+
+  return -code ok
+}
+
+#########################################################################
+#########################################################################
+
+##-----------------------------------------------------------------------
+## rptutils
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::utils::rptutils::rptutils {args} {
+
+  variable version
+  variable params
+  variable channel
+
+  set params(verbose) 0
+  set params(debug) 0
+  set error 0
+  set show_help 0
+  set show_long_help 0
+  set ifilename [list]
+  set ofilename {}
+  set filemode {w}
+  set csvDelimiter {,}
+  set merge 0
+  set force 0
+  set backup 0
+  set stdout 0
+  set inline 0
+  set maxnumtables -1
+  set pattern {.+}
+  set channel {}
+  set reportformat {}
+  set fileextension {}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-i(n(p(ut?)?)?)?$} {
+        while {![string match "-*" [set filename [lshift args]]]} {
+          if {$filename == {}} {
+            break
+          } elseif {![file exists $filename]} {
+            puts " -E- file '$filename' does not exist"
+            incr error
+          } else {
+            lappend ifilename $filename
+          }
+        }
+        # The last argument needs to be put back on the stack
+        if {$filename != {}} { unlshift args $filename }
+      }
+      {^-o(u(t(p(ut?)?)?)?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-fo(r(m(at?)?)?)?$} {
+        set reportformat [lshift args]
+      }
+      {^-ex(t(e(n(s(i(on?)?)?)?)?)?)?$} {
+        set fileextension [lshift args]
+      }
+      {^-de(l(i(m(i(t(er?)?)?)?)?)?)?$} {
+        set csvDelimiter [lshift args]
+      }
+      {^-ap(p(e(nd?)?)?)?$} {
+        set filemode {a}
+      }
+      {^-no(h(e(a(d(er?)?)?)?)?)?$} {
+        set params(writeheader) 0
+      }
+      {^-st(d(o(ut?)?)?)?$} {
+        set stdout 1
+      }
+      {^-m(e(r(ge?)?)?)?$} {
+        set merge 1
+      }
+      {^-fo(r(ce?)?)?$} {
+        set force 1
+      }
+      {^-ba(c(k(up?)?)?)?$} {
+        set backup 1
+      }
+      {^-c(sv?)?$} {
+        set params(format) {csv}
+      }
+      {^-tcl$} {
+        set params(format) {tcl}
+      }
+      {^-list$} {
+        set params(format) {list}
+      }
+      {^-array$} {
+        set params(format) {array}
+      }
+      {^-table$} {
+        set params(format) {table}
+      }
+      {^-in(l(i(ne?)?)?)?$} {
+        set inline 1
+      }
+      {^-pa(t(t(e(rn?)?)?)?)?$} {
+        set pattern [lshift args]
+      }
+      {^-nu(m(t(a(b(l(es?)?)?)?)?)?)?$} {
+        set maxnumtables [lshift args]
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      {^-lo(n(g(h(e(lp?)?)?)?)?)?$} {
+        incr show_help
+        incr show_long_help
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          # Expand the pattern (if any)
+          foreach file [glob -nocomplain $name] {
+            if {![file exists $file]} {
+              puts " -W- file '$file' does not exist"
+            } else {
+              lappend ifilename $file
+            }
+          }
+#           puts " -E- option '$name' is not a valid option"
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: rptutils
+                  [<filename> [<filename> ...]]
+                  [-input <filename> [<filename> ...]]
+                  [-format <format>]
+                  [-output <filename>]
+                  [-extension <string>]
+                  [-stdout]
+                  [-append]
+                  [-force]
+                  [-backup]
+              +--------------------+
+                  [-merge]
+              +--------------------+
+                  [-inline]
+                  [-pattern <string>]
+                  [-numtables <num>]
+              +--------------------+
+                  [-csv][-tcl][-list][-array][-table]
+                  [-noheader]
+                  [-delimiter <csv-delimiter>]
+                  [-verbose|-v]
+                  [-help|-h]
+                  [-longhelp]
+
+      Description: Utility to convert Vivado report(s) into CSV file(s)
+
+      Version: %s
+
+        If -output/-stdout is not specified then each report is saved in the same
+        directory as the report file with .csv
+        Use -extension to change the default extension (.csv) for output files
+
+        Use -stdout to redirect output to stdout
+
+      Example:
+         rptutils -input file1.csv -delimiter ';'
+         rptutils *.csv -output result.rpt -merge
+
+    } $version ]
+    # HELP -->
+
+    if {$show_long_help} { print_help }
+
+    return -code ok
+  }
+
+  if  {$ifilename == {}} {
+    puts " -E- no input file provided"
+    incr error
+  }
+
+  if  {($ofilename != {}) && $stdout} {
+    puts " -E- -output and -stdout are exclusive"
+    incr error
+  } elseif {$ofilename != {}} {
+    if {[file exists $ofilename] && !$force} {
+      puts " -E- file $ofilename already exist. Use -force to override"
+      incr error
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#    exit -1
+  }
+
+  if {$ofilename != {}} {
+    if {$backup && [file exists $ofilename]} {
+      backup_file $ofilename
+    }
+    set channel [open $ofilename $filemode]
+    if {$params(writeheader)} { puts $channel [createHeader] }
+  }
+
+  if {$fileextension == {}} {
+    switch $params(format) {
+      csv {
+        set params(extension) {csv}
+      }
+      tcl {
+        set params(extension) {csv}
+      }
+      array {
+        set params(extension) {csv}
+      }
+      list {
+        set params(extension) {csv}
+      }
+      table {
+        set params(extension) {csv}
+      }
+      default {
+      }
+    }
+  } else {
+    set params(extension) $fileextension
+  }
+
+  foreach filename $ifilename {
+    set filename [file normalize $filename]
+    if {$params(verbose)} {
+      puts " -I- Processing file $filename"
+    }
+    if {$reportformat == {}} {
+      set fileformat [getReportFormat $filename]
+      if {$fileformat == {}} {
+        puts " -I- No file format detected. Use default format"
+#         if {$params(verbose)} {
+#           puts " -I- No file format detected. Use default format"
+#         }
+        set fileformat {default}
+      } else {
+        if {$params(verbose)} {
+          puts " -I- File format: $fileformat"
+        }
+      }
+    } else {
+      set fileformat $reportformat
+    }
+
+    switch $fileformat {
+      report_clock_interaction -
+      report_cdc -
+      report_drc -
+      report_methodology -
+      report_timing_summary -
+      report_seu -
+      report_synchronizer_mtbf -
+      report_pipeline_analysis -
+      report_ram_utilization -
+      report_exceptions -
+      report_control_sets -
+      report_carry_chains -
+      report_power -
+      report_io -
+      report_design_analysis -
+      report_high_fanout_nets -
+      report_datasheet -
+      report_clock_utilization -
+      report_utilization -
+      report_environment -
+      default {
+      }
+      "" {
+        puts " -E- Undetected format for file $filename . File skipped"
+        continue
+      }
+      default {
+        puts " -E- Unsupported format '$fileformat' for file $filename . File skipped"
+        continue
+      }
+    }
+
+    if {$stdout} {
+      set channel {stdout}
+    } elseif {$ofilename == {}} {
+      set fileout [format {%s.%s} [file rootname $filename] $params(extension)]
+      if {[file exists $fileout] && !$force} {
+        puts " -W- file $fileout already exist. Use -force to override"
+        continue
+      } else {
+        if {$backup && [file exists $fileout]} {
+          backup_file $fileout
+        }
+        set channel [open $fileout $filemode]
+        if {$params(writeheader)} { puts $channel [createHeader] }
+      }
+    }
+
+    switch $fileformat {
+      report_clock_interaction {
+        processClockInteractionReport $filename $channel
+      }
+      report_cdc {
+        processCDCReport $filename $channel $merge
+      }
+      report_drc {
+        processDRCReport $filename $channel
+      }
+      report_methodology {
+        processDRCReport $filename $channel
+      }
+      report_timing_summary {
+        processTimingSummaryReport $filename $channel
+      }
+      report_seu -
+      report_synchronizer_mtbf -
+      report_pipeline_analysis -
+      report_ram_utilization -
+      report_control_sets -
+      report_carry_chains -
+      report_power -
+      report_io -
+      report_design_analysis -
+      report_high_fanout_nets -
+      report_datasheet -
+      report_clock_utilization -
+      report_utilization -
+      report_environment {
+        processDefaultReport $filename $channel $maxnumtables $pattern $inline 0
+      }
+      report_exceptions {
+        processDefaultReport $filename $channel $maxnumtables $pattern $inline 1
+      }
+      default {
+        processDefaultReport $filename $channel $maxnumtables $pattern $inline 0
+      }
+    }
+
+    if {$ofilename == {}} {
+      if {($channel != {stdout}) && ($channel != {})} {
+        close $channel
+        set channel {}
+        puts " -I- Generated file [file normalize $fileout]"
+      }
+    }
+
+  }
+
+  if {$ofilename != {}} {
+    close $channel
+    puts " -I- Generated file [file normalize $ofilename]"
+  }
+
+  return -code ok
+}
+
+namespace eval ::tb::utils {
+  namespace import -force ::tb::utils::rptutils::rptutils
+}
+
+namespace eval ::tb {
+  namespace import -force ::tb::utils::rptutils
+}
+
+
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tb::utils::rptutils::rptutils
+} else {
+  if {[catch {eval [concat ::tb::utils::rptutils::rptutils $argv]} errorstring]} {
+    puts $errorstring
+    exit 1
+  }
+  exit 0
+}
