@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.03.25
+## Version:        2016.04.08
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,6 +265,7 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.04.08 - Added 'appendrow' method
 ## 2016.03.25 - Added 'numcols' method
 ##            - Added new format for 'export' method (array)
 ##            - Fixed help message for 'numrows' method
@@ -332,7 +333,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
-  variable version {2016.03.25}
+  variable version {2016.04.08}
 } ]
 
 #------------------------------------------------------------------------
@@ -1061,6 +1062,60 @@ proc ::tb::prettyTable::method:addrow {self args} {
   }
   eval lappend ${self}::table $args
   incr ${self}::numRows
+  return 0
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:appendrow
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> appendrow <list>
+#------------------------------------------------------------------------
+# Append a row to the previous row of the table
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:appendrow {self args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Append a row to the previous row
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {$numRows == 0} {
+    # If the table is empty, then add the row
+    switch [llength $args] {
+      0 {
+        return 0
+      }
+      1 {
+        lappend table [lindex $args end]
+      }
+      default {
+        lappend table $args
+      }
+    }
+    incr numRows
+    return 0
+  }
+  set previousrow [lindex $table end]
+  set row [list]
+  switch [llength $args] {
+    0 {
+      return 0
+    }
+    1 {
+      foreach el1 $previousrow el2 [lindex $args 0] {
+        lappend row [format {%s%s} $el1 $el2]
+      }
+    }
+    default {
+      foreach el1 $previousrow el2 $args {
+        lappend row [format {%s%s} $el1 $el2]
+      }
+    }
+  }
+  set table [lreplace $table end end $row]
   return 0
 }
 
