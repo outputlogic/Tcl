@@ -2,9 +2,6 @@
 # use -*-TCL-*- \
 exec tclsh "$0" -- ${1+"$@"}
 
-# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
-set ::argv [lrange $::argv 1 end]
-
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
@@ -1673,6 +1670,8 @@ if {[file tail [info script]]!=[file tail $argv0]} {
   if {!$QUIET} { puts " INFO - sourcing [info script]" }
 #   ::tb::utils::rptutils::rptutils
 } else {
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  set ::argv [lrange $::argv 1 end]
   if {[catch {eval [concat ::tb::utils::rptutils::rptutils $argv]} errorstring]} {
     puts $errorstring
     exit 1
