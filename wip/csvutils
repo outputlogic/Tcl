@@ -2,9 +2,6 @@
 # use -*-TCL-*- \
 exec tclsh "$0" -- ${1+"$@"}
 
-# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
-set ::argv [lrange $::argv 1 end]
-
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
@@ -18,12 +15,13 @@ set ::argv [lrange $::argv 1 end]
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.06
+## Version:        2016.04.08
 ## Description:    Utility to manipulate CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.08 - Fixed error with sh exec command to execute script
 ## 2016.04.06 - Added support for -trim
 ##            - Added support for -force
 ##            - Added support for -backup
@@ -947,6 +945,8 @@ if {[file tail [info script]]!=[file tail $argv0]} {
   if {!$QUIET} { puts " INFO - sourcing [info script]" }
 #   ::tb::utils::csvutils::csvutils
 } else {
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  set ::argv [lrange $::argv 1 end]
   if {[catch {eval [concat ::tb::utils::csvutils::csvutils $argv]} errorstring]} {
     puts $errorstring
     exit 1
