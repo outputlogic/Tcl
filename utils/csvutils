@@ -15,12 +15,18 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.08
+## Version:        2016.04.11
 ## Description:    Utility to manipulate CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.11 - Added support for -inline
+##            - Renamed -noheader to -no_csv_header
+##            - Added support for -no_header
+##            - Changed -merge to be able to merge tables within the same CSV file
+##            - Converting multiple tables per CSV files is now supported
+##            - Misc code improvements
 ## 2016.04.08 - Fixed error with sh exec command to execute script
 ## 2016.04.06 - Added support for -trim
 ##            - Added support for -force
@@ -55,7 +61,7 @@ namespace eval ::tb::utils {
 namespace eval ::tb::utils::csvutils {
   namespace export csvutils
 
-  variable version {2016.04.06}
+  variable version {2016.04.11}
   variable channel {}
   variable callbackfile {}
   array set params [list indent 0 maxlines -1 verbose 0 debug 0 addcolumns {} ]
@@ -287,68 +293,128 @@ proc ::tb::utils::csvutils::split-csv { str {sepChar ,} {trim 0} } {
 ##-----------------------------------------------------------------------
 ## Read CSV file and return a Table object
 ##-----------------------------------------------------------------------
-proc ::tb::utils::csvutils::read-csv {&tbl filename {csvDelimiter ,} {parseHeader 1} {trim 0}} {
+proc ::tb::utils::csvutils::read-csv {&tbl FHin FHout filename {merge 0} {inline 0} {csvDelimiter ,} {parseHeader 1} {trim 0}} {
   variable params
   variable channel
-  if {![file exists $filename]} {
-    error " -E- file '$filename' does not exist"
+  if {[eof $FHin]} {
+    error " -E- EOF has been reached for file '$filename'"
   }
   upvar 1 ${&tbl} tbl
-  set FH [open $filename]
-  set first 1
   set count 0
-  while {![eof $FH]} {
-    gets $FH line
-    # Skip comments and empty lines
-    if {[regexp {^\s*#} $line]} { continue }
-    if {[regexp {^\s*$} $line]} { continue }
-    if {$first} {
+  set foundtable 0
+  set discardtable 0
+  while {![eof $FHin]} {
+    gets $FHin line
+    if {$foundtable} {
+      if {[regexp {^\s*#} $line]} {
+       # Once a table has been found, a comment line means
+       # end of the current table
+        break
+#         continue
+      } elseif {[regexp {^\s*$} $line]} {
+       # Once a table has been found, an empty line means
+       # end of the current table
+        break
+      }
+    } else {
+      if {[regexp {^\s*#} $line] || [regexp {^\s*$} $line]} {
+        # Else just skip comments and empty lines
+        if {$inline} {
+          if {$FHout != {}} {
+            puts $FHout [format {# %s} $line]
+#             puts $FHout $line
+          }
+        }
+        continue
+      }
+    }
+    if {$foundtable == 0} {
+      # First line that makes the table ... must be the header
+      set foundtable 1
       set header [split-csv $line $csvDelimiter $trim]
-      if {[subst $${tbl}::header] != {}} {
-        # If we are in merge mode, then check that the header for this CSV file
-        # does match the existing header
+      if {$merge} {
+        # In merge mode, check that the header for this CSV table
+        # matches the header of the current saved table
         if {$parseHeader} {
-          if {![lequal [subst $${tbl}::header] $header]} {
+          # Extra columns to be appended?
+          foreach col $params(addcolumns) {
+            lappend header $col
+          }
+          if {([subst $${tbl}::header] != {}) && ![lequal [subst $${tbl}::header] $header]} {
+            # If a table already exist, check that the header of the table match the header
+            # of the table currently being parsed
+            puts " -W- The CSV header does not match. Table from file $filename skipped"
+            puts " -I- CSV header: $header"
             if {$params(verbose)} {
-              puts " -I- CSV header: $header"
+#               puts " -I- CSV header: $header"
               puts " -I- Table header: [subst $${tbl}::header]"
             }
-            puts " -W- The CSV header does not match. File $filename skipped"
-            return 1
-          }
-        }
-      }
-      # Columns to be appended to the header?
-      foreach col $params(addcolumns) {
-        lappend header $col
-      }
-      if {$parseHeader} {
-        $tbl header $header
-      } else {
-        # If the CSV file has no header, create an empty header with correct number
-        # of columns and add the first line as a row
-        set L [list] ; foreach el $header { lappend L {} }
-        $tbl header $L
-        # Call callback proc to decide whether the row should be added or not
-        if {[catch {set L [callback $header]} errorstring]} {
-          # If an error is catched, then don't add the row
-          if {$params(verbose)} {
-            puts " -W- Callback failed: $errorstring"
+            # The code continues to parse the table, but the table will
+            # be discarded at the end
+            set discardtable 1
+          } else {
+            # Save header
+            $tbl header $header
           }
         } else {
-          if {$L != [list]} {
-            # Add row if returned list is not empty
-            $tbl addrow $L
-            incr count
+          # If the CSV file has no header, create an empty header with correct number
+          # of columns and add the first line as a row
+          set L [list] ; foreach el $header { lappend L {} }
+          $tbl header $L
+          # Call callback proc to decide whether the row should be added or not
+          if {[catch {set L [callback $header]} errorstring]} {
+            # If an error is catched, then don't add the row
+            if {$params(verbose)} {
+              puts " -W- Callback failed: $errorstring"
+            }
+          } else {
+            if {$L != [list]} {
+              # Add row if returned list is not empty
+              $tbl addrow $L
+              incr count
+            }
           }
         }
-#         $tbl addrow [callback $header]
-#         incr count
+      } else {
+        # We are not in merged mode, so each table is independent
+        if {$parseHeader} {
+          # Extra columns to be appended?
+          foreach col $params(addcolumns) {
+            lappend header $col
+          }
+          $tbl header $header
+        } else {
+          # If the CSV file has no header, create an empty header with correct number
+          # of columns and add the first line as a row
+          set L [list] ; foreach el $header { lappend L {} }
+          $tbl header $L
+          # Call callback proc to decide whether the row should be added or not
+          if {[catch {set L [callback $header]} errorstring]} {
+            # If an error is catched, then don't add the row
+            if {$params(verbose)} {
+              puts " -W- Callback failed: $errorstring"
+            }
+          } else {
+            if {$L != [list]} {
+              # Add row if returned list is not empty
+              $tbl addrow $L
+              incr count
+            }
+          }
+        }
       }
-      set first 0
     } else {
+      # The current line is a new row for the table
+      if {$discardtable} {
+        # In merge mode, the table can be discarded if the header does not
+        # match the header of the first table ever encountered. In this case,
+        # do not save the rows
+        incr count
+        continue
+      }
+      set row [split-csv $line $csvDelimiter $trim]
       # Call callback proc to decide whether the row should be added or not
-      if {[catch {set L [callback [split-csv $line $csvDelimiter $trim]]} errorstring]} {
+      if {[catch {set L [callback $row]} errorstring]} {
         # If an error is catched, then don't add the row
         if {$params(verbose)} {
           puts " -W- Callback failed: $errorstring"
@@ -360,25 +426,25 @@ proc ::tb::utils::csvutils::read-csv {&tbl filename {csvDelimiter ,} {parseHeade
           incr count
         }
       }
-#       $tbl addrow [callback [split-csv $line $csvDelimiter $trim] ]
-#       incr count
     }
     # Did we reach the max number of lines to read per CSV?
     if {($params(maxlines) >= 0) && ($count >= $params(maxlines))} {
       break
     }
   }
-  close $FH
-  if {$params(verbose)} {
-    if {$channel != {}} {
-      puts $channel " -I- Header: $header"
-      puts $channel " -I- Number of imported row(s): $count"
-    } else {
-      puts " -I- Header: $header"
-      puts " -I- Number of imported row(s): $count"
-    }
+
+  if {$params(verbose) && !$discardtable} {
+    puts " -I- Header: [$tbl header]"
+    puts " -I- Number of imported row(s): $count"
+  } elseif {$params(verbose) && $discardtable} {
+    puts " -I- Header: [$tbl header]"
+    puts " -I- Number of discarded row(s): $count"
   }
-  return 0
+  if {$discardtable} {
+    return 0
+  }
+  # Return code: 1 if table found, 0 otherwise
+  return $foundtable
 }
 
 ##-----------------------------------------------------------------------
@@ -446,6 +512,56 @@ proc ::tb::utils::csvutils::transpose {table} {
 }
 
 ##-----------------------------------------------------------------------
+## saveTable
+##-----------------------------------------------------------------------
+## Save the table
+##-----------------------------------------------------------------------
+proc ::tb::utils::csvutils::saveTable {&tbl outputFormat tableType alignment parseHeader} {
+  variable params
+  variable channel
+  upvar 1 ${&tbl} tbl
+
+  switch $outputFormat {
+    table {
+      switch $alignment {
+        right {
+          if {$parseHeader} {
+            puts $channel "[$tbl print -format $tableType -align_right]\n"
+          } else {
+            puts $channel "[$tbl print -format $tableType -align_right -noheader]\n"
+          }
+        }
+        default {
+          if {$parseHeader} {
+            puts $channel "[$tbl print -format $tableType]\n"
+          } else {
+            puts $channel "[$tbl print -format $tableType -noheader]\n"
+          }
+        }
+      }
+    }
+    csv {
+      if {$parseHeader} {
+        puts $channel "[$tbl export -format csv]\n"
+      } else {
+        puts $channel "[$tbl export -format csv -noheader]\n"
+      }
+    }
+    list {
+      puts $channel "[$tbl export -format list]\n"
+    }
+    tcl {
+      puts $channel "[$tbl export -format tcl]\n"
+    }
+    array {
+      puts $channel "[$tbl export -format array]\n"
+    }
+  }
+
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
 ## csvutils
 ##-----------------------------------------------------------------------
 ## Main proc
@@ -476,7 +592,9 @@ proc ::tb::utils::csvutils::csvutils {args} {
   set table {classic}
   set alignment {left}
   set parseHeader 1
+  set writeheader 1
   set trimCell 0
+  set inline 0
   set transpose 0
   # Add separator between CSV files (merge mode)
   set addseparator 1
@@ -514,8 +632,14 @@ proc ::tb::utils::csvutils::csvutils {args} {
       {^-ap(p(e(nd?)?)?)?$} {
         set mode {a}
       }
-      {^-no(h(e(a(d(er?)?)?)?)?)?$} {
+      {^-no_c(s(v(_(h(e(a(d(er?)?)?)?)?)?)?)?)?$} {
         set parseHeader 0
+      }
+      {^-no_h(e(a(d(er?)?)?)?)?$} {
+        set writeheader 0
+      }
+      {^-no_s(e(p(a(r(a(t(or?)?)?)?)?)?)?)?$} {
+        set addseparator 0
       }
       {^-tr(a(n(s(p(o(se?)?)?)?)?)?)?$} {
         set transpose 1
@@ -526,14 +650,14 @@ proc ::tb::utils::csvutils::csvutils {args} {
       {^-m(e(r(ge?)?)?)?$} {
         set merge 1
       }
+      {^-in(l(i(ne?)?)?)?$} {
+        set inline 1
+      }
       {^-fo(r(ce?)?)?$} {
         set force 1
       }
       {^-ba(c(k(up?)?)?)?$} {
         set backup 1
-      }
-      {^-no(_(s(e(p(a(r(a(t(or?)?)?)?)?)?)?)?)?)?$} {
-        set addseparator 0
       }
       {^-le(an?)?$} {
         set table {lean}
@@ -653,12 +777,14 @@ proc ::tb::utils::csvutils::csvutils {args} {
                   [-merge]
                   [-transpose]
               +--------------------+
+                  [-inline]
                   [-no_separator]
                   [-max_lines <num>]
                   [-indent <num>]
                   [-remove_columns <pattern>]
                   [-add_column <string>]
-                  [-noheader]
+                  [-no_csv_header]
+                  [-no_header]
                   [-delimiter <csv-delimiter>]
                   [-trim]
                   [-callback <filename>]
@@ -674,7 +800,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
         directory as the CSV file with .rpt
 
         Use -stdout to redirect output to stdout
-        Use -noheader when the CSV file(s) has no header
+        Use -no_csv_header when the CSV file(s) has no header
         Use -transpose to transpose the CSV
         Use -csv with -merge to generate a CSV merged file
         Use -max_lines to limit the number of lines imported per CSV
@@ -692,8 +818,8 @@ proc ::tb::utils::csvutils::csvutils {args} {
          csvutils -input file1.csv -delimiter ';'
          csvutils *.csv -output result.rpt -merge
          csvutils -input *.csv -output result.csv -merge -csv
-         csvutils -input *.csv -noheader -remove_columns 0,3-5,7
-         csvutils -input *.csv -noheader -add_column 'col1' -add_column 'col2'
+         csvutils -input *.csv -no_csv_header -remove_columns 0,3-5,7
+         csvutils -input *.csv -no_csv_header -add_column 'col1' -add_column 'col2'
 
     } $version ]
     # HELP -->
@@ -709,8 +835,8 @@ proc ::tb::utils::csvutils::csvutils {args} {
   }
 
   if {$merge} {
-    if  {!$stdout && $ofilename == {}} {
-      puts " -E- -merge must be used with -output or -stdout"
+    if  {!$stdout && ($ofilename == {}) && ([llength $ifilename] > 1)} {
+      puts " -E- when multiple input files are specified, -merge must be used with -output or -stdout"
       incr error
     }
   }
@@ -765,9 +891,11 @@ proc ::tb::utils::csvutils::csvutils {args} {
       error " -E- $errorstring"
 #       exit 1
     }
-    puts $channel "# ----------------------------------------------------------------------"
-    puts $channel [format {# Created on %s with csvutils (%s)} [clock format [clock seconds]] $::tb::utils::csvutils::version ]
-    puts $channel "# ----------------------------------------------------------------------\n"
+    if {$writeheader} {
+      puts $channel "# ----------------------------------------------------------------------"
+      puts $channel [format {# Created on %s with csvutils (%s)} [clock format [clock seconds]] $::tb::utils::csvutils::version ]
+      puts $channel "# ----------------------------------------------------------------------\n"
+    }
   }
 
   set tbl [::tb::prettyTable]
@@ -775,41 +903,57 @@ proc ::tb::utils::csvutils::csvutils {args} {
 
   set first 1
   foreach filename $ifilename {
+    set firsttableinfile 1
     if {$params(verbose)} {
       puts " -I- Processing file $filename"
     }
-    if {$merge} {
-      if {!$first} {
-        if {$addseparator} {
-          # Add separator between CSV files
-          $tbl separator
-        }
+
+    if {$outputMode == {multiple}} {
+      # Generate the report file
+      set ofilename "[file rootname $filename].rpt"
+      if {[file exists $ofilename] && !$force} {
+        puts " -W- file $ofilename already exist. Use -force to override"
+        continue
       }
-      read-csv tbl $filename $csvDelimiter $parseHeader $trimCell
-      set first 0
-    } else {
-      $tbl reset
-      $tbl configure -indent $params(indent)
-      $tbl title "CSV: [file normalize $filename]"
-      read-csv tbl $filename $csvDelimiter $parseHeader $trimCell
-      if {$outputMode == {multiple}} {
-        # Generate the report file
-        set ofilename "[file rootname $filename].rpt"
-        if {[file exists $ofilename] && !$force} {
-          puts " -W- file $ofilename already exist. Use -force to override"
-          continue
-        }
-        if {$backup && [file exists $ofilename]} {
-          backup_file $ofilename
-        }
-        if {[catch {set channel [open $ofilename $mode]} errorstring]} {
-          puts " -E- skipping file '$filename' due to following error:"
-          puts " -E- $errorstring"
-          continue
-        }
+      if {$backup && [file exists $ofilename]} {
+        backup_file $ofilename
+      }
+      if {[catch {set channel [open $ofilename $mode]} errorstring]} {
+        puts " -E- skipping file '$filename' due to following error:"
+        puts " -E- $errorstring"
+        continue
+      }
+      if {$writeheader} {
         puts $channel "# ----------------------------------------------------------------------"
         puts $channel [format {# Created on %s with csvutils (%s)} [clock format [clock seconds]] $::tb::utils::csvutils::version ]
         puts $channel "# ----------------------------------------------------------------------\n"
+      }
+    }
+
+    set FHin [open $filename]
+    while {![eof $FHin]} {
+      if {$merge} {
+        if {!$first} {
+          if {$addseparator} {
+            # Add separator between CSV files
+            $tbl separator
+          }
+        }
+      } else {
+        $tbl reset
+        $tbl configure -indent $params(indent)
+        $tbl title "CSV: [file normalize $filename]"
+      }
+      set foundtable [read-csv tbl $FHin $channel $filename $merge $inline $csvDelimiter $parseHeader $trimCell]
+      if {!$foundtable} {
+        # No table found, nothing else to process
+        continue
+      }
+      set first 0
+      if {$merge} {
+        # Merge mode, nothing to save at that point
+        set firsttableinfile 0
+        continue
       }
       if {$removecols != {}} {
         # Remove columns based on provided pattern
@@ -822,48 +966,18 @@ proc ::tb::utils::csvutils::csvutils {args} {
         # Transpose the table
         transpose tbl
       }
-      switch $outputFormat {
-        table {
-          switch $alignment {
-            right {
-              if {$parseHeader} {
-                puts $channel "[$tbl print -format $table -align_right]\n"
-              } else {
-                puts $channel "[$tbl print -format $table -align_right -noheader]\n"
-              }
-            }
-            default {
-              if {$parseHeader} {
-                puts $channel "[$tbl print -format $table]\n"
-              } else {
-                puts $channel "[$tbl print -format $table -noheader]\n"
-              }
-            }
-          }
-        }
-        csv {
-          if {$parseHeader} {
-            puts $channel "[$tbl export -format csv]\n"
-          } else {
-            puts $channel "[$tbl export -format csv -noheader]\n"
-          }
-        }
-        list {
-          puts $channel "[$tbl export -format list]\n"
-        }
-        tcl {
-          puts $channel "[$tbl export -format tcl]\n"
-        }
-        array {
-          puts $channel "[$tbl export -format array]\n"
-        }
-      }
-      if {$outputMode == {multiple}} {
-        close $channel
-        puts " -I- Generated file [file normalize $ofilename]"
-        set channel {}
-      }
+      saveTable tbl $outputFormat $table $alignment $parseHeader
+      set firsttableinfile 0
+
     }
+    if {$outputMode == {multiple}} {
+      # Close current output file
+      close $channel
+      puts " -I- Generated file [file normalize $ofilename]"
+      set channel {}
+    }
+    # Close current input file
+    close $FHin
   }
 
   if {$merge} {
@@ -878,42 +992,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
       # Transpose the table
       transpose tbl
     }
-    switch $outputFormat {
-      table {
-        switch $alignment {
-          right {
-            if {$parseHeader} {
-              puts $channel "[$tbl print -format $table -align_right]\n"
-            } else {
-              puts $channel "[$tbl print -format $table -align_right -noheader]\n"
-            }
-          }
-          default {
-            if {$parseHeader} {
-              puts $channel "[$tbl print -format $table]\n"
-            } else {
-              puts $channel "[$tbl print -format $table -noheader]\n"
-            }
-          }
-        }
-      }
-      csv {
-        if {$parseHeader} {
-          puts $channel "[$tbl export -format csv]\n"
-        } else {
-          puts $channel "[$tbl export -format csv -noheader]\n"
-        }
-      }
-      list {
-        puts $channel "[$tbl export -format list]\n"
-      }
-      tcl {
-        puts $channel "[$tbl export -format tcl]\n"
-      }
-      array {
-        puts $channel "[$tbl export -format array]\n"
-      }
-    }
+    saveTable tbl $outputFormat $table $alignment $parseHeader
   }
 
   if {($channel != {stdout}) && ($channel != {})} {
