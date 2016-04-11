@@ -15,13 +15,13 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.08
+## Version:        2016.04.11
 ## Description:    Utility to convert Vivado report(s) into CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
-## 2016.04.08 - Initial release
+## 2016.04.11 - Initial release
 ########################################################################################
 
 # if {[file tail [info script]]!=[file tail $argv0]} {
@@ -43,7 +43,7 @@ namespace eval ::tb::utils {
 namespace eval ::tb::utils::rptutils {
   namespace export rptutils
 
-  variable version {2016.04.08}
+  variable version {2016.04.11}
   variable channel {}
   array set params [list format {csv} extension {csv} writeheader 1 verbose 0 debug 0 ]
 }
@@ -271,8 +271,11 @@ proc ::tb::utils::rptutils::join-csv { list {sepChar ,} } {
 #     -0.261       -0.261                      1
 #
 #  extract_columns [string trimright $line] { }
+#                ^                          ^^^
 #   => {11 24}
+#
 #  extract_columns2 [string trimright $line] {-} =>
+#                ^^                          ^^^
 #   => {4 17 26}
 
 # This columns returned by extract_columns are the right-most position of each column
@@ -314,6 +317,7 @@ proc ::tb::utils::rptutils::extract_columns2 { str match } {
 # of the columns
 #------------------------------------------------------------------------
 # To be used with extract_columns
+#                               ^
 proc ::tb::utils::rptutils::extract_row {str columns} {
   lappend columns [string length $str]
   set row [list]
@@ -326,10 +330,15 @@ proc ::tb::utils::rptutils::extract_row {str columns} {
   return $row
 }
 
+#------------------------------------------------------------------------
+# ::tb::utils::rptutils::extract_row2
+#------------------------------------------------------------------------
+# Extract all the cells of a row (string) based on the position
+# of the columns
+#------------------------------------------------------------------------
 # To be used with extract_columns2
+#                               ^^
 proc ::tb::utils::rptutils::extract_row2 {str columns} {
-# puts "<columns:$columns>"
-# puts "<str><$str>"
   set row [list]
   for {set i 0} {$i < [expr [llength $columns] -1]} {incr i} {
     set value [string trim [string range $str [lindex $columns $i] [expr [lindex $columns [expr $i +1]] -1] ] ]
@@ -406,6 +415,8 @@ proc ::tb::utils::rptutils::parseClockInteractionReport {report} {
     set line [lindex $report $index]
     switch $SM {
       header {
+        # From Clock  To Clock  Clock Edges  WNS(ns)  TNS(ns)  Endpoints  Endpoints  Requirement(ns)  Primary Clock  Constraints
+        # ----------  --------  -----------  -------  -------  ---------  ---------  ---------------  -------------  -----------
         if {[regexp {^\-+\s+\-+\s+\-+} $line]} {
           set columns [extract_columns [string trimright $line] { }]
           set header1 [extract_row [lindex $report [expr $index -2]] $columns]
@@ -441,6 +452,24 @@ proc ::tb::utils::rptutils::createSummaryClockInteractionReport {filein} {
   set FH [open $filein {r}]
   set report [read $FH]
   close $FH
+
+ # E.g of summary table created:
+ # "Inter-Clock Constraints","Count"
+ # "False Path","11"
+ # "Asynchronous Groups","62"
+ # "Partial False Path","20"
+ # "Max Delay Datapath Only","20"
+ # "Timed","11"
+ # => equivalent table format:
+ # +-------------------------+-------+
+ # | Inter-Clock Constraints | Count |
+ # +-------------------------+-------+
+ # | False Path              | 11    |
+ # | Asynchronous Groups     | 62    |
+ # | Partial False Path      | 20    |
+ # | Max Delay Datapath Only | 20    |
+ # | Timed                   | 11    |
+ # +-------------------------+-------+
 
   set clock_interaction_table [parseClockInteractionReport $report]
   set colFromClock -1
@@ -557,6 +586,7 @@ proc ::tb::utils::rptutils::processCDCReport {filein channel {merge 0}} {
   set count 0
   set first 1
   foreach key [presort_list {summary} [array names cdcTables]] {
+    # Each key is a table from report_cdc
 
     switch $key {
       summary {
@@ -629,6 +659,7 @@ proc ::tb::utils::rptutils::processCDCReport {filein channel {merge 0}} {
 # merge = 1 : merge all the detailed tables into a single table
 proc ::tb::utils::rptutils::parseCDCReport {report {merge 0}} {
   set columns [list]
+  # Associative array of summary + clock-pairs tables
   catch {unset tables}
   set table [list]
   set report [split $report \n]
@@ -651,8 +682,8 @@ proc ::tb::utils::rptutils::parseCDCReport {report {merge 0}} {
         }
         if {[regexp {^\-+\s+\-+\s+\-+\s+\-+\s*$} $line]} {
           # Match table header for summary table
-          #   ID  Count  Description  Detail
-          #   --  -----  -----------  ------
+          #   ID  Severity  Count  Description
+          #   --  --------  -----  -----------
           set columns [extract_columns [string trimright $line] { }]
           set header [extract_row [lindex $report [expr $index -1]] $columns]
           set row [list]
@@ -687,6 +718,7 @@ proc ::tb::utils::rptutils::parseCDCReport {report {merge 0}} {
           set row [extract_row $line $columns]
           if {($sourceClock != {}) || ($destinationClock != {})} {
             if {$merge} {
+              # In merge mode, the row is modified to insert 3 additional columns
               set row [linsert $row 0 $cdcType $sourceClock $destinationClock]
             }
           }
@@ -737,13 +769,14 @@ proc ::tb::utils::rptutils::processDRCReport {filein channel} {
   close $FH
   set rows [createSummaryDRCReport $filein]
 
-  #  ID      Severity  Count  Description
-  #  ------  --------  -----  -------------------------------------------------------
-  #  CDC-1   Critical      1  1-bit unknown CDC circuitry
-  #  CDC-3   Info         37  1-bit synchronized with ASYNC_REG property
-  #  CDC-6   Warning       1  Multi-bit synchronized with ASYNC_REG property
-  #  CDC-9   Info          1  Asynchronous reset synchronized with ASYNC_REG property
-  #  CDC-15  Warning       1  Clock enable controlled CDC structure detected
+  # E.g:
+
+  # ID         Severity  Count  Description
+  # ---------  --------  -----  ----------------------------------------------------------------------------------
+  # CLKC-10    Advisory  1      MMCME3 divide could be done by BUFG_GT
+  # CLKC-27    Advisory  1      MMCME3 with BUF_IN drives sequential IO not with CLKOUT0
+  # CLKC-29    Advisory  2      MMCME3 not driven by IO has BUFG in feedback loop
+  # CLKC-39    Advisory  1      Substitute PLLE3 for MMCME3 check
 
   puts $channel "#####################################"
   puts $channel "# Summary table"
@@ -774,26 +807,40 @@ proc ::tb::utils::rptutils::processDRCReport {filein channel} {
   set category {n/a}; set msg {n/a}; set related {n/a}
   while {$loop && ![eof $FHin]} {
     gets $FHin line
+    # E.g of DRC violation to parse:
+    #  BUFC-1#1 Warning
+    #  Input Buffer Connections
+    #  Input buffer clk_aux_IBUF_inst/IBUFCTRL_INST (in clk_aux_IBUF_inst macro) has no loads. It is recommended to have an input buffer drive an internal load.
+    #  Related violations: <none>
     switch $stage {
       0 {
+        # E.g: BUFC-1#1 Warning
         if {[regexp {^\s*([^-]+)-([0-9]+)#[0-9]+\s+([\w]+)} $line -- drcname drcnum severity]} {
           incr stage
         }
       }
       1 {
+        # E.g: Input Buffer Connections
         set category [string trim $line]
         incr stage
       }
       2 {
+        # E.g: Input buffer clk_aux_IBUF_inst/IBUFCTRL_INST ...
         set msg [string trim $line]
         incr stage
       }
       3 {
+        # Some of the DRC messages can be multi-lines. Only the first line
+        # is captured in stage 2. Look for the string 'Related violations'
+        # to end the current DRC. In case this string is missing, look for
+        # the beginning of new DRC too.
         if {[regexp {^\s*Related\s+violations\s*:\s+(.+)$} $line -- related]} {
           set related [string trim $related]
           lappend content [list $drcname $drcnum $severity $category $msg $related]
           set stage 0
         } elseif {[regexp {^\s*([^-]+)-([0-9]+)#[0-9]+\s+([\w]+)} $line]} {
+          # Beginning of new DRC? If yes, then catch it and jump to stage 1
+          # for the DRC category
           lappend content [list $drcname $drcnum $severity $category $msg {}]
           regexp {^\s*([^-]+)-([0-9]+)#[0-9]+\s+([\w]+)} $line -- drcname drcnum severity
           set stage 1
@@ -824,24 +871,37 @@ proc ::tb::utils::rptutils::createSummaryDRCReport {filein} {
   # Abstract original report_methodology report:
   #   2. REPORT DETAILS
   #   -----------------
-  #   CKLD-2#1 Warning
-  #   Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads
-  #   Clock net FC_TSCLK_IBUF_inst/O is directly driven by an IO rather than a Clock Buffer or may be an IO driving a mix of Clock Buffer and non-Clock loads. This connectivity should be reviewed and corrected as appropriate. Driver(s): FC_TSCLK_IBUF_inst/IBUFCTRL_INST/O
+  #   CLKC-10#1 Advisory
+  #   MMCME3 divide could be done by BUFG_GT
+  #   The MMCME3 cell bb200_top_i/reiska_top/clocks_resets_0/U0/i_cpri_ref_pll/inst/mmcme3_adv_inst driven by BUFG_GT cell bb200_top_i/reiska_top/cpri_if_0/U0/i_refclk_gen/gen_master_refclk.i0_refclk_bufg_gt uses CLKOUT* output(s) with a DIVIDE value of [1..8] which could be accomplished using a BUFG_GT divide capability. Consider using BUFG_GT(s) to accomplish the desired divide(s).
+  #   Related violations: <none>
+  #
+  #   CLKC-27#1 Advisory
+  #   MMCME3 with BUF_IN drives sequential IO not with CLKOUT0
+  #   The MMCME3 cell bb200_top_i/reiska_top/clocks_resets_0/U0/i_cpri_ref_pll/inst/mmcme3_adv_inst has COMPENSATION value BUF_IN, but CLKOUT1 output drives sequential IO cells. In order to achieve insertion delay and phase-alignment for the IO sequential cells, a COMPENSATION of ZHOLD must be used and CLKOUT0 output must be the driver.
   #   Related violations: <none>
   #
   #   PDRC-190#1 Warning
   #   Suboptimally placed synchronized register chain
-  #   The FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/shift_reg_in_reg[2] in site SLICE_X105Y474 is part of a synchronized register chain that is suboptimally placed as the load FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/shift_reg_in_reg[1] is not placed in the same (SLICE) site.
+  #   The FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD4/shift_reg_in_reg[12] in site SLICE_X121Y119 is part of a synchronized register chain that is suboptimally placed as the load FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD4/shift_reg_in_reg[11] is not placed in the same (SLICE) site.
   #   Related violations: <none>
   #
-  #   SYNTH-6#1 Warning
-  #   Timing of a block RAM might be sub-optimal
-  #   The timing for the instance gen_phy_user.user/phy_slr_1_1/user_fault_monitor/from_rom_rdata_reg, implemented as a block RAM, might be sub-optimal as no output register was merged into the block
+  #   XDCH-2#23 Warning
+  #   Same min and max delay values on IO port
+  #   The same input delay of 1.000 ns has been defined on port 'k2_gpio[5]' relative to clock axi_aclk for both max and min. Make sure this reflects the design intent.
+  #   set_input_delay -clock [get_clocks axi_aclk] 1.000 [get_ports {qsfp*_sda qsfp*_modprsl qsfp*_intl reset_bmu_n debug_uart_rx {k2_gpio[*]} {sma_bus[*]} {c0_rxp[*]} {c0_rxn[*]} {c1_rxp[*]} {c1_rxn[*]} qsfp*_scl sei_scl sei_sda}]
+  #   /local_data/without_backup/tommiska/reiska_temp0126_2/bb200_top_wrapper.xdc (Line: 11)
   #   Related violations: <none>
   #
-  #   SYNTH-8#1 Warning
-  #   Resource sharing
-  #   The adder gen_phy_user.user/phy_slr_0_1/gen_ports[0].mld_test_pattern_1/TxPreMLD_i/TSXSUMADJ/Cnt_SOFoffsetP1_reg[3]_i_1_CARRY8 is shared. Consider applying a KEEP on the inputs of the operator to prevent sharing.
+  #   XDCV-1#54 Advisory
+  #   Incomplete constraint coverage due to missing original object used in replication.
+  #   The option '-from : [get_pins {test_features_aurora.test_ram_b_addr_r_reg[*]_rep/C}]' of the following constraint is attached to some replicated objects but not to the corresponding original object. Please review the missing original objects and assess if they need to be included in the constraint. Use 'get_cells or get_pins -include_replicated_objects <origObjectName>' to query all replicated objects associated with an original object.
+  #   Current Constraint: set_false_path -from [get_pins {test_features_aurora.test_ram_b_addr_r_reg[*]_rep/C}] -to [get_pins {i_test_features_aurora_axi4_registers/reg_tst_rx_}] ...
+  #   Current XDC: /local_data/without_backup/tommiska/reiska_temp0126_2/bb200_top/bb200_top.srcs/sources_1/bd/bb200_top/ip/bb200_top_test_features_aurora_1_0/test_features_aur.xdc (Line: 59)
+  #   Missing original cells:
+  #   <none>
+  #   Missing original pins:
+  #   bb200_top_i/reiska_top/test_features_aurora_1/U0/test_features_aurora.test_ram_b_addr_r_reg[5]/C
   #   Related violations: <none>
   set FH [open $filein {r}]
   set content [list]
@@ -882,35 +942,15 @@ proc ::tb::utils::rptutils::createSummaryDRCReport {filein} {
   set keys [lsort -increasing -dictionary -index 0 [lsort -increasing -integer -index 1 $keys]]
   # Recreate a fake summary report which is much smaller
   # E.g:
-  #   1 CKLD-2 [Warning] [Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads]
-  #   1 CLKC-5 [Warning] [BUFGCE with constant CE has BUFG driver]
-  #   2 CLKC-21 [Warning] [MMCME3 with ZHOLD does not drive sequential IO]
-  #   1 CLKC-29 [Warning] [MMCME3 not driven by IO has BUFG in feedback loop]
-  #   4 CLKC-39 [Warning] [Substitute PLLE3 for MMCME3 check]
-  #   1 PDRC-190 [Warning] [Suboptimally placed synchronized register chain]
-  #   127 SYNTH-4 [Warning] [Shallow depth for a dedicated block RAM]
-  #   249 SYNTH-6 [Warning] [Timing of a block RAM might be sub-optimal]
-  #   721 SYNTH-8 [Warning] [Resource sharing]
-  #   73 SYNTH-9 [Warning] [Small multiplier]
-  #   3 TIMING-3 [Warning] [Invalid primary clock on Clock Modifying Block]
-  #   1000 TIMING-9 [Warning] [Unknown CDC Logic]
-  #   1000 TIMING-10 [Warning] [Missing property on synchronizer]
-  #   96 TIMING-11 [Warning] [Inappropriate max delay with datapath only option]
-  #   11 TIMING-17 [Warning] [Non-clocked sequential cell]
-  #   23 TIMING-18 [Warning] [Missing input or output delay]
-  #   31 TIMING-24 [Warning] [Overridden Max delay datapath only]
-  #   234 TIMING-28 [Warning] [Auto-derived clock referenced by a timing constraint]
-  #   12 XDCB-1 [Warning] [Runtime intensive exceptions]
-  #   2 XDCB-2 [Warning] [Clock defined on multiple objects]
-  #   1 XDCC-4 [Warning] [User Clock constraint overwritten with the same name]
-  #   1 XDCC-8 [Warning] [User Clock constraint overwritten on the same source]
-  #   1 XDCV-2 [Warning] [Incomplete constraint coverage due to missing replicated objects.]
+  # CLKC-10 Advisory 1 {MMCME3 divide could be done by BUFG_GT}
+  # CLKC-27 Advisory 1 {MMCME3 with BUF_IN drives sequential IO not with CLKOUT0}
+  # CLKC-29 Advisory 2 {MMCME3 not driven by IO has BUFG in feedback loop}
+  # CLKC-39 Advisory 1 {Substitute PLLE3 for MMCME3 check}
+  # PDRC-190 Warning 93 {Suboptimally placed synchronized register chain}
   foreach el $keys {
     foreach {- - key} $el { break }
-#     lappend content [format {  %s %s [%s] [%s]} $drcs($key) $key $drcseverity($key) $drcmsg($key)]
     lappend content [list $key $drcseverity($key) $drcs($key) $drcmsg($key)]
   }
-#   set res [join $content \n]
   return $content
 }
 
@@ -924,11 +964,9 @@ proc ::tb::utils::rptutils::createSummaryDRCReport {filein} {
 #------------------------------------------------------------------------
 proc ::tb::utils::rptutils::processTimingSummaryReport {filein channel} {
   variable params
-
   set FH [open $filein {r}]
   set report [read $FH]
   close $FH
-#   foreach section [list {Design Timing Summary}] {}
   foreach section [list {Design Timing Summary} {Clock Summary} {Intra Clock Table} {Inter Clock Table} {Other Path Groups Table}] {
     puts $channel ""
     puts $channel "#####################################"
@@ -944,7 +982,6 @@ proc ::tb::utils::rptutils::processTimingSummaryReport {filein channel} {
     # Delete table
     catch {$tbl destroy}
   }
-
   return -code ok
 }
 
@@ -963,21 +1000,24 @@ proc ::tb::utils::rptutils::parseTimingSummaryReport {report section} {
     set line [lindex $report $index]
     switch $SM {
       search {
+        # E.g:
+        # ----------------------------------------
+        # | Design Timing Summary
+        # | ---------------------
+        # ----------------------------------------
         if {[regexp [format {^\s*\|\s*%s} $section] $line]
              && [regexp {^\s*\|\s+----+} [lindex $report [expr $index +1]]] } {
           set SM {header}
-# puts "<search><$line>"
         }
       }
       header {
+        # E.g:
+        #    WNS(ns)  TNS(ns)  TNS Failing Endpoints ...
+        #    -------  -------  --------------------- ...
         if {[regexp {^\s*\-+\s+\-+\s+\-+} $line]} {
-#           set columns [extract_columns [string trimright $line] { }]
           set columns [extract_columns2 [string trimright $line] {-}]
           set header [extract_row2 [lindex $report [expr $index -1]] $columns]
           set table [list $header ]
-# puts "<search><$header>"
-# puts "<1:[extract_columns [string trimright $line] { }]>"
-# puts "<2:[extract_columns2 [string trimright $line] {-}]>"
           if {[regexp {^\s*$} [lindex $report [expr $index +1]]]} {
             # If the index+1 line is empty, it means that the table is empty
             set SM {end}
@@ -999,7 +1039,6 @@ proc ::tb::utils::rptutils::parseTimingSummaryReport {report section} {
             "Inter Clock Table" -
             "Other Path Groups Table" {
               set row [extract_row2 $line $columns]
-#               set row [regsub -all {[ \t\n]+} $line { }]
               lappend table $row
             }
             default {
@@ -1048,7 +1087,6 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
     switch $SM {
       search_pattern {
         if {[regexp -nocase -- $pattern $line]} {
-# puts "<index:$index><pattern:$pattern><$line>"
           # Pattern found, now search for the table
           set SM {search_table}
         }
@@ -1101,7 +1139,6 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           regsub -all {\+} $line { } line
           set columns [extract_columns2 [string trimright $line] {-}]
           set print 0
-# puts "<classic><$line><$columns>"
         } elseif {[regexp {^\s*\+--*\+--*\+} $line]
              && [regexp {^\s*\|.+\|.+\|} [lindex $report [expr $index +1]]]
              && [regexp {^\s*\+--*\+--*\+} [lindex $report [expr $index +2]]] } {
@@ -1115,7 +1152,6 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           regsub -all {\+} $line { } line
           set columns [extract_columns2 [string trimright $line] {-}]
           set print 0
-# puts "<classic><$line><$columns>"
         } elseif {[regexp {^\-+\s+\-+\s+\-+} $line]} {
           # E.g:
           # WNS(ns)  TNS(ns)  TNS Failing Endpoints
@@ -1126,8 +1162,6 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           set header [extract_row2 [lindex $report [expr $index -1]] $columns]
           set table [list $header ]
           set print 0
-# puts "<lean><$line><$columns>"
-# puts "<header:$header>"
         }
       }
       header_classic {
@@ -1149,7 +1183,6 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           foreach h1 $header1 h2 $header2 {
             lappend header [string trim [format {%s %s} [string trim [format {%s} $h1]] [string trim [format {%s} $h2]]] ]
           }
-# puts "<header><$header>"
           lappend table $header
           set SM {table_classic}
           set print 0
@@ -1163,14 +1196,8 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           # +------------+------+-----------+-----+--------------+--------+
           # Removing column separator
           regsub -all {\|} $line { } line
-# puts "<$line>"
-#           set columns [extract_columns [string trimright $line] { }]
           set header [extract_row2 $line $columns]
-# puts "<header:$header><columns:$columns>"
           set table [list $header ]
-# puts "<search><$header>"
-# puts "<1:[extract_columns [string trimright $line] { }]>"
-# puts "<2:[extract_columns2 [string trimright $line] {-}]>"
           set SM {table_classic}
           set print 0
         }
@@ -1189,11 +1216,9 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           # E.g: (report_datasheet with no separator on first column)
           # led_bus[0]         |   7.491 (r) | SLOW    |   2.938 (r) | FAST    |    0.053 |
           # led_bus[1]         |   7.438 (r) | SLOW    |   2.942 (r) | FAST    |    0.004 |
-# puts "<$line>"
           # Removing column separator
           regsub -all {\|} $line { } line
           set row [extract_row2 $line $columns]
-# puts "<row><$row>"
           lappend table $row
           set print 0
         } elseif {[regexp {^\s*\+--*\+--*\+} $line]
@@ -1220,7 +1245,6 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
         # Check for empty line or for line that match '<empty>'
         if {(![regexp {^\s*$} $line]) && (![regexp -nocase {^\s*No clocks found.\s*$} $line])} {
           set row [extract_row2 $line $columns]
-# puts "<row:$row>"
           lappend table $row
           set print 0
         } elseif {[regexp {^\s*$} $line]} {
@@ -1254,7 +1278,6 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
         catch {$tbl destroy}
         set table [list]
         set columns [list]
-# puts "<maxnumtables:$maxnumtables><numtables:$numtables>"
         if {$maxnumtables != -1} {
           if {$numtables >= $maxnumtables} {
             set SM {end}
@@ -1528,7 +1551,7 @@ proc ::tb::utils::rptutils::rptutils {args} {
     if {$reportformat == {}} {
       set fileformat [getReportFormat $filename]
       if {$fileformat == {}} {
-        puts " -I- No file format detected. Use default format"
+        puts " -I- No file format detected for $filename . Use default format"
 #         if {$params(verbose)} {
 #           puts " -I- No file format detected. Use default format"
 #         }
