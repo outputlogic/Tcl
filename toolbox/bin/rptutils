@@ -15,12 +15,14 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.11
+## Version:        2016.04.19
 ## Description:    Utility to convert Vivado report(s) into CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.19 - Added support for -default
+##            - Minor code clean-up
 ## 2016.04.11 - Initial release
 ########################################################################################
 
@@ -43,7 +45,7 @@ namespace eval ::tb::utils {
 namespace eval ::tb::utils::rptutils {
   namespace export rptutils
 
-  variable version {2016.04.11}
+  variable version {2016.04.19}
   variable channel {}
   array set params [list format {csv} extension {csv} writeheader 1 verbose 0 debug 0 ]
 }
@@ -452,25 +454,23 @@ proc ::tb::utils::rptutils::createSummaryClockInteractionReport {filein} {
   set FH [open $filein {r}]
   set report [read $FH]
   close $FH
-
- # E.g of summary table created:
- # "Inter-Clock Constraints","Count"
- # "False Path","11"
- # "Asynchronous Groups","62"
- # "Partial False Path","20"
- # "Max Delay Datapath Only","20"
- # "Timed","11"
- # => equivalent table format:
- # +-------------------------+-------+
- # | Inter-Clock Constraints | Count |
- # +-------------------------+-------+
- # | False Path              | 11    |
- # | Asynchronous Groups     | 62    |
- # | Partial False Path      | 20    |
- # | Max Delay Datapath Only | 20    |
- # | Timed                   | 11    |
- # +-------------------------+-------+
-
+  # E.g of summary table created:
+  # "Inter-Clock Constraints","Count"
+  # "False Path","11"
+  # "Asynchronous Groups","62"
+  # "Partial False Path","20"
+  # "Max Delay Datapath Only","20"
+  # "Timed","11"
+  # => equivalent table format:
+  # +-------------------------+-------+
+  # | Inter-Clock Constraints | Count |
+  # +-------------------------+-------+
+  # | False Path              | 11    |
+  # | Asynchronous Groups     | 62    |
+  # | Partial False Path      | 20    |
+  # | Max Delay Datapath Only | 20    |
+  # | Timed                   | 11    |
+  # +-------------------------+-------+
   set clock_interaction_table [parseClockInteractionReport $report]
   set colFromClock -1
   set colToClock -1
@@ -552,6 +552,12 @@ proc ::tb::utils::rptutils::createSummaryClockInteractionReport {filein} {
     incr clockInteractionReport($interClockConstraints)
   }
 
+  # E.g of summary table created:
+  # "False Path","11"
+  # "Asynchronous Groups","62"
+  # "Partial False Path","20"
+  # "Max Delay Datapath Only","20"
+  # "Timed","11"
   set result [list]
   foreach name [array names clockInteractionReport] {
     regsub -all { } [string tolower $name] {_} string
@@ -1065,7 +1071,7 @@ proc ::tb::utils::rptutils::parseTimingSummaryReport {report section} {
 #------------------------------------------------------------------------
 #
 #------------------------------------------------------------------------
-proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -1} {pattern .+} {inline 0} {report_exception 0}} {
+proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -1} {pattern .+} {inline 0} {mode default}} {
   variable params
 
   set FH [open $filein {r}]
@@ -1108,7 +1114,7 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
             # +----------------------------+---------------+------------------+------------------+------------------+-----------+----------------+----------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------+
             # | clk_153m6_out_cpri_ref_pll |       0       |      153.58      |       6.511      |       6.500      |   -0.011  |       n/a      |        0       | bb200_top_i/reiska_top/receive_top_0/U0/inst_data_channel_rx_top/inst_equ_coeff_est/inst_rs1808/rs226.inst_rs/inst/axisc_register_slice_0/m_axis_tdata[1139]_INST_0/O | bb200_top_i/reiska_top/receive_top_0/U0/inst_data_channel_rx_top/inst_equ_coeff_est/inst_mift/tmp_25_reg_12573_reg[8]/D |
             # +----------------------------+---------------+------------------+------------------+------------------+-----------+----------------+----------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------+
-            # This match the 'classic' format for prettyTable
+            # This match the 'classic' format from prettyTable
             set SM {header_classic}
             # Removing column separator
             regsub -all {\+} $line { } line
@@ -1133,7 +1139,7 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           #                    |     Max     | Process |     Min     | Process | Edge     |
           # Pad                |   Delay(ns) | Corner  |   Delay(ns) | Corner  | Skew(ns) |
           # -------------------+-------------+---------+-------------+---------+----------+
-          # This match the 'classic' format for prettyTable
+          # This match the 'classic' format from prettyTable
           set SM {header_classic}
           # Removing column separator
           regsub -all {\+} $line { } line
@@ -1156,7 +1162,7 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           # E.g:
           # WNS(ns)  TNS(ns)  TNS Failing Endpoints
           # -------  -------  ---------------------
-          # This match the 'lean' format for prettyTable
+          # This match the 'lean' format from prettyTable
           set SM {table_lean}
           set columns [extract_columns2 [string trimright $line] {-}]
           set header [extract_row2 [lindex $report [expr $index -1]] $columns]
@@ -1260,17 +1266,20 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
         set tbl [::tb::prettyTable]
         $tbl header [lindex $table 0]
         foreach row [lrange $table 1 end] {
-          if {$report_exception} {
-            # Special mode for report_exception. If the first column
-            # of the row is empty, then append the row to the previous one.
-            # This is because report_exception used fixed width columns
-            if {[lindex $row 0] == {}} {
-              $tbl appendrow $row
-            } else {
+          switch $mode {
+            report_exception {
+              # Special mode for report_exception. If the first column
+              # of the row is empty, then append the row to the previous one.
+              # This is because report_exception used fixed width columns
+              if {[lindex $row 0] == {}} {
+                $tbl appendrow $row
+              } else {
+                $tbl addrow $row
+              }
+            }
+            default {
               $tbl addrow $row
             }
-          } else {
-            $tbl addrow $row
           }
         }
         puts $channel [$tbl export -format $params(format)]
@@ -1358,8 +1367,11 @@ proc ::tb::utils::rptutils::rptutils {args} {
       {^-o(u(t(p(ut?)?)?)?)?$} {
         set ofilename [lshift args]
       }
-      {^-fo(r(m(at?)?)?)?$} {
+      {^-form(at?)?$} {
         set reportformat [lshift args]
+      }
+      {^-def(a(u(lt?)?)?)?$} {
+        set reportformat {default}
       }
       {^-ex(t(e(n(s(i(on?)?)?)?)?)?)?$} {
         set fileextension [lshift args]
@@ -1379,7 +1391,7 @@ proc ::tb::utils::rptutils::rptutils {args} {
       {^-m(e(r(ge?)?)?)?$} {
         set merge 1
       }
-      {^-fo(r(ce?)?)?$} {
+      {^-force?$} {
         set force 1
       }
       {^-ba(c(k(up?)?)?)?$} {
@@ -1448,7 +1460,7 @@ proc ::tb::utils::rptutils::rptutils {args} {
       Usage: rptutils
                   [<filename> [<filename> ...]]
                   [-input <filename> [<filename> ...]]
-                  [-format <format>]
+                  [-format <format>][-default]
                   [-output <filename>]
                   [-extension <string>]
                   [-stdout]
@@ -1644,13 +1656,13 @@ proc ::tb::utils::rptutils::rptutils {args} {
       report_clock_utilization -
       report_utilization -
       report_environment {
-        processDefaultReport $filename $channel $maxnumtables $pattern $inline 0
+        processDefaultReport $filename $channel $maxnumtables $pattern $inline {default}
       }
       report_exceptions {
-        processDefaultReport $filename $channel $maxnumtables $pattern $inline 1
+        processDefaultReport $filename $channel $maxnumtables $pattern $inline {report_exception}
       }
       default {
-        processDefaultReport $filename $channel $maxnumtables $pattern $inline 0
+        processDefaultReport $filename $channel $maxnumtables $pattern $inline {default}
       }
     }
 
