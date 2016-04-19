@@ -15,12 +15,13 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.11
+## Version:        2016.04.19
 ## Description:    Utility to manipulate CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.19 - Minor code clean-up
 ## 2016.04.11 - Added support for -inline
 ##            - Renamed -noheader to -no_csv_header
 ##            - Added support for -no_header
@@ -61,7 +62,7 @@ namespace eval ::tb::utils {
 namespace eval ::tb::utils::csvutils {
   namespace export csvutils
 
-  variable version {2016.04.11}
+  variable version {2016.04.19}
   variable channel {}
   variable callbackfile {}
   array set params [list indent 0 maxlines -1 verbose 0 debug 0 addcolumns {} ]
@@ -653,7 +654,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
       {^-in(l(i(ne?)?)?)?$} {
         set inline 1
       }
-      {^-fo(r(ce?)?)?$} {
+      {^-force?$} {
         set force 1
       }
       {^-ba(c(k(up?)?)?)?$} {
@@ -665,7 +666,7 @@ proc ::tb::utils::csvutils::csvutils {args} {
       {^-cl(a(s(s(ic?)?)?)?)?$} {
         set table {classic}
       }
-      {^-f(o(r(m(at?)?)?)?)?$} {
+      {^-form(at?)?$} {
         set table [lshift args]
         switch $table {
           lean -
@@ -999,6 +1000,9 @@ proc ::tb::utils::csvutils::csvutils {args} {
     close $channel
     puts " Generated file [file normalize $ofilename]"
   }
+
+  # Delete table
+  catch {$tbl destroy}
 
   return -code ok
 }
