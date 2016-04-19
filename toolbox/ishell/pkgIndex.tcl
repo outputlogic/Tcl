@@ -14,7 +14,7 @@ if {![package vsatisfies [package provide Tcl] 8.4]} {
 }
 
 namespace eval ::tb::ishell {
-    variable version {2016.04.05}
+    variable version {2016.04.19}
     # Allow Tcl to find tclIndex
     variable home [file join [pwd] [file dirname [info script]]]
     if {[lsearch -exact $::auto_path $home] == -1} {

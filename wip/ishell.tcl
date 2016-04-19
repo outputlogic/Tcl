@@ -14,24 +14,17 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.05
+## Version:        2016.04.19
 ## Description:    This package provides a simple interactive Tcl shell
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.04.19 - Removed message when sourced by 'package require toolbox'
 ## 2016.04.05 - Added methods locals/printlocals
 ##            - Misc enhancements
 ## 2015.02.23 - Initial release
 ########################################################################################
-
-# Check that Vivado is run in tcl mode
-if {![catch {package require Vivado}]} {
-  if {$rdi::mode!="tcl"} {
-    puts " -E- ishell cannot run in GUI or batch mode"
-    return
-  }
-}
 
 namespace eval ::tb {
     namespace export ishell
@@ -65,7 +58,7 @@ proc ::tb::ishell { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::ishell {
-  variable version {2016.04.05}
+  variable version {2016.04.19}
   catch {unset params}
   # The commands need to be uplevel-ed 4 levels to be executed
   array set params [list level 4 prompt {ishell% } history {} verbose 0 debug 0 enable 1]
