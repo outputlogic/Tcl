@@ -6,8 +6,8 @@
 # HEADER_END
 ####################################################################################################
 
-proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
-proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 ########################################################################################
 ##
@@ -325,6 +325,7 @@ proc ::tb::utils::report_cells::report_cells {args} {
     puts " -D- #cells: [llength $cells]"
   }
   if {[llength [array names db]] == 0} {
+    # It should be a one time process unless the hierarchical modules change in the netlist
     buildDB
   }
 

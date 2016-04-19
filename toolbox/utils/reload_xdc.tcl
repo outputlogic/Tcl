@@ -11,7 +11,7 @@
 ########################################################################################
 
 # Proc to reload current script
-proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
 
 ########################################################################################
 ## 2015.03.09 - Added -no_add to read_xdc command
