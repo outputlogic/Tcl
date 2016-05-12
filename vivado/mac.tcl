@@ -15,13 +15,14 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.03.29
+## Version:        2016.05.11
 ## Tool Version:   Vivado 2014.1
 ## Description:    This package provides a simple utility for macro creation
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.05.11 - Fixed issue with 'load' method
 ## 2016.03.29 - Modified output .mac format to make the macro file usable without
 ##              this utility
 ##            - Fixed format for get_timing_path -through for rare issues
@@ -78,7 +79,7 @@ proc ::tb::mac { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::mac {
-  variable version {2016.03.29}
+  variable version {2016.05.11}
   variable params
   variable macros [list]
   catch {unset params}
@@ -452,12 +453,33 @@ proc ::tb::mac::method:load { {pattern {}} } {
   # Load macro file(s) from disk
   variable params
   variable macros
-  if {$pattern == {}} {
-    set files [glob [file normalize [file join $params(repository) *.mac]]]
-  } elseif {[file exists ${pattern}.mac]} {
-    set files ${pattern}.mac
+  if {[file pathtype [file dirname $pattern]] == {absolute}} {
+    # $pattern has an absolute path ... do not look for $params(repository)
+    if {[file exists ${pattern}.mac]} {
+      set files ${pattern}.mac
+    } else {
+      set files [glob -nocomplain $pattern]
+    }
   } else {
-    set files [glob $pattern]
+    # $pattern has a relative path ... look for $params(repository)
+    if {([file dirname $pattern] == {.}) && ![regexp {^\.\/} $pattern]} {
+      # $pattern does not start with './' so it is just a string
+      # => look inside $params(repository)
+      if {$pattern == {}} {
+        set files [glob -nocomplain [file normalize [file join $params(repository) *.mac]]]
+      } elseif {[file exists [file normalize [file join $params(repository) ${pattern}.mac]]]} {
+        set files [file normalize [file join $params(repository) ${pattern}.mac]]
+      } else {
+        set files [glob -nocomplain [file normalize [file join $params(repository) $pattern]]]
+      }
+    } else {
+      # $pattern starts with './' => look inside working directory
+      if {[file exists ${pattern}.mac]} {
+        set files ${pattern}.mac
+      } else {
+        set files [glob -nocomplain $pattern]
+      }
+    }
   }
   if {[llength $files] == 0} {
     puts " no file match '$pattern'"
