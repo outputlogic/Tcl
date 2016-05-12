@@ -15,14 +15,15 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.05.11
+## Version:        2016.05.12
 ## Tool Version:   Vivado 2014.1
 ## Description:    This package provides a simple utility for macro creation
 ##
 ########################################################################################
 
 ########################################################################################
-## 2016.05.11 - Fixed issue with 'load' method
+## 2016.05.12 - Fixed issue with 'load' method
+##            - Fixed format for 'save' method
 ## 2016.03.29 - Modified output .mac format to make the macro file usable without
 ##              this utility
 ##            - Fixed format for get_timing_path -through for rare issues
@@ -79,7 +80,7 @@ proc ::tb::mac { args } {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::mac {
-  variable version {2016.05.11}
+  variable version {2016.05.12}
   variable params
   variable macros [list]
   catch {unset params}
@@ -406,10 +407,10 @@ proc ::tb::mac::method:save { {filename {}} } {
     set FH [open $filename {w}]
   }
   foreach name [lsort -unique $macros] {
-    set proc [format "proc %s {} \{%s\}" $name [info body $name] ]
+    set proc [format "proc ::%s { {force 0} } \{%s\}" $name [info body $name] ]
 
     if {$mode == {single}} {
-      puts $FH "::tb::mac register $name"
+      puts $FH "if {\[info proc ::tb::mac\] != {}} { ::tb::mac register $name }"
       puts $FH $proc
       puts $FH ""
       if {$params(verbose)} {
@@ -419,7 +420,7 @@ proc ::tb::mac::method:save { {filename {}} } {
       set filename [file normalize [file join $params(repository) ${name}.mac]]
       if {[catch {
         set FH [open $filename {w}]
-        puts $FH "::tb::mac register $name"
+        puts $FH "if {\[info proc ::tb::mac\] != {}} { ::tb::mac register $name }"
         puts $FH $proc
         close $FH
         if {$params(verbose)} {
