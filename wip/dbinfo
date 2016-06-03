@@ -15,12 +15,14 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.04
+## Version:        2016.05.04
 ## Description:    This utility provides information on SQLite database
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.05.04 - Added support for -dump
+##            - Added support for -table
 ## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.02.03 - Added support for pattern to specify database
 ## 2014.11.06 - Initial release
@@ -36,12 +38,17 @@ if {[catch {package require sqlite3}]} {
   package require sqlite3
 }
 
+if {[catch {package require prettyTable}]} {
+  lappend auto_path {/home/dpefour/git/scripts/toolbox}
+  package require prettyTable
+}
+
 namespace eval ::tb {}
 
 namespace eval ::tb::dbinfo {
   namespace export dbinfo
 
-  variable SCRIPT_VERSION {2016.04.04}
+  variable SCRIPT_VERSION {2016.05.04}
   variable VERBOSE 0
   variable DEBUG 0
 
@@ -150,6 +157,8 @@ proc ::tb::dbinfo::dbinfo {args} {
   set VERBOSE 0
   set DEBUG 0
 
+  set sqltable {}
+  set dump 0
   set error 0
   set show_help 0
   set ifilenames {}
@@ -175,6 +184,17 @@ proc ::tb::dbinfo::dbinfo {args} {
           }
         }
         set ifilenames [lsort -unique $ifilenames]
+      }
+      -dump -
+      -dump {
+        set dump 1
+      }
+      -t -
+      -ta -
+      -tab -
+      -tabl -
+      -table {
+        set sqltable [lshift args]
       }
       -v -
       -verbose {
@@ -219,6 +239,8 @@ proc ::tb::dbinfo::dbinfo {args} {
     puts [format {
       Usage: dbinfo
                   [<pattern>][-db <filename>][-db <pattern>]
+                  [-table <sqltable>]
+                  [-dump]
                   [-verbose|-v]
                   [-help|-h]
 
@@ -228,7 +250,9 @@ proc ::tb::dbinfo::dbinfo {args} {
 
       Example:
          dbinfo -db file1.db
-         dbinfo -db '*/metrics.db'
+         dbinfo -db '*/metrics.db' -dump
+         dbinfo -db '*/metrics.db' -dump -table csv0
+         dbinfo -db '*/metrics.db' -dump -table 'csv*'
     } $SCRIPT_VERSION ]
     # HELP -->
 
@@ -255,6 +279,21 @@ proc ::tb::dbinfo::dbinfo {args} {
     # Remove 'sqlite_sequence' from the list
     set tables [lsearch -inline -all -not -exact $tables {sqlite_sequence}]
 
+    if {$sqltable != {}} {
+      set L [list]
+      foreach idx [lsearch -all -glob $tables $sqltable] {
+        lappend L [lindex $tables $idx]
+      }
+      if {[llength $L] == 0} {
+        puts " -E- table '$sqltable' does not exist"
+        # Close SQlite database
+        $SQL close
+        set SQL {}
+        return -code ok
+      }
+      set tables $L
+    }
+
     if {$VERBOSE} {
         puts " -I- database $database"
         puts " -I- tables \[[llength $tables]\]: [lsort $tables]"
@@ -265,6 +304,27 @@ proc ::tb::dbinfo::dbinfo {args} {
       set count [execSQL $SQL [format {SELECT count(*) FROM '%s' ;} $table]]
       puts " -I- Table: '$table' \t # columns = [llength $columns] \t # entries = $count"
       if {$VERBOSE} { puts " -I- Columns: $columns" }
+      if {$dump} {
+        # Dump the table content
+        set tbl [::tb::prettyTable]
+        if {$VERBOSE} {
+          $tbl configure -title "$table ($database)"
+        } else {
+          $tbl configure -title "$table"
+        }
+        $tbl header $columns
+        catch {unset values}
+        execSQL $SQL {pragma integrity_check}
+        $SQL eval [format {SELECT * FROM '%s' ;} $table] values {
+          set row [list]
+          foreach col $columns {
+            lappend row $values($col)
+          }
+          $tbl addrow $row
+        }
+        puts [$tbl print]
+        catch {$tbl destroy}
+      }
     }
 
     # Close SQlite database
@@ -294,7 +354,7 @@ if {[file tail [info script]]!=[file tail $argv0]} {
 #   ::tb::dbinfo::dbinfo
 } else {
   # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
-  ::tb::dbinfo::lshift ::argv
+  set ::argv [lrange $::argv 1 end]
   if {[catch {eval [concat ::tb::dbinfo::dbinfo $argv]} errorstring]} {
     puts $errorstring
     # Close SQlite database
