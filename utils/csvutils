@@ -10,17 +10,20 @@ exec tclsh "$0" -- ${1+"$@"}
 # HEADER_END
 ####################################################################################################
 
+# proc reload {} " uplevel #0 \[list source [info script]; puts \" [info script] reloaded\" \]"
+
 ########################################################################################
 ##
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.19
+## Version:        2016.06.03
 ## Description:    Utility to manipulate CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.06.03 - Added proc csv2tbl
 ## 2016.04.19 - Minor code clean-up
 ## 2016.04.11 - Added support for -inline
 ##            - Renamed -noheader to -no_csv_header
@@ -57,12 +60,14 @@ namespace eval ::tb {}
 
 namespace eval ::tb::utils {
   namespace export -force csvutils
+  namespace export -force csv2tbl
 }
 
 namespace eval ::tb::utils::csvutils {
   namespace export csvutils
+  namespace export csv2tbl
 
-  variable version {2016.04.19}
+  variable version {2016.06.03}
   variable channel {}
   variable callbackfile {}
   array set params [list indent 0 maxlines -1 verbose 0 debug 0 addcolumns {} ]
@@ -435,9 +440,11 @@ proc ::tb::utils::csvutils::read-csv {&tbl FHin FHout filename {merge 0} {inline
   }
 
   if {$params(verbose) && !$discardtable} {
+    if {$params(debug)} { puts " -I- Table: $tbl" }
     puts " -I- Header: [$tbl header]"
     puts " -I- Number of imported row(s): $count"
   } elseif {$params(verbose) && $discardtable} {
+    if {$params(debug)} { puts " -I- Table: $tbl" }
     puts " -I- Header: [$tbl header]"
     puts " -I- Number of discarded row(s): $count"
   }
@@ -560,6 +567,156 @@ proc ::tb::utils::csvutils::saveTable {&tbl outputFormat tableType alignment par
   }
 
   return -code ok
+}
+
+##-----------------------------------------------------------------------
+## csv2tbl
+##-----------------------------------------------------------------------
+## Return list of prettyTable(s) from an input CSV file
+##-----------------------------------------------------------------------
+proc ::tb::utils::csvutils::csv2tbl {args} {
+
+  variable version
+  variable params
+  variable channel
+  variable callbackfile
+
+  set params(verbose) 0
+  set params(debug) 0
+  set error 0
+  set show_help 0
+  set show_long_help 0
+  set ifilename {}
+  set csvDelimiter {,}
+  set channel {}
+  set parseHeader 1
+  set callbackfile {}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-i(n(p(ut?)?)?)?$} {
+        set ifilename [lshift args]
+      }
+      {^-de(l(i(m(i(t(er?)?)?)?)?)?)?$} {
+        set csvDelimiter [lshift args]
+      }
+      {^-no_c(s(v(_(h(e(a(d(er?)?)?)?)?)?)?)?)?$} {
+        set parseHeader 0
+      }
+      {^-ca(l(l(b(a(ck?)?)?)?)?)?$} {
+        set callbackfile [lshift args]
+        if {![file exists $callbackfile]} {
+          puts " -E- file '$callbackfile' does not exist"
+          incr error
+        } else {
+          set callbackfile [file normalize $callbackfile]
+        }
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      {^-lo(n(g(h(e(lp?)?)?)?)?)?$} {
+        incr show_help
+        incr show_long_help
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          set ifilename $name
+#           puts " -E- optin '$name' is not a valid option"
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: csv2tbl
+                  [<filename>]
+                  [-input <filename> ...]
+                  [-no_csv_header]
+                  [-delimiter <csv-delimiter>]
+                  [-callback <filename>]
+                  [-verbose|-v]
+                  [-help|-h]
+                  [-longhelp]
+
+      Description: Convert CSV file to prettyTable
+
+      Version: %s
+
+        Use -no_csv_header when the CSV file(s) has no header
+        Use -callback to provide a callback proc for processing rows. the
+          file should have a proc 'proc callback {row} { ... return $row }'
+
+      Example:
+         csv2tbl -input file1.csv -delimiter ';'
+
+    } $version ]
+    # HELP -->
+
+    if {$show_long_help} { print_help }
+
+    return -code ok
+  }
+
+  if  {$ifilename == {}} {
+    puts " -E- no input file provided"
+    incr error
+  } elseif  {![file exists $ifilename]} {
+    puts " -E- file '$ifilename' does not exist"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#    exit -1
+  }
+
+  # Sourcing file with callback function
+  if {$callbackfile != {}} {
+    namespace eval ::tb::utils::csvutils {
+      if {$params(verbose)} { puts " -I- Sourcing callback file $::tb::utils::csvutils::callbackfile" }
+      source $::tb::utils::csvutils::callbackfile
+    }
+  }
+
+  set firsttableinfile 1
+  if {$params(verbose)} {
+    puts " -I- Processing file $ifilename"
+  }
+  set FHin [open $ifilename]
+  while {![eof $FHin]} {
+    set tbl [::tb::prettyTable]
+    $tbl title "CSV: [file normalize $ifilename]"
+    set foundtable [read-csv tbl $FHin $channel $ifilename 0 0 $csvDelimiter $parseHeader 0]
+    if {!$foundtable} {
+      # No table found, nothing else to process
+      continue
+    }
+    lappend listTables $tbl
+    set firsttableinfile 0
+  }
+  # Close current input file
+  close $FHin
+
+  return $listTables
 }
 
 ##-----------------------------------------------------------------------
@@ -969,7 +1126,6 @@ proc ::tb::utils::csvutils::csvutils {args} {
       }
       saveTable tbl $outputFormat $table $alignment $parseHeader
       set firsttableinfile 0
-
     }
     if {$outputMode == {multiple}} {
       # Close current output file
@@ -1009,10 +1165,12 @@ proc ::tb::utils::csvutils::csvutils {args} {
 
 namespace eval ::tb::utils {
   namespace import -force ::tb::utils::csvutils::csvutils
+  namespace import -force ::tb::utils::csvutils::csv2tbl
 }
 
 namespace eval ::tb {
   namespace import -force ::tb::utils::csvutils
+  namespace import -force ::tb::utils::csv2tbl
 }
 
 
