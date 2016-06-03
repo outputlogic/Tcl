@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.08
+## Version:        2016.05.23
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,6 +265,8 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.05.23 - Updated 'title' method to set/get the table's title
+## 2016.05.20 - Added 'getrow', 'getcolumns', 'gettable' methods
 ## 2016.04.08 - Added 'appendrow' method
 ## 2016.03.25 - Added 'numcols' method
 ##            - Added new format for 'export' method (array)
@@ -333,7 +335,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
-  variable version {2016.04.08}
+  variable version {2016.05.23}
 } ]
 
 #------------------------------------------------------------------------
@@ -994,26 +996,38 @@ proc ::tb::prettyTable::method:? {self args} {
 #------------------------------------------------------------------------
 # ::tb::prettyTable::method:title
 #------------------------------------------------------------------------
-# Usage: <prettyTableObject> title <string>
+# Usage: <prettyTableObject> title [<string>]
 #------------------------------------------------------------------------
 # Set the table title
 #------------------------------------------------------------------------
-proc ::tb::prettyTable::method:title {self title} {
+proc ::tb::prettyTable::method:title {self args} {
   # Summary :
   # Argument Usage:
   # Return Value:
   # Categories: xilinxtclstore, designutils
 
 
-  # Set the title of the table
-  set ${self}::params(title) $title
-  set title
+  # Set/get the title of the table
+  switch [llength $args] {
+    0 {
+      # If no argument is provided then just return the current title
+    }
+    1 {
+      # If just 1 argument then it must be a list
+      eval set ${self}::params(title) $args
+    }
+    default {
+      # Multiple arguments should be cast as a list
+      eval set ${self}::params(title) [list $args]
+    }
+  }
+  set ${self}::params(title)
 }
 
 #------------------------------------------------------------------------
 # ::tb::prettyTable::method:header
 #------------------------------------------------------------------------
-# Usage: <prettyTableObject> header <list>
+# Usage: <prettyTableObject> header [<list>]
 #------------------------------------------------------------------------
 # Set the table header
 #------------------------------------------------------------------------
@@ -1024,7 +1038,7 @@ proc ::tb::prettyTable::method:header {self args} {
   # Categories: xilinxtclstore, designutils
 
 
-  # Set the header of the table
+  # Set/get the header of the table
   switch [llength $args] {
     0 {
       # If no argument is provided then just return the current header
@@ -1117,6 +1131,80 @@ proc ::tb::prettyTable::method:appendrow {self args} {
   }
   set table [lreplace $table end end $row]
   return 0
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:getcolumns
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> getcolumns <list_of_column_indexes>
+#------------------------------------------------------------------------
+# Return a list of column(s)
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:getcolumns {self columns} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Return a list of column(s)
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {$columns == {}} {
+    return {}
+  }
+  set res [list]
+  foreach row $table {
+    set L [list]
+    foreach col $columns {
+      if {[llength $columns] == 1} {
+        # Single column: flatten the list to avoid a list of list
+        set L [lindex $row $col]
+      } else {
+        lappend L [lindex $row $col]
+      }
+    }
+    lappend res $L
+  }
+  return $res
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:getrow
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> getrow <row_index>
+#------------------------------------------------------------------------
+# Return a row by index
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:getrow {self index} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Return a row
+  upvar #0 ${self}::table table
+  return [lindex $table $index]
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:gettable
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> gettable
+#------------------------------------------------------------------------
+# Return the entire table
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:gettable {self args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Return the table
+  upvar #0 ${self}::table table
+  return $table
 }
 
 #------------------------------------------------------------------------
