@@ -1,11 +1,11 @@
 #!/bin/sh
 # use -*-TCL-*- \
-exec tclsh "$0" "$@"
+exec tclsh "$0" -- ${1+"$@"}
 
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -20,6 +20,8 @@ exec tclsh "$0" "$@"
 ########################################################################################
 
 ########################################################################################
+## 2016.05.04 - Added support for -table
+##            - Modified sh exec command to execute script
 ## 2014.11.06 - Initial release
 ########################################################################################
 
@@ -33,15 +35,20 @@ if {[catch {package require sqlite3}]} {
   package require sqlite3
 }
 
+if {[catch {package require prettyTable}]} {
+  lappend auto_path {/home/dpefour/git/scripts/toolbox}
+  package require prettyTable
+}
+
 namespace eval ::tb {}
 
 namespace eval ::tb::dbquery {
   namespace export dbquery
 
-  variable SCRIPT_VERSION {11-06-2014}
+  variable SCRIPT_VERSION {2016.05.04}
   variable VERBOSE 0
   variable DEBUG 0
-  
+
   variable SQL
 }
 
@@ -101,12 +108,13 @@ proc ::tb::dbquery::dbquery {args} {
   variable SCRIPT_VERSION
   variable VERBOSE
   variable DEBUG
-  
+
   variable SQL
 
   set VERBOSE 0
   set DEBUG 0
 
+  set table 0
   set query {}
   set error 0
   set show_help 0
@@ -129,6 +137,13 @@ proc ::tb::dbquery::dbquery {args} {
       -sql -
       --sql {
         set query [lshift args]
+      }
+      -t -
+      -ta -
+      -tab -
+      -tabl -
+      -table {
+        set table 1
       }
       -v -
       -verbose {
@@ -166,6 +181,7 @@ proc ::tb::dbquery::dbquery {args} {
       Usage: dbquery
                   [-db <filename>]
                   [-sql <string>]
+                  [-table]
                   [-verbose|-v]
                   [-help|-h]
 
@@ -175,6 +191,7 @@ proc ::tb::dbquery::dbquery {args} {
 
       Example:
          dbquery -db file1.db -sql {SELECT * FROM table}
+         dbquery -db file1.db -sql {SELECT * FROM table} -table
     } $SCRIPT_VERSION ]
     # HELP -->
 
@@ -208,12 +225,41 @@ proc ::tb::dbquery::dbquery {args} {
       puts " -I- database $ifilename"
   }
 
-  if {[catch {set result [execSQL $SQL $query]} errorstring]} {
-    # Close SQlite database
-    $SQL close
-    set SQL {}
-    error " -E- $errorstring"
+  set result [list]
+  if {$table} {
+    # Dump the query result
+    set tbl [::tb::prettyTable]
+    $tbl configure -title "$query"
+    set header {}
+    if {[catch {
+        $SQL eval $query values {
+          set header $values(*)
+          set row [list]
+          foreach el $header {
+            lappend row $values($el)
+            lappend result $values($el)
+          }
+          $tbl addrow $row
+        }
+      } errorstring]} {
+      # Close SQlite database
+      $SQL close
+      set SQL {}
+      error " -E- $errorstring"
+    }
+    $tbl header $header
+    puts [$tbl print]
+    catch {$tbl destroy}
+    # In table mode, do not return anything
+    set result [list]
   } else {
+    if {[catch {set result [execSQL $SQL $query]} errorstring]} {
+      # Close SQlite database
+      $SQL close
+      set SQL {}
+      error " -E- $errorstring"
+    } else {
+    }
   }
 
   # Close SQlite database
@@ -242,6 +288,8 @@ if {[file tail [info script]]!=[file tail $argv0]} {
   if {!$QUIET} { puts " INFO - sourcing [info script]" }
 #   ::tb::dbquery::dbquery
 } else {
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  set ::argv [lrange $::argv 1 end]
   if {[catch {set result [eval [concat ::tb::dbquery::dbquery $argv]]} errorstring]} {
     puts $errorstring
     # Close SQlite database
