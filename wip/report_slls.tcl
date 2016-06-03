@@ -14,6 +14,7 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
+## Version:        2016.05.28
 ## Description:    Generate a report for SLL nets
 ##
 ## Based on code from Frank Mueller and Frederic Revenu
@@ -21,7 +22,8 @@
 ########################################################################################
 
 ########################################################################################
-## 2016.01.20 - Changed the method to load xilinx::designutils to prevent warning        
+## 2016.05.28 - Added support for -return_summary
+## 2016.01.20 - Changed the method to load xilinx::designutils to prevent warning
 ## 2015.12.10 - Minor change when loading xilinx::designutils to prevent Error message
 ## 2015.10.08 - Removed dependency to internal package
 ##            - Fixed typo SSL -> SLL
@@ -35,12 +37,12 @@
 #
 #   SLL Summary:
 #   ============
-#    SLR1->SLR2 0 5 9 35 411 94 259 38 899 446 197 1 
-#    SLR0->SLR1 0 60 985 1440 850 454 600 241 823 440 266 0 
-#  
+#    SLR1->SLR2 0 5 9 35 411 94 259 38 899 446 197 1
+#    SLR0->SLR1 0 60 985 1440 850 454 600 241 823 440 266 0
+#
 #   SLL Details:
 #   ============
-#  
+#
 #    +------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 #    | Detailed SLL Report                                                                                                                                                                                                                |
 #    +----------+--------------+---------------+---------------------------+--------+---------------------------------------+------------+--------------------------------+------------+-----------------------------+--------------------+
@@ -57,10 +59,10 @@
 #    | Top SLR0 | X0Y4         | 12            | xup_dt1_midflop_1/Q[107]  | 1      | xup_dt1_midflop_1/dataout_r_reg[107]  | SLR1       | pblock_Laguna_slr1_bottom_left | SLR0       | pblock_Laguna_slr0_top_left | 0                  |
 #    | Top SLR0 | X0Y4         | 12            | xup_dt1_midflop_1/Q[129]  | 1      | xup_dt1_midflop_1/dataout_r_reg[129]  | SLR1       | pblock_Laguna_slr1_bottom_left | SLR0       | pblock_Laguna_slr0_top_left | 0                  |
 #    +------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-#  
+#
 #   SLL nets with multiple nodes:
 #   =============================
-#  
+#
 #    +-----------------------------------------------------------------------------------------------------------------------------------------------------------------+
 #    | SLL Nets                                                                                                                                                        |
 #    +-----------------------------------------------------------------------------------------------------------------------+-----------------------------------------+
@@ -82,10 +84,10 @@
 
 # Install 'designutils' to access the package for tables
 catch {
-	if {[lsearch [tclapp::list_apps] {xilinx::designutils}] == -1} {
-# 		tclapp::install designutils
-		tclapp::load xilinx::designutils
-	}
+  if {[lsearch [tclapp::list_apps] {xilinx::designutils}] == -1} {
+#     tclapp::install designutils
+    tclapp::load xilinx::designutils
+  }
 }
 
 namespace eval ::tb {
@@ -98,7 +100,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_slls {
   namespace export -force report_slls get_sll_nets get_sll_nodes
-  variable version {2016.01.20}
+  variable version {2016.05.28}
   variable params
   variable output {}
   array set params [list format {table} verbose 0 debug 0]
@@ -112,6 +114,7 @@ proc ::tb::utils::report_slls::lshift {inputlist} {
 }
 
 proc ::tb::utils::report_slls::report_slls {args} {
+  variable version
   variable params
   variable output
   set params(verbose) 0
@@ -122,6 +125,7 @@ proc ::tb::utils::report_slls::report_slls {args} {
   set percent 0
   set details 0
   set returnstring 0
+  set returnsummary 0
   set error 0
   set help 0
 #   if {[llength $args] == 0} {
@@ -154,9 +158,13 @@ proc ::tb::utils::report_slls::report_slls {args} {
       {^-csv$} {
         set params(format) {csv}
       }
-      {^-r(e(t(u(r(n(_(s(t(r(i(ng?)?)?)?)?)?)?)?)?)?)?)?$} -
+      {^-return_st(r(i(ng?)?)?)?$} -
       {^-return_string$} {
         set returnstring 1
+      }
+      {^-return_su(m(m(a(ry?)?)?)?)?$} -
+      {^-return_summary$} {
+        set returnsummary 1
       }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} -
       {^-verbose$} {
@@ -190,24 +198,29 @@ proc ::tb::utils::report_slls::report_slls {args} {
               [-details|-d]
               [-percent|-p]
               [-return_string]
+              [-return_summary]
               [-verbose|-v]
               [-help|-h]
 
   Description: Generate report for SLL nets (UltraScale only)
 
+    Version: %s
+
     Use -details to provide net-level information.
     A subset list of clock regions can be specified with -region.
     A range a region can be specified with: XminYmin:XmaxYmax. Multiple
     regions or ranges can be specified using comma between them.
+    Use -return_summary to return the SLLs summary section as Tcl list
 
   Example:
      report_slls
+     report_slls -return_summary
      report_slls -file sll_usage.rpt
      report_slls -file sll_usage.csv -csv -percent
      report_slls -details -region X1Y4
      report_slls -details -region X1Y4:X5Y4
      report_slls -details -region X1Y4:X3Y4,X1Y9:X3Y9
-} ]
+} $version ]
     # HELP -->
     return -code ok
   }
@@ -238,6 +251,11 @@ proc ::tb::utils::report_slls::report_slls {args} {
     incr error
   }
 
+  if {($filename != {}) && $returnsummary} {
+    puts " -E- cannot use -file & -return_summary together"
+    incr error
+  }
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
@@ -265,6 +283,8 @@ proc ::tb::utils::report_slls::report_slls {args} {
   lappend output { SLL Summary:}
   lappend output { ============}
 
+  # Build list such as: SLR1->SLR2 {9 1 9 366 1263 726 661 406 320 0 1 0} SLR0->SLR1 {3 20 40 339 926 900 522 54 49 6 0 0}
+  set summary [list]
   foreach SLR [lsort -decreasing [lrange $chip_SLRs 0 end-1]] {
     set line {}
 #     set clock_regions($SLR) [lsort [get_clock_regions -of $SLR]]
@@ -278,6 +298,7 @@ proc ::tb::utils::report_slls::report_slls {args} {
     set clock_regions_miny($SLR) [min $Ymin $Ymax]
     set clock_regions_maxy($SLR) [max $Ymin $Ymax]
     debug { puts -nonewline " -D- top ${SLR}->SLR[expr {[get_property SLR_INDEX $SLR] + 1}] " }
+    # E.g: SLR1->SLR2
     append line "  ${SLR}->SLR[expr {[get_property SLR_INDEX $SLR] + 1}] "
     for {set x $clock_regions_minx($SLR)} {$x<=$clock_regions_maxx($SLR)} {incr x} {
       set clock_region "X${x}Y$clock_regions_maxy($SLR)"
@@ -309,10 +330,10 @@ proc ::tb::utils::report_slls::report_slls {args} {
 #       foreach el $used_SLLs($SLR:$clock_region:$CLB_col_max) { lappend sll_nodes $el }
 #       foreach el $sllNets($SLR:$clock_region:$CLB_col_min) { lappend sll_nets $el }
 #       foreach el $sllNets($SLR:$clock_region:$CLB_col_max) { lappend sll_nets $el }
-      
+
       foreach el $sllNets($SLR:$clock_region:$CLB_col_min) { lappend all_nets($el) [list $clock_region $CLB_col_min] }
       foreach el $sllNets($SLR:$clock_region:$CLB_col_max) { lappend all_nets($el) [list $clock_region $CLB_col_max] }
-      
+
       if {$percent} {
         debug {
           puts -nonewline "[format "%.2f%%" [expr {100.0 * [llength $used_SLLs($SLR:$clock_region:$CLB_col_min)] / [llength $all_SLLs($clock_region)] * 2} ]] "
@@ -333,6 +354,14 @@ proc ::tb::utils::report_slls::report_slls {args} {
       puts ""
     }
     lappend output $line
+    # E.g: SLR1->SLR2
+    lappend summary [lindex $line 0]
+    # E.g: {9 1 9 366 1263 726 661 406 320 0 1 0}
+    lappend summary [lrange $line 1 end]
+  }
+
+  if {$returnsummary} {
+    return $summary
   }
 
   if {$details} {
