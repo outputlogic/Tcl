@@ -1,26 +1,27 @@
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
 
-proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
-proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 ########################################################################################
 ##
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.01.17
+## Version:        2016.05.18
 ## Tool Version:   Vivado 2014.1
 ## Description:    This file defined default metrics for snapshot.tcl
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.05.18 - Added support for -save_reports
 ## 2016.01.17 - Fixed error when extracting metrics from report_route_status
 ## 2016.01.11 - Added metric report.design_analysis.congestion
 ## 2015.12.14 - Minor restructuring so that existing metrics are not overriden
@@ -95,10 +96,14 @@ proc ::tb::snapshot::parseRDACongestion {report} {
 if {[package provide Vivado] != {}} {
   # Default metrics only for Vivado
   namespace eval ::tb::snapshot::extract {
-    proc default {} {
+    proc default {args} {
       variable [namespace parent]::params
       variable [namespace parent]::verbose
       variable [namespace parent]::debug
+      # First assign default values...
+      array set options {-save_reports 1}
+      # ...then possibly override them with user choices
+      array set options $args
       # Vivado related statistics
       # The release name is shortened: 2014.3.0 => 2014.3
       snapshot set -once vivado.version [regsub {^([0-9]+\.[0-9]+)\.0$} [version -short] {\1}]
@@ -157,7 +162,9 @@ if {[package provide Vivado] != {}} {
             set report [read $FH]
             close $FH
             file delete $filename
-            snapshot set route.compile_order.constraints $report
+            if {$options(-save_reports)} {
+              snapshot set route.compile_order.constraints $report
+            }
           }
         }
       }
@@ -206,44 +213,68 @@ if {[package provide Vivado] != {}} {
          snapshot set -once report.timing_summary.tpws.total $tpwsTotalEp
       }
       if {![snapshot exists report.clocks]} {
-        snapshot set report.clocks [report_clocks -quiet -return_string]
+        if {$options(-save_reports)} {
+          snapshot set report.clocks [report_clocks -quiet -return_string]
+        }
       }
       if {![snapshot exists report.clock_interaction]} {
-        snapshot set report.clock_interaction [report_clock_interaction -quiet -return_string]
+        if {$options(-save_reports)} {
+          snapshot set report.clock_interaction [report_clock_interaction -quiet -return_string]
+        }
       }
       if {![snapshot exists report.clock_utilization]} {
-        snapshot set report.clock_utilization [report_clock_utilization -quiet -return_string]
+        if {$options(-save_reports)} {
+          snapshot set report.clock_utilization [report_clock_utilization -quiet -return_string]
+        }
       }
       if {![snapshot exists report.clock_networks]} {
-        snapshot set report.clock_networks [report_clock_networks -quiet -return_string]
+        if {$options(-save_reports)} {
+          snapshot set report.clock_networks [report_clock_networks -quiet -return_string]
+        }
       }
       if {![snapshot exists report.utilization]} {
-        snapshot set report.utilization [report_utilization -quiet -return_string]
+        if {$options(-save_reports)} {
+          snapshot set report.utilization [report_utilization -quiet -return_string]
+        }
       }
       if {![snapshot exists report.high_fanout_nets]} {
-        snapshot set report.high_fanout_nets [report_high_fanout_nets -quiet -return_string]
+        if {$options(-save_reports)} {
+          snapshot set report.high_fanout_nets [report_high_fanout_nets -quiet -return_string]
+        }
       }
       if {![snapshot exists report.ip_status]} {
-        snapshot set report.ip_status [report_ip_status -quiet -return_string]
+        if {$options(-save_reports)} {
+          snapshot set report.ip_status [report_ip_status -quiet -return_string]
+        }
       }
       if {![snapshot exists report.control_sets]} {
-        snapshot set report.control_sets [report_control_sets -quiet -return_string]
+        if {$options(-save_reports)} {
+          snapshot set report.control_sets [report_control_sets -quiet -return_string]
+        }
       }
       if {![snapshot exists report.ram_utilization]} {
-        catch {snapshot set report.ram_utilization [report_ram_utilization -quiet -return_string]}
+        if {$options(-save_reports)} {
+          catch {snapshot set report.ram_utilization [report_ram_utilization -quiet -return_string]}
+        }
       }
       if {![snapshot exists report.slr]} {
-        if {[llength [get_slrs -quiet]] > 1} { snapshot set report.slr [report_utilization -quiet -slr -return_string] }
+        if {[llength [get_slrs -quiet]] > 1} {
+          if {$options(-save_reports)} {
+            snapshot set report.slr [report_utilization -quiet -slr -return_string]
+          }
+        }
       }
       if {![snapshot exists report.check_timing]} {
-        catch {
-          set filename [format {check_timing.%s} [clock seconds]]
-          check_timing -file $filename
-          set FH [open $filename {r}]
-          set report [read $FH]
-          close $FH
-          file delete $filename
-          snapshot set report.check_timing $report
+        if {$options(-save_reports)} {
+          catch {
+            set filename [format {check_timing.%s} [clock seconds]]
+            check_timing -file $filename
+            set FH [open $filename {r}]
+            set report [read $FH]
+            close $FH
+            file delete $filename
+            snapshot set report.check_timing $report
+          }
         }
       }
       catch {
@@ -258,10 +289,10 @@ if {[package provide Vivado] != {}} {
         # Adding metric report.design_analysis.congestion which is the congestion that is most
         # relevant for current snapshot
         if {[lindex $congestion 1] == {u-u-u-u}} {
-        	# If the router congestion is unset (u-u-u-u), then save the placer congestion
+          # If the router congestion is unset (u-u-u-u), then save the placer congestion
           snapshot set -once report.design_analysis.congestion [lindex $congestion 0]
         } else {
-        	# else, save the router congestion
+          # else, save the router congestion
           snapshot set -once report.design_analysis.congestion [lindex $congestion 1]
         }
       }
@@ -279,10 +310,14 @@ if {[package provide Vivado] != {}} {
 
 #   namespace eval ::tb::snapshot::extract {}
   namespace eval ::tb::snapshot::extract {
-    proc default {} {
+    proc default {args} {
       variable [namespace parent]::params
       variable [namespace parent]::verbose
       variable [namespace parent]::debug
+      # First assign default values...
+      array set options {-savereports 1}
+      # ...then possibly override them with user choices
+      array set options $args
       set release {}
       if {[snapshot exists report.route_status]} {
         set report [snapshot get report.route_status]
@@ -337,10 +372,10 @@ if {[package provide Vivado] != {}} {
         # Adding metric report.design_analysis.congestion which is the congestion that is most
         # relevant for current snapshot
         if {[lindex $congestion 1] == {u-u-u-u}} {
-        	# If the router congestion is unset (u-u-u-u), then save the placer congestion
+          # If the router congestion is unset (u-u-u-u), then save the placer congestion
           snapshot set -once report.design_analysis.congestion [lindex $congestion 0]
         } else {
-        	# else, save the router congestion
+          # else, save the router congestion
           snapshot set -once report.design_analysis.congestion [lindex $congestion 1]
         }
         # Extract Vivado release from header:
