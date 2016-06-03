@@ -10,17 +10,22 @@ exec tclsh "$0" -- ${1+"$@"}
 # HEADER_END
 ####################################################################################################
 
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " uplevel #0 \[list source [info script]; puts \" [info script] reloaded\" \]"
+
 ########################################################################################
 ##
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.19
+## Version:        2016.06.03
 ## Description:    Utility to convert Vivado report(s) into CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.06.03 - Added proc rpt2tbl
+##            - Added support for -return_tables (rptutils)
 ## 2016.04.19 - Added support for -default
 ##            - Minor code clean-up
 ## 2016.04.11 - Initial release
@@ -40,13 +45,16 @@ namespace eval ::tb {}
 
 namespace eval ::tb::utils {
   namespace export -force rptutils
+  namespace export -force rpt2tbl
 }
 
 namespace eval ::tb::utils::rptutils {
   namespace export rptutils
+  namespace export rpt2tbl
 
-  variable version {2016.04.19}
+  variable version {2016.06.03}
   variable channel {}
+  variable tables {}
   array set params [list format {csv} extension {csv} writeheader 1 verbose 0 debug 0 ]
 }
 
@@ -177,6 +185,13 @@ proc ::tb::utils::rptutils::dputs {args} {
   variable params
   if {$params(debug)} {
     eval [concat puts $args]
+  }
+  return -code ok
+}
+
+proc ::tb::utils::rptutils::print {channel msg} {
+  if {$channel != {}} {
+    puts $channel $msg
   }
   return -code ok
 }
@@ -362,6 +377,7 @@ proc ::tb::utils::rptutils::extract_row2 {str columns} {
 #
 #------------------------------------------------------------------------
 proc ::tb::utils::rptutils::processClockInteractionReport {filein channel} {
+  variable tables
   variable params
 
   set FH [open $filein {r}]
@@ -383,7 +399,9 @@ proc ::tb::utils::rptutils::processClockInteractionReport {filein channel} {
   foreach line [split [$tbl export -format $params(format)] \n] {
     puts $channel [format {# %s} $line]
   }
-  catch {$tbl destroy}
+  # Save the current table
+  lappend tables $tbl
+#   catch {$tbl destroy}
 
   puts $channel ""
   puts $channel "#####################################"
@@ -396,8 +414,9 @@ proc ::tb::utils::rptutils::processClockInteractionReport {filein channel} {
     $tbl addrow $row
   }
   puts $channel [$tbl export -format $params(format)]
-  # Delete table
-  catch {$tbl destroy}
+  # Save the current table
+  lappend tables $tbl
+#   catch {$tbl destroy}
 
   return -code ok
 }
@@ -579,6 +598,7 @@ proc ::tb::utils::rptutils::createSummaryClockInteractionReport {filein} {
 #------------------------------------------------------------------------
 # merge = 1 : merge all the detailed tables into a single table
 proc ::tb::utils::rptutils::processCDCReport {filein channel {merge 0}} {
+  variable tables
   variable params
 
   # Convert the text report into a Tcl list of elements. Each list
@@ -626,23 +646,27 @@ proc ::tb::utils::rptutils::processCDCReport {filein channel {merge 0}} {
 
     switch $key {
       summary {
-        puts $channel "#####################################"
-        puts $channel "# Summary table"
-        puts $channel "#####################################"
+        print $channel "#####################################"
+        print $channel "# Summary table"
+        print $channel "#####################################"
       }
       default {
-        puts $channel "#####################################"
-        puts $channel "# CDC table: $sourceClock -> $destinationClock"
-        puts $channel "# CDC Type: $cdcType"
-        puts $channel "#####################################"
+        print $channel "#####################################"
+        print $channel "# CDC table: $sourceClock -> $destinationClock"
+        print $channel "# CDC Type: $cdcType"
+        print $channel "#####################################"
       }
     }
     set content {}
     $tbl export -format $params(format) -return_var content
-    puts $channel $content
+    print $channel $content
 
-    # Empty table
-    catch {$tbl reset}
+    # Save the current table and create new one
+    lappend tables $tbl
+    set tbl [::tb::prettyTable]
+
+#     # Empty table
+#     catch {$tbl reset}
 
     incr count
   }
@@ -768,6 +792,7 @@ proc ::tb::utils::rptutils::parseCDCReport {report {merge 0}} {
 #
 #------------------------------------------------------------------------
 proc ::tb::utils::rptutils::processDRCReport {filein channel} {
+  variable tables
   variable params
 
   set FH [open $filein {r}]
@@ -784,27 +809,29 @@ proc ::tb::utils::rptutils::processDRCReport {filein channel} {
   # CLKC-29    Advisory  2      MMCME3 not driven by IO has BUFG in feedback loop
   # CLKC-39    Advisory  1      Substitute PLLE3 for MMCME3 check
 
-  puts $channel "#####################################"
-  puts $channel "# Summary table"
-  puts $channel "#####################################"
+  print $channel "#####################################"
+  print $channel "# Summary table"
+  print $channel "#####################################"
   set tbl [::tb::prettyTable]
   $tbl header [list {ID} {Severity} {Count} {Description}]
   foreach row $rows {
     $tbl addrow $row
   }
   foreach line [split [$tbl print] \n] {
-    puts $channel [format {# %s} $line]
+    print $channel [format {# %s} $line]
   }
-  puts $channel "#"
+  print $channel "#"
   foreach line [split [$tbl export -format $params(format)] \n] {
-    puts $channel [format {# %s} $line]
+    print $channel [format {# %s} $line]
   }
-  catch {$tbl destroy}
+  # Save the current table
+  lappend tables $tbl
+#   catch {$tbl destroy}
 
-  puts $channel ""
-  puts $channel "#####################################"
-  puts $channel "# Detailed table"
-  puts $channel "#####################################"
+  print $channel ""
+  print $channel "#####################################"
+  print $channel "# Detailed table"
+  print $channel "#####################################"
   set FHin [open $filein {r}]
   set content [list]
   set loop 1
@@ -861,8 +888,10 @@ proc ::tb::utils::rptutils::processDRCReport {filein channel} {
   foreach row $content {
     $tbl addrow $row
   }
-  puts $channel [$tbl export -format $params(format)]
-  catch {$tbl destroy}
+  print $channel [$tbl export -format $params(format)]
+  # Save the current table
+  lappend tables $tbl
+#   catch {$tbl destroy}
 
   return -code ok
 }
@@ -969,24 +998,27 @@ proc ::tb::utils::rptutils::createSummaryDRCReport {filein} {
 #
 #------------------------------------------------------------------------
 proc ::tb::utils::rptutils::processTimingSummaryReport {filein channel} {
+  variable tables
   variable params
+
   set FH [open $filein {r}]
   set report [read $FH]
   close $FH
   foreach section [list {Design Timing Summary} {Clock Summary} {Intra Clock Table} {Inter Clock Table} {Other Path Groups Table}] {
-    puts $channel ""
-    puts $channel "#####################################"
-    puts $channel "# $section"
-    puts $channel "#####################################"
+    print $channel ""
+    print $channel "#####################################"
+    print $channel "# $section"
+    print $channel "#####################################"
     set rows [parseTimingSummaryReport $report $section]
     set tbl [::tb::prettyTable]
     $tbl header [lindex $rows 0]
     foreach row [lrange $rows 1 end] {
       $tbl addrow $row
     }
-    puts $channel [$tbl export -format $params(format)]
-    # Delete table
-    catch {$tbl destroy}
+    print $channel [$tbl export -format $params(format)]
+    # Save the current table
+    lappend tables $tbl
+#     catch {$tbl destroy}
   }
   return -code ok
 }
@@ -1072,6 +1104,7 @@ proc ::tb::utils::rptutils::parseTimingSummaryReport {report section} {
 #
 #------------------------------------------------------------------------
 proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -1} {pattern .+} {inline 0} {mode default}} {
+  variable tables
   variable params
 
   set FH [open $filein {r}]
@@ -1259,10 +1292,10 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
       }
       end_table {
         incr numtables
-        puts $channel ""
-        puts $channel "#####################################"
-        puts $channel "# Table $numtables"
-        puts $channel "#####################################"
+        print $channel ""
+        print $channel "#####################################"
+        print $channel "# Table $numtables"
+        print $channel "#####################################"
         set tbl [::tb::prettyTable]
         $tbl header [lindex $table 0]
         foreach row [lrange $table 1 end] {
@@ -1282,9 +1315,11 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
             }
           }
         }
-        puts $channel [$tbl export -format $params(format)]
-        # Delete table
-        catch {$tbl destroy}
+        print $channel [$tbl export -format $params(format)]
+        # Save the current table and create new one
+        lappend tables $tbl
+#         # Delete table
+#         catch {$tbl destroy}
         set table [list]
         set columns [list]
         if {$maxnumtables != -1} {
@@ -1301,7 +1336,7 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
       }
     }
     if {$print && $inline} {
-      puts $channel [format {# %s} $line]
+      print $channel [format {# %s} $line]
     }
   }
 
@@ -1310,6 +1345,107 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
 
 #########################################################################
 #########################################################################
+
+##-----------------------------------------------------------------------
+## rpt2tbl
+##-----------------------------------------------------------------------
+## Return list of prettyTable(s) from an input report file
+##-----------------------------------------------------------------------
+proc ::tb::utils::rptutils::rpt2tbl {args} {
+
+  variable version
+  variable params
+
+  set params(verbose) 0
+  set params(debug) 0
+  set error 0
+  set show_help 0
+  set show_long_help 0
+  set ifilename {}
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-i(n(p(ut?)?)?)?$} {
+        set ifilename [lshift args]
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      {^-lo(n(g(h(e(lp?)?)?)?)?)?$} {
+        incr show_help
+        incr show_long_help
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          set ifilename $name
+#           puts " -E- optin '$name' is not a valid option"
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: rpt2tbl
+                  [<filename>]
+                  [-input <filename> ...]
+                  [-verbose|-v]
+                  [-help|-h]
+                  [-longhelp]
+
+      Description: Convert report file to prettyTable
+
+      Version: %s
+
+      Example:
+         rpt2tbl -input rda.rpt
+
+    } $version ]
+    # HELP -->
+
+    if {$show_long_help} { print_help }
+
+    return -code ok
+  }
+
+  if  {$ifilename == {}} {
+    puts " -E- no input file provided"
+    incr error
+  } elseif  {![file exists $ifilename]} {
+    puts " -E- file '$ifilename' does not exist"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#    exit -1
+  }
+
+  set firsttableinfile 1
+  if {$params(verbose)} {
+    puts " -I- Processing file $ifilename"
+  }
+  set listTables [rptutils -input $ifilename -return_tables]
+
+  return $listTables
+}
 
 ##-----------------------------------------------------------------------
 ## rptutils
@@ -1321,9 +1457,11 @@ proc ::tb::utils::rptutils::rptutils {args} {
   variable version
   variable params
   variable channel
+  variable tables
 
   set params(verbose) 0
   set params(debug) 0
+  set tables [list]
   set error 0
   set show_help 0
   set show_long_help 0
@@ -1339,6 +1477,7 @@ proc ::tb::utils::rptutils::rptutils {args} {
   set maxnumtables -1
   set pattern {.+}
   set channel {}
+  set returntables 0
   set reportformat {}
   set fileextension {}
   if {[llength $args] == 0} {
@@ -1421,6 +1560,9 @@ proc ::tb::utils::rptutils::rptutils {args} {
       {^-nu(m(t(a(b(l(es?)?)?)?)?)?)?$} {
         set maxnumtables [lshift args]
       }
+      {^-re(t(u(r(n(_(t(a(b(l(es?)?)?)?)?)?)?)?)?)?)?$} {
+        set returntables 1
+      }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
       }
@@ -1477,6 +1619,7 @@ proc ::tb::utils::rptutils::rptutils {args} {
                   [-csv][-tcl][-list][-array][-table]
                   [-noheader]
                   [-delimiter <csv-delimiter>]
+                  [-return_tables]
                   [-verbose|-v]
                   [-help|-h]
                   [-longhelp]
@@ -1516,6 +1659,16 @@ proc ::tb::utils::rptutils::rptutils {args} {
       puts " -E- file $ofilename already exist. Use -force to override"
       incr error
     }
+  }
+
+  if  {($ofilename != {}) && $returntables} {
+    puts " -E- -output and -return_tables are exclusive"
+    incr error
+  }
+
+  if  {$stdout && $returntables} {
+    puts " -E- -stdout and -return_tables are exclusive"
+    incr error
   }
 
   if {$error} {
@@ -1610,7 +1763,9 @@ proc ::tb::utils::rptutils::rptutils {args} {
       }
     }
 
-    if {$stdout} {
+    if {$returntables} {
+      # Nothing to be done
+    } elseif {$stdout} {
       set channel {stdout}
     } elseif {$ofilename == {}} {
       set fileout [format {%s.%s} [file rootname $filename] $params(extension)]
@@ -1681,15 +1836,26 @@ proc ::tb::utils::rptutils::rptutils {args} {
     puts " -I- Generated file [file normalize $ofilename]"
   }
 
+  if {$returntables} {
+    return $tables
+  }
+
+  # Destroy prettyTable table(s)
+  foreach tbl $tables {
+    catch { $tbl destroy }
+  }
+
   return -code ok
 }
 
 namespace eval ::tb::utils {
   namespace import -force ::tb::utils::rptutils::rptutils
+  namespace import -force ::tb::utils::rptutils::rpt2tbl
 }
 
 namespace eval ::tb {
   namespace import -force ::tb::utils::rptutils
+  namespace import -force ::tb::utils::rpt2tbl
 }
 
 
