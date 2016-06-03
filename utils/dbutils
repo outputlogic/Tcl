@@ -2454,7 +2454,7 @@ if {[file tail [info script]]!=[file tail $argv0]} {
   switch $tail {
     dbutils -
     csv2db {
-      if {[catch {set result eval [concat ::tb::utils::dbutils::csv2db -standalone $argv]]} errorstring]} {
+      if {[catch {set result [eval [concat ::tb::utils::dbutils::csv2db -standalone $argv]]} errorstring]} {
         puts $errorstring
         set exitCode 1
       } else {
