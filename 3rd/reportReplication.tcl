@@ -1,13 +1,33 @@
-# From Fred
+# % source reportReplication.tcl –notrace
+# % reportReplication replication.csv
+# 
+# Several options:
+# 1)	Undo ALL replications
+# % undoReplication 0 replication.csv
+# 
+# 2)	Undo replication of control signal drivers only
+# % undoReplication 1 replication.csv
+# 
+# 3)	Undo replication of selected cells only (cell names are based on what reportReplication prints in the log file or csv)
+# % set listOfRepCells {cellA cellB…}
+# % foreach cell $listOfRepCells {
+#       lappend removeCells [combineReplicatedCells $cell 1]
+# }
+# % remove_cell $removeCells
 
-proc reportReplication {{csvFile "replication.csv"} {timing 0} {hierGrouping 0}} {
+proc reportReplication {{csvFile "replication.csv"} {timing 0} {LUTs 0}} {
 
   set mCellNotFound 0
   set nbPhysOptRepCells 0
   set nbCustomRepCells 0
   
-  set repCells [get_cells -hier {*_rep*} -filter {PRIMITIVE_GROUP == REGISTER || PRIMITIVE_GROUP == FLOP_LATCH}]
-  lappend repCells [get_cells -quiet -hier {*_hdup*} -filter {PRIMITIVE_GROUP == REGISTER || PRIMITIVE_GROUP == FLOP_LATCH}]
+  if {$LUTs} {
+    set repCells [get_cells -hier {*_rep*} -filter {PRIMITIVE_SUBGROUP == LUT}]
+    lappend repCells [get_cells -quiet -hier {*_hdup*} -filter {PRIMITIVE_SUBGROUP == LUT}]
+  } else {
+    set repCells [get_cells -hier {*_rep*} -filter {PRIMITIVE_GROUP == REGISTER || PRIMITIVE_GROUP == FLOP_LATCH}]
+    lappend repCells [get_cells -quiet -hier {*_hdup*} -filter {PRIMITIVE_GROUP == REGISTER || PRIMITIVE_GROUP == FLOP_LATCH}]
+  }
 
   foreach cell [lsort -unique $repCells] {
     set poRep 1
@@ -33,6 +53,7 @@ proc reportReplication {{csvFile "replication.csv"} {timing 0} {hierGrouping 0}}
     } elseif {[regexp {^(.*)_rep_rep$}                 $rCell foo mCell]} {
     } elseif {[regexp {^(.*)_rep__[0-9]*$}             $rCell foo mCell]} {
     } elseif {[regexp {^(.*)_rep[0-9]*_[0-9]*$}        $rCell foo mCell]} {
+    } elseif {[regexp {^(.*)_rep_[0-9]*\[[0-9]+\]$}    $rCell foo mCell]} {
     } elseif {[regexp {^(.*)_rep[0-9]*$}               $rCell foo mCell]} {
     } elseif {[regexp {^(.*)_rep$}                     $rCell foo mCell]} {
     } elseif {$poRep} {
@@ -94,6 +115,9 @@ proc reportReplication {{csvFile "replication.csv"} {timing 0} {hierGrouping 0}}
   puts "PhysOpt replicated cells   = $nbPhysOptRepCells (custom rep: $nbCustomRepCells)"
   puts "Original cells not found   = $mCellNotFound"
 
+  if {$LUTs && $csvFile == "replication.csv"} {
+    set csvFile "lutReplication.csv"
+  }
   set CSV [open $csvFile w]
 
   if {$timing} {
@@ -156,6 +180,7 @@ proc getReplicatedCells {refCells {includeRefCells ""}} {
       } elseif {[regexp {^(.*)_rep_rep$}                 $rCell foo mCell]} {
       } elseif {[regexp {^(.*)_rep__[0-9]*$}             $rCell foo mCell]} {
       } elseif {[regexp {^(.*)_rep[0-9]*_[0-9]*$}        $rCell foo mCell]} {
+      } elseif {[regexp {^(.*)_rep_[0-9]*\[[0-9]+\]$}    $rCell foo mCell]} {
       } elseif {[regexp {^(.*)_rep[0-9]*$}               $rCell foo mCell]} {
       } elseif {[regexp {^(.*)_rep$}                     $rCell foo mCell]} {
       } elseif {$poRep} {
@@ -209,6 +234,7 @@ proc combineReplicatedCells { masterCell {returnCellsToRemove 0} } {
       }
     }
   }
+  if {$masterCell == {}} { puts "Master cell not found"; return }
   if {![regexp {^FD*} [get_property REF_NAME $masterCell]]} { puts "Master cell not FD*"; return }
   if {[get_pins -quiet -leaf -filter {DIRECTION==OUT} -of [get_nets -quiet -of [get_pins -filter {REF_PIN_NAME==D} -of $masterCell]]] == {}} {
     puts "Master cell has no driver"
@@ -287,10 +313,14 @@ proc undoReplication {{csOnly 0} {csvFileIn replication.csv}} {
   set totOrigCells 0
   set totUselessOrigCells 0
   set CSV [open $csvFileIn r]
+  gets $CSV l
+  set hasTiming [regexp {,period,} $l]
   while {[gets $CSV l] >= 0} {
-    if {![regexp {^(\d+),(\d+),(\d+),(\d+),(\d+),(\S+)$} $l foo rep ppr afo ce rst origCell]} {
-      continue
-    } 
+    if {$hasTiming} {
+      if {![regexp {^(\d+),(\d+),(\d+),(\d+),(\d+),(\S+),(\S+)$} $l foo rep ppr afo ce rst period origCell]} { continue }
+    } else {
+      if {![regexp {^(\d+),(\d+),(\d+),(\d+),(\d+),(\S+)$} $l foo rep ppr afo ce rst origCell]} { continue }
+    }
     if {$rep == 1} { continue }
     if {$csOnly && $ce == 0 && $rst == 0} { continue }
     puts "\n## Starting replication undo - pins: $afo - ce: $ce - rst:$rst"

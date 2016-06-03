@@ -4,6 +4,10 @@
 # vivadoQoR qor_2015_3.csv [glob ${rootDir}/2015.3_srlDSPLagunaOpt6*/*/vivado.log] 1
 
 proc vivadoQoR {{csvFileName "vivadoQoR.csv"} {logFiles ""} {useInitialRouteTimingForPhysOpt 0} {columnMode 0} {logDirs ""}} {
+  # columnMode
+  # 0: (default) Runtime + timing + directives
+  # 1: runtime + memory
+  # 2: same as 0 + long/short router congestion columns
   if {$logFiles == "" && $logDirs == ""} {
     set logFiles [glob *.log]
   } elseif {$logFiles == "" && $logDirs != ""} {
@@ -35,7 +39,13 @@ proc vivadoQoR {{csvFileName "vivadoQoR.csv"} {logFiles ""} {useInitialRouteTimi
     return 1
   }
   set CSV [open $csvFileName w]
-  if {$columnMode == 1} {
+  if {$columnMode == 2} {
+    puts $CSV [join [list logFile status totalTime link optDir optTime \
+                          placeDirective placeWNS placeCong placeTime \
+                          physOptDirective physOptWNS physOptTNS physOptWHS physOptTHS physOptTime pOptIter \
+                          routeDirective routeWNS routeTNS routeWHS routeTHS routeCong longCong shortCong routeTime \
+                          prPOptDirective prPOptWNS prPOptTNS prPOptWHS prPOptTHS prPOptTime prPOptIter] ,]
+  } elseif {$columnMode == 1} {
     puts $CSV [join [list logFile status totalTime \
                           placeDirective placeWNS placeTime placePeak placeGain \
                           routeDirective routeWNS routeTNS routeWHS routeTHS routeTime routePeak routeGain] ,]
@@ -61,6 +71,8 @@ proc vivadoQoR {{csvFileName "vivadoQoR.csv"} {logFiles ""} {useInitialRouteTimi
     set cmd ""
     set placeCong "u u u u"
     set routeCong "u u u u"
+    set routeLongCong "1x1 0.0"
+    set routeShortCong "1x1 0.0"
     while {[gets $LOG line] >= 0} {
       #puts $cmd
       if {[regexp {^Command: (\S+)\s*(.*)} $line foo cmd cmdArgs]} {
@@ -110,25 +122,32 @@ proc vivadoQoR {{csvFileName "vivadoQoR.csv"} {logFiles ""} {useInitialRouteTimi
         } else {
           set timing($curcmd) [list $wns $tns $whs $ths]
         }
-      } elseif {[regexp {^\|\s+(\S+)\s*\|\s+([0-9x]+)\s*\|\s+([0-9.]+)\s*\|\s+([0-9x]+)\s*\|\s+([0-9.]+)\s*\|\s+([0-9x]+)\s*\|\s+([0-9.]+)\s*\|} $line all card globCong globPc LongCong LongPc shortCong shortPc]} {
-        switch -exact $globCong {
-          "1x1"     { set level 0 }
-          "2x2"     { set level 1 }
-          "4x4"     { set level 2 }
-          "8x8"     { set level 3 }
-          "16x16"   { set level 4 }
-          "32x32"   { set level 5 }
-          "64x64"   { set level 6 }
-          "128x128" { set level 7 }
-          "256x256" { set level 8 }
-          default   { set level u }
-        }
+      } elseif {[regexp {^\|\s+(\S+)\s*\|\s+([0-9x]+)\s*\|\s+([0-9.]+)\s*\|\s+([0-9x]+)\s*\|\s+([0-9.]+)\s*\|\s+([0-9x]+)\s*\|\s+([0-9.]+)\s*\|} $line all card globCong globPc longCong longPc shortCong shortPc]} {
+        set level [returnCongLevel $globCong]
         switch -exact $card {
           "NORTH" { set routeCong [lreplace $routeCong 0 0 $level] }
           "SOUTH" { set routeCong [lreplace $routeCong 1 1 $level] }
           "EAST"  { set routeCong [lreplace $routeCong 2 2 $level] }
           "WEST"  { set routeCong [lreplace $routeCong 3 3 $level] }
-        } 
+        }
+        set longLevel [returnCongLevel $longCong]
+        set longPrev  [returnCongLevel [lindex $routeLongCong 0]]
+        if {$longLevel > $longPrev} {
+          set routeLongCong [list $longCong $longPc]
+        } elseif {$longLevel == $longPrev && $longPc > [lindex $routeLongCong 1]} {
+          set routeLongCong [list $longCong $longPc]
+        }
+        #set longTmp [expr [regsub {x} $longCong {*}]]
+        #set routeLongCong [expr $routeLongCong + $longTmp * $longPc]
+        set shortLevel [returnCongLevel $shortCong]
+        set shortPrev  [returnCongLevel [lindex $routeShortCong 0]]
+        if {$shortLevel > $shortPrev} {
+          set routeShortCong [list $shortCong $shortPc]
+        } elseif {$shortLevel == $shortPrev && $shortPc > [lindex $routeShortCong 1]} {
+          set routeShortCong [list $shortCong $shortPc]
+        }
+        #set shortTmp [expr [regsub {x} $shortCong {*}]]
+        #set routeShortCong [expr $routeShortCong + $shortTmp * $shortPc]
       } elseif {[regexp {^INFO: \[.*\] Post Physical Optimization Timing Summary \| WNS=(\S+)\s*\| TNS=(\S+)\s*.*} $line foo wns tns]} {
         #puts $line
         set timing(phys_opt) [list $wns $tns]
@@ -173,13 +192,23 @@ proc vivadoQoR {{csvFileName "vivadoQoR.csv"} {logFiles ""} {useInitialRouteTimi
       "RUNNING" { incr running }
     }
     set rdaCongestion "[file dirname $logFile]/rda_congestion.rpt"
+    if {![file exists $rdaCongestion]} {
+      if {[catch {set rdaCongestion [glob [file dirname $logFile]/*congestion*]} foo]} { set rdaCongestion "" }
+    }
     if {[file exists $rdaCongestion]} {
-      lassign [parseRDACongestion $rdaCongestion] placeCong routeCong
+      lassign [parseRDACongestion $rdaCongestion] placeCong routeCongTmp
+      if {$routeCong == "u u u u" && $routeCongTmp != "u-u-u-u"} { set routeCong $routeCongTmp } else { set routeCong [join $routeCong -] }
     } else {
       set placeCong [join $placeCong -]
       set routeCong [join $routeCong -]
     }
-    if {$columnMode == 1} {
+    if {$columnMode == 2} {
+      set csvList [list [regsub "$rootDir/(.*)/.*\.log" $logFile {\1}] $status $totTime $runtime(link) $directive(opt) $runtime(opt) \
+                          $directive(place) $timing(place) $placeCong $runtime(place) \
+                          $directive(phys_opt) [lindex $timing(phys_opt) 0] [lindex $timing(phys_opt) 1] [lindex $timing(phys_opt) 2] [lindex $timing(phys_opt) 3] $runtime(phys_opt) $nbIter(phys_opt) \
+                          $directive(route) [lindex $timing(route) 0] [lindex $timing(route) 1] [lindex $timing(route) 2] [lindex $timing(route) 3] $routeCong [join $routeLongCong (]%) [join $routeShortCong (]%) $runtime(route) \
+                          $directive(pr_phys_opt) [lindex $timing(pr_phys_opt) 0] [lindex $timing(pr_phys_opt) 1] [lindex $timing(pr_phys_opt) 2] [lindex $timing(pr_phys_opt) 3] $runtime(pr_phys_opt) $nbIter(pr_phys_opt)]
+    } elseif {$columnMode == 1} {
       set csvList [list [regsub "$rootDir/(.*)/.*\.log" $logFile {\1}] $status $totTime \
                           $directive(place) $timing(place) $runtime(place) $peakMem(place) $gainMem(place) \
                           $directive(route) [lindex $timing(route) 0] [lindex $timing(route) 1] [lindex $timing(route) 2] [lindex $timing(route) 3] $runtime(route) $peakMem(route) $gainMem(route)]
@@ -215,18 +244,7 @@ proc parseRDACongestion {rdaFile} {
       }
     } elseif {[regexp {^\| (\S+)\s*\| (\S+)\s*\| \S+\s*\| \S+\s*| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\|} $line foo card cong] || \
               [regexp {^\| (\S+)\s*\| (\S+)\s*\| \S+\s*\| \s*\S+ -> \S+\s*\|\s*$} $line foo card cong]} {
-      switch -exact $cong {
-        "1x1"     { set level 0 }
-        "2x2"     { set level 1 }
-        "4x4"     { set level 2 }
-        "8x8"     { set level 3 }
-        "16x16"   { set level 4 }
-        "32x32"   { set level 5 }
-        "64x64"   { set level 6 }
-        "128x128" { set level 7 }
-        "256x256" { set level 8 }
-        default   { set level u }
-      }
+      set level [returnCongLevel $cong]
       if {$section == "placer"} {
         switch -exact $card {
           "North" { set placeCong [lreplace $placeCong 0 0 $level] }
@@ -250,39 +268,17 @@ proc parseRDACongestion {rdaFile} {
   return [list [join $placeCong -] [join $routeCong -]]
 }
 
-# findFiles
-# basedir - the directory to start looking in
-# pattern - A pattern, as defined by the glob command, that the files must match
-proc findFiles { basedir pattern } {
-
-    # Fix the directory name, this ensures the directory name is in the
-    # native format for the platform and contains a final directory seperator
-    set basedir [string trimright [file join [file normalize $basedir] { }]]
-    set fileList {}
-
-    # Look in the current directory for matching files, -type {f r}
-    # means ony readable normal files are looked at, -nocomplain stops
-    # an error being thrown if the returned list is empty
-    foreach fileName [glob -nocomplain -type {f r} -path $basedir $pattern] {
-        lappend fileList $fileName
-    }
-
-    # Now look for any sub direcories in the current directory
-    foreach dirName [glob -nocomplain -type {d  r} -path $basedir *] {
-        # Recusively call the routine on the sub directory and append any
-        # new files to the results
-        set subDirList [findFiles $dirName $pattern]
-        if { [llength $subDirList] > 0 } {
-            foreach subDirFile $subDirList {
-                lappend fileList $subDirFile
-            }
-        }
-    }
-    return $fileList
- }
- 
-proc vivadoQoR_rec { basedir csvfile } {
-
-   set logfiles [findFiles $basedir "vivado*.log"]
-   vivadoQoR $csvfile $logfiles
- }
+proc returnCongLevel {cong} {
+  switch -exact $cong {
+    "1x1"     { return 0 }
+    "2x2"     { return 1 }
+    "4x4"     { return 2 }
+    "8x8"     { return 3 }
+    "16x16"   { return 4 }
+    "32x32"   { return 5 }
+    "64x64"   { return 6 }
+    "128x128" { return 7 }
+    "256x256" { return 8 }
+    default   { return u }
+  }
+}
