@@ -662,8 +662,8 @@ set rrs {%s}
 
 # Load main script
 # source /home/dpefour/git/scripts/toolbox/snapshot/snapshot
-# lappend auto_path /home/dpefour/git/scripts/toolbox/snapshot
-# package require snapshot
+lappend auto_path /home/dpefour/git/scripts/toolbox/snapshot
+package require snapshot
 # package require extract
 # source /home/dpefour/git/scripts/wip/snapshot/snapshot
 } [clock format [clock seconds]] \

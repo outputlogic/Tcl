@@ -15,13 +15,14 @@ exec tclsh "$0" "$@"
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.02.04
+## Version:        2016.05.18
 ## Tool Version:   Vivado 2014.1
 ## Description:    This utility provides a simple way to extract and save metrics
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.05.18 - Added -options to method 'extract'
 ## 2016.02.04 - Added methods 'serialize'/'deserialize'
 ##            - Improved reporting when database locks
 ##            - Set SQL timeout when opening the database
@@ -972,6 +973,8 @@ proc ::tb::snapshot::method:extract {args} {
   set lastid 0
   set time 0
   set save 0
+  # Options to pass to the extract procs
+  set options [list]
   set error 0
   set help 0
 #   if {[llength $args] == 0} {
@@ -1031,6 +1034,12 @@ proc ::tb::snapshot::method:extract {args} {
       -description {
            ::tb::snapshot::method:configure -description [lshift args]
       }
+      -o -
+      -opt -
+      -option -
+      -options {
+        set options [lshift args]
+      }
       -createdb {
         ::tb::snapshot::method:configure -createdb
       }
@@ -1074,6 +1083,7 @@ proc ::tb::snapshot::method:extract {args} {
           +-------------------------+
               [-reset]
               [-db <filename>]
+              [-options|-o <extract_options>]
               [-createdb]
               [-project|-p <string>]
               [-release|-rel <string>]
@@ -1093,6 +1103,7 @@ proc ::tb::snapshot::method:extract {args} {
   Example:
      snapshot extract -experiment noHighFanout
      snapshot extract -experiment noHighFanout -save
+     snapshot extract -experiment noHighFanout -save -options [list -save_reports 0]
 } ]
     # HELP -->
     # Restore state of verbosity & debug
@@ -1113,8 +1124,11 @@ proc ::tb::snapshot::method:extract {args} {
       extract {
         if {$verbose} {
           print info "Started extract on $procname on [clock format [clock seconds]]"
+          if {$options != {}} {
+            print info "Options: $options"
+          }
         }
-        if {[catch {$procname} errorstring]} {
+        if {[catch {$procname {*}$options} errorstring]} {
           error " -E- $errorstring"
         }
         if {$verbose} {
@@ -1311,18 +1325,18 @@ proc ::tb::snapshot::execSQL {&SQL {cmd {pragma integrity_check} } } {
 #   while {[catch { uplevel [list ${&SQL} eval $cmd] } errorstring]} {}
   while {[catch { set res [uplevel [list ${&SQL} eval $cmd]] } errorstring]} {
     if {[regexp {database is locked} $errorstring]} {
-      if {$verbose} { 
-      	print info "SQL database locked \[$loop/$timeout\] \[[clock format [clock seconds]]\] ..." 
-      	if {$first} { print info "SQL command: $cmd" }
-      	set first 0
+      if {$verbose} {
+        print info "SQL database locked \[$loop/$timeout\] \[[clock format [clock seconds]]\] ..."
+        if {$first} { print info "SQL command: $cmd" }
+        set first 0
       }
       exec sleep $sleep
       incr loop
     } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
-      if {$verbose} { 
-      	print info "SQL database read-only  \[$loop/\$timeout] \[[clock format [clock seconds]]\] ..." 
-      	if {$first} { print info "SQL command: $cmd" }
-      	set first 0
+      if {$verbose} {
+        print info "SQL database read-only  \[$loop/$timeout\] \[[clock format [clock seconds]]\] ..."
+        if {$first} { print info "SQL command: $cmd" }
+        set first 0
       }
       exec sleep $sleep
       incr loop
@@ -2078,7 +2092,7 @@ proc ::tb::snapshot::method:set {args} {
               [-help|-h]
 
   Description: Set a metric value
-  
+
     -once: does not override the metric value if already set
 
   Example:
@@ -2088,7 +2102,7 @@ proc ::tb::snapshot::method:set {args} {
     # HELP -->
     return -code ok
   }
-  
+
   switch $type {
     file -
     param -
@@ -2111,7 +2125,7 @@ proc ::tb::snapshot::method:set {args} {
     }
     2 {
       if {!$override && [info exists metrics([lindex $parameters 0])]} {
-        if {$verbose} { 
+        if {$verbose} {
           puts " -W- metric '[lindex $parameters 0]' already defined. Metric value not overriden (-once)"
         }
         return 1
@@ -2124,7 +2138,7 @@ proc ::tb::snapshot::method:set {args} {
     }
     default {
       if {!$override && [info exists metrics([lindex $parameters 0])]} {
-        if {$verbose} { 
+        if {$verbose} {
           puts " -W- metric '[lindex $parameters 0]' already defined. Metric value not overriden (-once)"
         }
         return 1
@@ -2201,7 +2215,7 @@ proc ::tb::snapshot::method:addfile {args} {
     # HELP -->
     return -code ok
   }
-  
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
@@ -2298,7 +2312,7 @@ proc ::tb::snapshot::method:addparam {args} {
     # HELP -->
     return -code ok
   }
-  
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
@@ -2584,10 +2598,10 @@ proc ::tb::snapshot::method:deserialize {args} {
   if {[catch {
     array set ar [lindex $args 0]
     foreach key [lsort [array names ar]] {
-    	::tb::snapshot::method:set $key $ar($key)
+      ::tb::snapshot::method:set $key $ar($key)
     }
   } errorstring]} {
-  	error $errorstring
+    error $errorstring
   }
   return -code ok
 }
@@ -2726,20 +2740,20 @@ proc ::tb::snapshot::dbreport {args} {
   # Some styles for the report
   catch { ::report::rmstyle simpletable }
   ::report::defstyle simpletable {} {
-    data	set [split "[string repeat "| "   [columns]]|"]
-    top	set [split "[string repeat "+ - " [columns]]+"]
-    bottom	set [top get]
-    top	enable
-    bottom	enable
+    data  set [split "[string repeat "| "   [columns]]|"]
+    top set [split "[string repeat "+ - " [columns]]+"]
+    bottom  set [top get]
+    top enable
+    bottom  enable
   }
   catch { ::report::rmstyle captionedtable }
   ::report::defstyle captionedtable {{n 1}} {
-	  simpletable
-	  topdata   set [data get]
-	  topcapsep set [top get]
-	  topcapsep enable
-	  tcaption $n
-	}
+    simpletable
+    topdata   set [data get]
+    topcapsep set [top get]
+    topcapsep enable
+    tcaption $n
+  }
   catch {matrixFormat destroy}
   ::report::report matrixFormat 10 style captionedtable 1
 #   matrixFormat justify 2 center
