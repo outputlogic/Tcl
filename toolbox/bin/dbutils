@@ -1,0 +1,2480 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" -- ${1+"$@"}
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " uplevel #0 \[list source [info script]; puts \" [info script] reloaded\" \]"
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2016.06.03
+## Description:    This script provides various utilities for SQLite database
+##
+########################################################################################
+
+########################################################################################
+## 2016.06.03 - Initial release
+########################################################################################
+
+if {[catch {package require sqlite3}]} {
+  lappend auto_path {/home/dpefour/root/usr/lib/sqlite3.8.0.2}
+  package require sqlite3
+}
+
+if {[catch {package require prettyTable}]} {
+  lappend auto_path {/home/dpefour/git/scripts/toolbox}
+  package require prettyTable
+}
+
+namespace eval ::tb {}
+
+namespace eval ::tb::utils::dbutils {
+  namespace export csv2db
+  namespace export tbl2db
+  namespace export db2csv
+  namespace export db2tbl
+  namespace export dbinfo
+  namespace export dbquery
+
+  variable version {2016.06.03}
+  array set params [list timeout 600 safe 1 verbose 0 debug 0 debug_level 1 debug_channel {stdout} debug_log {} ]
+
+  variable SCRIPT_VERSION {xx-xx-2016}
+
+  variable SQL
+}
+
+##-----------------------------------------------------------------------
+## Long help function
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::print_help {} {
+
+set help_message [format {
+#########################################################################
+#########################################################################
+##
+## dbutils
+##
+## Example:
+##    dbutils
+##
+## Description:
+##   Utility to convert CSV formated files to SQLite database
+##
+## Options:
+##
+##   -csv                Input CSV file(s)
+##
+##   -out                SQlite database to save results
+##
+##   -delimiter          CSV delimiter
+##                       Default: ,
+##
+#########################################################################
+#########################################################################
+} ]
+
+  foreach line [split $help_message "\n"] {
+    regsub {##} $line {  } line
+    puts $line
+  }
+
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::utils::dbutils::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+##-----------------------------------------------------------------------
+## K lequal
+##-----------------------------------------------------------------------
+## List functions
+##-----------------------------------------------------------------------
+
+proc ::tb::utils::dbutils::dputs {args} {
+  variable params
+  if {!$params(debug)} { return -code ok }
+  switch [llength $args] {
+    2 {
+      set level [lindex $args 0]
+    }
+    default {
+      set level 1
+    }
+  }
+  set string [lindex $args end]
+  if {$params(debug_level) >= $level} {
+    uplevel 1 [list puts $params(debug_channel) $string]
+  }
+  return -code ok
+}
+
+proc ::tb::utils::dbutils::debug {args} {
+  variable params
+  if {!$params(debug)} { return -code ok }
+  switch [llength $args] {
+    2 {
+      set level [lindex $args 0]
+    }
+    default {
+      set level 1
+    }
+  }
+  set body [lindex $args end]
+  if {$params(debug_level) >= $level} {
+    uplevel 1 $body
+  }
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## K lequal
+##-----------------------------------------------------------------------
+## List functions
+##-----------------------------------------------------------------------
+
+proc ::tb::utils::dbutils::K {a b} {return $a}
+
+proc ::tb::utils::dbutils::lequal {l1 l2} {
+    if {[llength $l1] != [llength $l2]} {
+        return false
+    }
+
+    set l2 [lsort $l2]
+
+    foreach elem $l1 {
+        set idx [lsearch -exact -sorted $l2 $elem]
+        if {$idx == -1} {
+            return false
+        } else {
+            set l2 [lreplace [K $l2 [unset l2]] $idx $idx]
+        }
+    }
+
+    return [expr {[llength $l2] == 0}]
+}
+
+# Id #l2 a sub-list of $l1?
+proc ::tb::utils::dbutils::lsub {l1 l2} {
+    set l2 [lsort $l2]
+    foreach elem $l1 {
+        set idx [lsearch -exact -sorted $l2 $elem]
+        if {$idx != -1} {
+            set l2 [lreplace [K $l2 [unset l2]] $idx $idx]
+        }
+    }
+    return [expr {[llength $l2] == 0}]
+}
+
+##-----------------------------------------------------------------------
+## join-csv
+##-----------------------------------------------------------------------
+## Convert a Tcl list to a CSV-friedly string
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::join-csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+##-----------------------------------------------------------------------
+## split-csv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::split-csv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## read-csv
+##-----------------------------------------------------------------------
+## Read CSV file and return a Table object
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::read-csv {&header &rows filename {csvDelimiter ,}} {
+  variable params
+  set verbose $params(verbose)
+  if {![file exists $filename]} {
+    error " -E- file '$filename' does not exist"
+  }
+  upvar 1 ${&header} header
+  upvar 1 ${&rows} rows
+  set FH [open $filename]
+  set first 1
+  set count 0
+  set header [list]
+  while {![eof $FH]} {
+    gets $FH line
+    # Skip comments and empty lines
+    if {[regexp {^\s*#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    if {$first} {
+      set header [split-csv $line $csvDelimiter]
+      set first 0
+    } else {
+      lappend rows [split-csv $line $csvDelimiter]
+      incr count
+    }
+  }
+  close $FH
+  if {$verbose} {
+    puts " -I- Header: $header"
+    puts " -I- Number of imported row(s): $count"
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# execSQL
+#------------------------------------------------------------------------
+# Execute SQL command
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::execSQL {&SQL {cmd {pragma integrity_check} } } {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable params
+  set verbose $params(verbose)
+  dputs " -D- SQL command: $cmd"
+
+  set loop 0
+  set first 1
+  set sleep 5
+  set timeout [expr $params(timeout) / $sleep]
+  # Wait for the database to be unlocked
+#   while {[catch { uplevel [list ${&SQL} eval $cmd] } errorstring]} {}
+  while {[catch { set res [uplevel [list ${&SQL} eval $cmd]] } errorstring]} {
+    if {[regexp {database is locked} $errorstring]} {
+      if {$verbose} {
+        puts "SQL database locked \[$loop/$timeout\] \[[clock format [clock seconds]]\] ..."
+        if {$first} { puts "SQL command: $cmd" }
+        set first 0
+      }
+      exec sleep $sleep
+      incr loop
+    } elseif {[regexp {attempt to write a readonly database} $errorstring]} {
+      if {$verbose} {
+        puts "SQL database read-only  \[$loop/$timeout\] \[[clock format [clock seconds]]\] ..."
+        if {$first} { puts "SQL command: $cmd" }
+        set first 0
+      }
+      exec sleep $sleep
+      incr loop
+    } else {
+      error $errorstring
+    }
+    if {$loop > $timeout} { set res {}; break }
+  }
+#   return 0
+  return $res
+}
+
+#------------------------------------------------------------------------
+# dbCreateDB
+#------------------------------------------------------------------------
+# Create SQL table
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbCreateDB {{db {}} {inmemory 0}} {
+#   variable SQL
+  variable params
+  set verbose $params(verbose)
+  set id [pid]
+  while {[info command SQL${id}] != {}} { incr id }
+  if {$inmemory} {
+    sqlite3 SQL${id} {:memory:}
+    set SQL SQL${id}
+    execSQL $SQL { pragma integrity_check }
+  } else {
+    sqlite3 SQL${id} $db -create true
+    set SQL SQL${id}
+    execSQL $SQL { pragma integrity_check }
+  }
+
+  # Add the PRAGMAs
+  execSQL $SQL [::tb::utils::dbutils::SQLPragmas]
+
+  return $SQL
+}
+
+#------------------------------------------------------------------------
+# dbOpenDB
+#------------------------------------------------------------------------
+# Open SQL table
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbOpenDB {{db {}} {readOnly true} {inmemory 0}} {
+#   variable SQL
+  variable params
+  set verbose $params(verbose)
+  set debug $params(debug)
+  set id [pid]
+  while {[info command SQL${id}] != {}} { incr id }
+  if {$inmemory} {
+    sqlite3 SQL${id} {:memory:}
+    set SQL SQL${id}
+    execSQL $SQL { pragma integrity_check }
+    $SQL eval " ATTACH DATABASE '$db' AS DB "
+    # Create and copy tables
+    set tables [lsort [$SQL eval { SELECT name FROM DB.sqlite_master WHERE type='table' }] ]
+    if {$verbose} { puts " -I- Tables: [lsort $tables]" }
+    foreach table $tables {
+      if {$table == {sqlite_sequence}} { continue }
+      if {$verbose} { puts " -I- Creating table: $table" }
+      # Get SQL schema for the table
+      set tablesql [$SQL eval " select sql from DB.sqlite_master where (sql not NULL) AND (type='table') AND (name='$table'); " ]
+      if {$debug} { puts " -D- SQL Schema: [join [split $tablesql \n]]" }
+      $SQL eval [lindex $tablesql 0]
+      if {$debug} { puts " -D- Loading table: $table" }
+      $SQL eval " INSERT INTO $table SELECT * FROM DB.$table "
+    }
+#     # Copy tables
+#     set tables [$SQL eval { SELECT name FROM DB.sqlite_master WHERE type='table' }]
+#     if {$verbose} { puts " -I- Tables: [lsort $tables]" }
+#     foreach table $tables {
+#       if {$table == {sqlite_sequence}} { continue }
+#       if {$verbose} { puts " -I- Loading table: $table" }
+#       $SQL eval " CREATE TABLE $table AS SELECT * FROM DB.$table "
+#     }
+    # Copy SQL expressions
+    set sql_exps [$SQL eval { SELECT name FROM DB.sqlite_master WHERE type='index' }]
+    if {$verbose} { puts " -I- SQL Expressions: [lsort $sql_exps]" }
+    foreach sql_exp $sql_exps {
+      if {$sql_exp == {sqlite_sequence}} { continue }
+      if {$debug} { puts " -D- SQL Expression: $sql_exp" }
+      $SQL eval $sql_exp
+    }
+    $SQL eval { DETACH DATABASE DB }
+  } else {
+    sqlite3 SQL${id} $db -readonly $readOnly
+    set SQL SQL${id}
+  }
+
+  execSQL $SQL { pragma integrity_check }
+
+  return $SQL
+}
+
+#------------------------------------------------------------------------
+# dbTbl2DB
+#------------------------------------------------------------------------
+# Save SQL database table into a prettyTable
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbDB2Tbl {SQL tablePattern {tableType default}} {
+  variable params
+  set verbose $params(verbose)
+  set debug $params(debug)
+
+  if {$SQL == {}} {
+    puts " -E- No SQL database provided"
+    return -code ok
+  } elseif {[catch {$SQL version}]} {
+    puts " -E- Invalid SQL database '$SQL'"
+    return -code ok
+  }
+  if {[lsearch [list {default} {sql}] $tableType] == -1} {
+    puts " -E- Unsupported table type '$tableType'. The supported values are: default sql"
+    incr error
+  }
+  set tables [dbGetTables $SQL]
+  # Remove 'sqlite_sequence' from the list
+  set tables [lsearch -inline -all -not -exact $tables {sqlite_sequence}]
+  if {$verbose} {
+    puts " -I- database: $SQL"
+    puts " -I- tables \[[llength $tables]\]: [lsort $tables]"
+  }
+  set count 0
+  set prettyTables [list]
+  foreach table $tables {
+    if {[regexp [format {^%s$} $tablePattern] $table]} {
+      set columns [dbGetSQLTableColumns $SQL $table]
+      set sqlheader $columns
+      set tableheader $columns
+# puts "<columns:$columns>"
+      if {[lsearch $tables {__headers__}] != -1} {
+        # The 'headers' table exists
+        set sqlheader [dbGetSQLTableHeader $SQL $table]
+        set tableheader [dbGetTableHeader $SQL $table]
+        if {($sqlheader == {}) || ($tableheader == {})} {
+          set sqlheader $columns
+          set tableheader $columns
+        }
+#         # Remove the first 2 columns of the header that match 'id' and 'tag'
+#         set header [lrange $header 2 end]
+#         # Remove columns 'id' and 'tag' from the list
+#         set columns [lsearch -inline -all -not -exact $columns {id}]
+#         set columns [lsearch -inline -all -not -exact $columns {tag}]
+      } else {
+        # The 'headers' table does not exist so it is set to the list of table columns
+#         set header $columns
+      }
+      switch $tableType {
+        sql {
+          set sqlheader $columns
+          set tableheader $columns
+        }
+      }
+      set QUERY [format {SELECT %s FROM %s ;} [join $columns ,] $table ]
+      set rows [list]
+      $SQL eval $QUERY values {
+        set row [list]
+        foreach el $sqlheader {
+          if {[info exists values($el)]} {
+            # To test whether a file is "binary", in the sense that it contains NUL bytes
+            set isBinary [expr {[string first \x00 $values($el)]>=0}]
+            # To test if the value is multi-lines
+            if {[llength [split $values($el) \n]] > 1} { set isMultilines 1 } else { set isMultilines 0 }
+            if {$isBinary} {
+              lappend row {<BINARY>}
+            } elseif {$isMultilines} {
+              lappend row {<MULTILINES>}
+            } else {
+              lappend row $values($el)
+            }
+          } else {
+            lappend row {}
+          }
+        }
+        lappend rows $row
+      }
+      set tbl [::tb::prettyTable $table]
+      $tbl header $tableheader
+      foreach row $rows {
+        $tbl addrow $row
+      }
+      # Save the current table
+      lappend prettyTables $tbl
+      incr count
+    }
+  }
+  if {$count == 0} {
+    puts " -E- table '$tablePattern' doesn't match any valid table"
+  }
+  return $prettyTables
+}
+
+#------------------------------------------------------------------------
+# dbTbl2DB
+#------------------------------------------------------------------------
+# Save prettyTable inside SQL database
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbTbl2DB {SQL tbl {tableName csv} {tag {}} {merge 0} {safe 0}} {
+  variable params
+  set verbose $params(verbose)
+  set debug $params(debug)
+
+  if {$SQL == {}} {
+    puts " -E- No SQL database provided"
+    return -code ok
+  } elseif {[catch {$SQL version}]} {
+    puts " -E- Invalid SQL database '$SQL'"
+    return -code ok
+  }
+  if {$tbl == {}} {
+    puts " -E- No prettyTable object provided"
+    return -code ok
+  } elseif {[catch {$tbl header}]} {
+    puts " -E- Invalid prettyTable object '$tbl'"
+    return -code ok
+  }
+  set header [$tbl header]
+  set rows [$tbl gettable]
+  set found 0
+  set table {}
+  set tables [dbGetTables $SQL]
+  if {$merge} {
+    foreach table $tables {
+      if {[regexp {^(__headers__|sqlite_sequence)$} $table]} {continue}
+#       set _header [dbGetTableHeader $SQL $table]
+      # Remove the first 2 columns since they correspond to 'id' and 'tag'
+#       set _header [lrange [dbGetTableHeader $SQL $table] 2 end]
+      set _header [dbGetTableHeader $SQL $table]
+      if {$debug} {
+        puts " -D- checking table '$table'"
+        puts " -D-  ...  header '$header'"
+        puts " -D-  ... _header '$_header'"
+      }
+      if {[lequal $_header $header]} {
+        set found 1
+        break
+      }
+      # Is the header of the CSV file a sub-set of the header of the SQL table?
+      if {!$safe && [lsub $_header $header]} {
+        set found 1
+        break
+      }
+    }
+    if {$found} {
+      if {$debug} {
+        puts " -D- merge mode. Found matching table: $table"
+        puts " -D- CSV header: $header"
+        puts " -D- Table header: $_header"
+      }
+    } else {
+      if {$debug} {
+        puts " -D- merge mode. No matching table found"
+        puts " -D- CSV header: $header"
+      }
+    }
+  } else {
+  }
+  if {!$found} {
+    set i 0
+    while {[lsearch $tables ${tableName}${i}] != -1} { incr i }
+    set table ${tableName}${i}
+    set sqlheader [header2SQLHeader $header]
+#     dbCreateTable $SQL $table [concat {tag} $sqlheader]
+    dbCreateTable $SQL $table [concat _tag_ $sqlheader]
+    dbSetHeaders $SQL $table $header $sqlheader
+  } else {
+#     set tableHeader [dbGetSQLTableColumns $SQL $table]
+    # Remove the first 2 columns since they correspond to 'id' and 'tag'
+#     set tableHeader [lrange [dbGetSQLTableColumns $SQL $table] 2 end]
+    # Remove the first column: _id_
+#     set sqlheader [lrange [dbGetSQLTableColumns $SQL $table] 1 end]
+    set sqlheader [dbGetSQLTableHeader $SQL $table]
+    set tableheader [dbGetTableHeader $SQL $table]
+    set L [list]
+    if {[llength $tableheader] != [llength $sqlheader]} {
+      puts " -E- sqlheader & tableheader do not have the same length (sqlheader:[llength $sqlheader] tableheader:[llength $tableheader])"
+    }
+    # The header is converted as SQL header. If the header has multiple columns
+    # of the same name, we need to try matching to the correct SQL table column.
+    foreach col $header colsql [header2SQLHeader $header] {
+      # Loops through all the columns from the SQL table
+      # and stop when there is a match
+      foreach col1 $tableheader col2 $sqlheader {
+        if {($col == $col1) && ($colsql == $col2)} {
+          lappend L $col2
+          break
+        }
+      }
+    }
+    set sqlheader $L
+  }
+  if {$debug} {
+  }
+  set columns [dbGetSQLTableColumns $SQL $table]
+  foreach row $rows {
+    if {[lsearch $columns _tag_] != -1} {
+      # Column _tag_ exists inside the SQL table
+      dbInsertRowIntoTable $SQL $table [concat _tag_ $sqlheader] [list $tag {*}$row]
+    } else {
+      # Column _tag_ does not exist inside the SQL table
+      dbInsertRowIntoTable $SQL $table $sqlheader $row
+    }
+  }
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# dbSaveDB
+#------------------------------------------------------------------------
+# Save SQL database to new on-disk database
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbSaveDB {SQL filename} {
+  variable params
+  set verbose $params(verbose)
+  set debug $params(debug)
+  if {[file exists $filename]} {
+    if {$verbose} { puts " -I- Overriding existing file '$filename'" }
+    file delete -force $filename
+  }
+  execSQL $SQL { pragma integrity_check }
+  $SQL eval " ATTACH DATABASE '$filename' AS DEST "
+
+  # Create and copy tables
+  set tables [$SQL eval { SELECT name FROM sqlite_master WHERE type='table' }]
+  if {$verbose} { puts " -I- Tables: [lsort $tables]" }
+  foreach table $tables {
+    if {$table == {sqlite_sequence}} { continue }
+    if {$verbose} { puts " -I- Saving table: $table" }
+#     if {$verbose} { puts " -I- Creating table: $table" }
+    # Get SQL schema for the table
+    set tablesql [$SQL eval " select sql from sqlite_master where (sql not NULL) AND (type='table') AND (name='$table'); " ]
+    # The table must be created inside the destination database
+    regsub {CREATE TABLE } $tablesql {CREATE TABLE DEST.} tablesql
+    if {$debug} { puts " -D- SQL Schema: [join [split $tablesql \n]]" }
+    $SQL eval [lindex $tablesql 0]
+#     if {$verbose} { puts " -I- Saving table: $table" }
+    $SQL eval " INSERT INTO DEST.$table SELECT * FROM $table "
+  }
+#   # Copy tables
+#   set tables [$SQL eval { SELECT name FROM sqlite_master WHERE type='table' }]
+#   if {$verbose} { puts " -I- Tables: [lsort $tables]" }
+#   foreach table $tables {
+#     if {$table == {sqlite_sequence}} { continue }
+#     if {$verbose} { puts " -I- Loading table: $table" }
+#     $SQL eval " CREATE TABLE DEST.$table AS SELECT * FROM $table "
+#   }
+  # Copy SQL expressions
+  set sql_exps [$SQL eval { SELECT name FROM sqlite_master WHERE type='index' }]
+  if {$verbose} { if {[llength $sql_exps]} { puts " -I- SQL Expressions: [lsort $sql_exps]" } }
+  foreach sql_exp $sql_exps {
+    if {$sql_exp == {sqlite_sequence}} { continue }
+    if {$debug} { puts " -D- SQL Expression: $sql_exp" }
+    $SQL eval $sql_exp
+  }
+  $SQL eval { DETACH DATABASE DEST }
+
+  execSQL $SQL { pragma integrity_check }
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# dbCloseDB
+#------------------------------------------------------------------------
+# Close SQL table
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbCloseDB {&SQL} {
+#   variable SQL
+  variable params
+  set verbose $params(verbose)
+  ${&SQL} close
+  set &SQL {}
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::dbutils::SQLPragmas
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Return the SQL pragmas structure
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::SQLPragmas {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # PRAGMA for very large databases:
+  return [format {
+    PRAGMA foreign_keys = ON;
+    PRAGMA main.temp_store = MEMORY;
+    PRAGMA main.page_size = 4096;
+    PRAGMA main.cache_size=10000;
+    PRAGMA main.locking_mode=EXCLUSIVE;
+    PRAGMA main.synchronous=NORMAL;
+    PRAGMA main.journal_mode=MEMORY;
+    PRAGMA main.cache_size=5000;
+  }]
+}
+
+#------------------------------------------------------------------------
+# header2SQLHeader
+#------------------------------------------------------------------------
+# Convert table header to header for SQL table
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::header2SQLHeader {header} {
+  set tableHeader [list]
+  catch {unset columns}
+  foreach col $header {
+    set col [string toupper $col]
+    regsub -all { } $col {_} col
+    regsub -all {\(} $col {_} col
+    regsub -all {\)} $col {_} col
+    regsub -all {\/} $col {_} col
+    regsub -all {\:} $col {_} col
+    regsub -all {\-} $col {_} col
+    regsub -all {\.} $col {_} col
+    # Make sure the column name is unique
+    if {[info exists columns($col)]} {
+      set idx 0
+      while {[info exists columns(${col}${idx})]} { incr idx }
+      set col ${col}${idx}
+    }
+    set columns($col) 1
+    lappend tableHeader $col
+# puts "<$col>"
+  }
+  return $tableHeader
+}
+
+#------------------------------------------------------------------------
+# dbTableExist
+#------------------------------------------------------------------------
+# Check if table exist
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbTableExist {&SQL table} {
+  variable params
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] != -1} {
+    return 1
+  }
+  return 0
+}
+
+#------------------------------------------------------------------------
+# dbCreateTable
+#------------------------------------------------------------------------
+# Create SQL table
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbCreateTable {&SQL table sqlheader} {
+  variable params
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] != -1} {
+    puts " -E- table '$table' already exist"
+    return 1
+  }
+#   set tableHeader [sqlheader2SQLHeader $sqlheader]
+  if {[llength $sqlheader] > 0} {
+    set string {}
+    foreach col $sqlheader {
+      append string "\n    ${col} TEXT DEFAULT NULL,"
+    }
+    # Remove last comma
+    regsub {,$} $string {} string
+    set SQLTable [format {
+    CREATE TABLE IF NOT EXISTS %s (
+    _id_ INTEGER PRIMARY KEY AUTOINCREMENT,
+    %s
+    );
+    } $table $string ]
+#     tag TEXT DEFAULT NULL,
+# puts $SQLTable
+
+    execSQL ${&SQL} $SQLTable
+  }
+  if {$params(debug)} {
+    puts " -D- dbCreateTable: table : $table"
+    puts " -D- dbCreateTable: header: $sqlheader"
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# dbInsertRowIntoTable
+#------------------------------------------------------------------------
+# Insert one row inside SQL table
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbInsertRowIntoTable {&SQL table sqlheader row} {
+  variable params
+  set debug $params(debug)
+  set safe $params(safe)
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return 1
+  }
+  if {$row != [list]} {
+    set insert 1
+    if {$safe} {
+      # Skip rows that do not have the same length as the table header
+      if {[llength $row] != [llength $sqlheader]} {
+        puts " -W- skipping row (length row: [llength $row] / length header: [llength $sqlheader])"
+        set insert 0
+      }
+    } else {
+      if {[llength $row] > [llength $sqlheader]} {
+        puts " -W- skipping row (length row: [llength $row] / length header: [llength $sqlheader])"
+        set insert 0
+      }
+    }
+    if {$insert} {
+      # As long as the length of the row is less than the length of the table header,
+      # set only the columns covered by the row
+      set _header [lrange $sqlheader 0 [expr [llength $row] -1] ]
+#         execSQL ${&SQL} [format {INSERT INTO %s('%s') VALUES('%s');} $table [join $sqlheader ','] [join $row ','] ]
+      execSQL ${&SQL} [format {INSERT INTO %s('%s') VALUES('%s');} $table [join $_header ','] [join $row ','] ]
+    }
+  }
+  if {$debug} {
+    puts " -D- dbInsertRowIntoTable: table    : $table"
+    puts " -D- dbInsertRowIntoTable: sqlheader: $sqlheader"
+    puts " -D- dbInsertRowIntoTable: row      : $row"
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# dbGetSQLTableColumns
+#------------------------------------------------------------------------
+# Get the list of columns of a SQL table
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbGetSQLTableColumns {&SQL table} {
+  variable params
+  set debug $params(debug)
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return -1
+  }
+  set L [execSQL ${&SQL} [format {pragma table_info(%s);} $table]]
+  set cols [list]
+  foreach [list cid name type notnull dflt_value pk] $L {
+#     # Skip the first 2 columns: id tag
+#     if {[regexp {^(id|tag)$} $name]} { continue }
+    lappend cols $name
+  }
+  if {$debug} {
+    puts " -D- dbGetSQLTableColumns: table  : $table"
+    puts " -D- dbGetSQLTableColumns: columns: $cols"
+  }
+  # Skip the first column: _id_
+#   return [lrange $cols 1 end]
+  return $cols
+}
+
+#------------------------------------------------------------------------
+# dbDumpTable
+#------------------------------------------------------------------------
+# Get the list of columns of a SQL table
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbDumpTable {&SQL table} {
+  variable params
+  set debug $params(debug)
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return -1
+  }
+#   catch { package require prettyTable }
+  set tbl [::tb::prettyTable $table]
+  set header [dbGetSQLTableColumns ${&SQL} $table]
+  $tbl header $header
+  set CMD "SELECT * FROM $table"
+  catch {unset values}
+  execSQL ${&SQL} {pragma integrity_check}
+  ${&SQL} eval $CMD values {
+#     parray values
+    set row [list]
+    foreach col $header {
+      lappend row $values($col)
+    }
+    $tbl addrow $row
+  }
+  puts [$tbl print]
+  catch { $tbl destroy }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# dbDropTable
+#------------------------------------------------------------------------
+# Drop a SQL table
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbDropTable {&SQL table} {
+  variable params
+  set debug $params(debug)
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return -1
+  }
+  execSQL ${&SQL} "DROP TABLE IF EXISTS $table"
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# dbGetTables
+#------------------------------------------------------------------------
+# Get the list of SQL tables
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbGetTables {&SQL} {
+  variable params
+  set debug $params(debug)
+  set tables [${&SQL} eval { SELECT name FROM sqlite_master WHERE type='table' }]
+  if {$debug} {
+    puts " -D- dbGetTables: $tables"
+  }
+  return [lsort $tables]
+}
+
+#------------------------------------------------------------------------
+# dbSetHeaders
+#------------------------------------------------------------------------
+# Set the SQL header matching the table. The header is extracted from the
+# 'headers' table.
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbSetHeaders {&SQL table header sqlheader} {
+  variable params
+  set debug $params(debug)
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return -1
+  }
+  if {[lsearch -exact $tables __headers__] == -1} {
+    dbCreateTable ${&SQL} __headers__ [list {sqltable} {header} {sqlheader}]
+  }
+  set L [execSQL ${&SQL} [format {SELECT * FROM __headers__ WHERE sqltable='%s';} $table]]
+  if {$L != {}} {
+    puts " -E- table '$table' is already referenced inside __headers__"
+    return -1
+  }
+  # Remove first column: _id_
+#   set columns [lrange [dbGetSQLTableColumns ${&SQL} $table] 1 end]
+  dbInsertRowIntoTable ${&SQL} __headers__ [list {sqltable} {header} {sqlheader}] [list $table $header $sqlheader]
+  if {$debug} {
+    puts " -D- dbSetHeaders: table: $table"
+#     puts "dbGetTableHeader: [lrange $L 2 [expr 2 + $size -1]]"
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# dbGetTableHeader
+#------------------------------------------------------------------------
+# Get the original header matching the table. The header is extracted from the
+# 'headers' table.
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbGetTableHeader {&SQL table} {
+  variable params
+  set debug $params(debug)
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return -1
+  }
+  set columns [dbGetSQLTableColumns ${&SQL} $table]
+#   # Remove columns 'id' and 'tag' from the list
+#   set columns [lsearch -inline -all -not -exact $columns {id}]
+#   set columns [lsearch -inline -all -not -exact $columns {tag}]
+#   set size [llength $columns]
+  set L [execSQL ${&SQL} [format {SELECT header FROM __headers__ WHERE sqltable='%s';} $table]]
+  # $L is a list of list, so flatten the Tcl list
+  set L [lindex $L 0]
+  # Only return the number of columns that fit the size of the table. This is
+  # a workaround to remove the trailing {}
+  if {$debug} {
+    puts " -D- dbGetTableHeader: table  : $table"
+    puts " -D- dbGetTableHeader: columns: $columns"
+    puts " -D- dbGetTableHeader: header : [lrange $L 0 end]"
+#     puts "dbGetTableHeader: [lrange $L 2 [expr 2 + $size -1]]"
+  }
+  # Return the list of columns but not the first 2 columns (matching 'id' and 'tag'
+#   return [lrange $L 2 [expr 2 + $size -1]]
+  # Skip the first column: _id_
+  return $L
+}
+
+#------------------------------------------------------------------------
+# dbGetSQLTableHeader
+#------------------------------------------------------------------------
+# Get the header matching the table. The header is extracted from the
+# 'headers' table.
+#------------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbGetSQLTableHeader {&SQL table} {
+  variable params
+  set debug $params(debug)
+  set tables [dbGetTables ${&SQL}]
+  if {[lsearch -exact $tables $table] == -1} {
+    puts " -E- table '$table' does not exist"
+    return -1
+  }
+  set columns [dbGetSQLTableColumns ${&SQL} $table]
+  set L [execSQL ${&SQL} [format {SELECT sqlheader FROM __headers__ WHERE sqltable='%s';} $table]]
+  # $L is a list of list, so flatten the Tcl list
+  set L [lindex $L 0]
+  # Only return the number of columns that fit the size of the table. This is
+  # a workaround to remove the trailing {}
+  if {$debug} {
+    puts " -D- dbGetSQLTableHeader: table  : $table"
+    puts " -D- dbGetSQLTableHeader: columns: $columns"
+    puts " -D- dbGetSQLTableHeader: header : [lrange $L 0 end]"
+  }
+  # Return the list of columns but not the first 2 columns (matching 'id' and 'tag'
+#   return [lrange $L 2 [expr 2 + $size -1]]
+  # Skip the first column: _id_
+  return $L
+}
+
+##-----------------------------------------------------------------------
+## configure
+##-----------------------------------------------------------------------
+## Configuration proc
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::configure {args} {
+  variable params
+
+  set log {}
+  set error 0
+  set show_help 0
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^qu(i(et?)?)?$} -
+      {^-nov(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 0
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-nod(e(b(ug?)?)?)?$} {
+        set params(debug) 0
+      }
+      {^-debug$} {
+        set params(debug) 1
+      }
+      {^-debug_level$} {
+        set params(debug_level) [lshift args]
+      }
+      {^-debug_log$} {
+#         set params(debug_log) [lshift args]
+        set log [lshift args]
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: tb::utils::dbutils::configure
+                  [-debug|-nodebug]
+                  [-debug_level <level>]
+                  [-debug_log <filename>]
+                  [-verbose|-noverbose]
+                  [-help|-h]
+
+      Description: Configuration
+
+      Example:
+         ::tb::utils::dbutils::configure -debug -debug_level 3 -debug_log ./debug.log
+
+    } ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#    exit -1
+  }
+
+  if {$log != {}} {
+    if {($params(debug_channel) != {stdout}) && ($params(debug_channel) != {})} {
+      close $params(debug_channel)
+      set params(debug_channel) {}
+    }
+    set params(debug_channel) [open $log {w}]
+    set params(debug_log) $log
+    puts " -I- Debug file [file normalize $params(debug_log)]"
+  }
+
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## dbquery
+##-----------------------------------------------------------------------
+##
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbquery {args} {
+
+  variable SCRIPT_VERSION
+
+  variable params
+  variable SQL
+
+  set verbose $params(verbose)
+  set debug $params(debug)
+
+  set print 0
+  set query {}
+  set error 0
+  set show_help 0
+  set standalone 0
+  set ifilename {}
+  set inmemory 0
+  if {([llength $args] == 0) || ($args == {-standalone})} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-db$} {
+        set ifilename [lshift args]
+        if {![catch {$ifilename version}]} {
+          # An in-memory SQL database is provided instead of an
+          # on-disk database
+          set inmemory 1
+        }
+      }
+      {^-s(ql?)?$} {
+        set query [lshift args]
+      }
+      {^-p(r(i(nt?)?)?)?$} {
+        set print 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set verbose 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set debug 1
+        set verbose 1
+      }
+      {^-standalone$} {
+        set standalone 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          if {![catch {$name version}]} {
+            # An in-memory SQL database is provided instead of an
+            # on-disk database
+            set inmemory 1
+            set ifilenames $name
+          } else {
+            if {![file exists $name]} {
+              puts " -W- file '$name' does not exist"
+            } else {
+              set ifilename $name
+            }
+          }
+#           puts " -E- option '$name' is not a valid option"
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    set help [format {
+      Usage: tb::dbquery
+                  [-db <filename>|-db <SQL>]
+                  [-sql <string>]
+                  [-print]
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Utility to execute a SQL query on SQLite database
+
+      Version: %s
+
+      Example:
+         tb::dbquery -db file1.db -sql {SELECT * FROM table}
+         tb::dbquery -db $SQL -sql {SELECT * FROM table} -print
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    if {$standalone} {
+      regsub -all {tb::} $help {} help
+      regsub -all {\{} $help {'} help
+      regsub -all {\}} $help {'} help
+    }
+    puts $help
+    return -code ok
+  }
+
+  if  {$ifilename == {}} {
+    puts " -E- no input database provided"
+    incr error
+  } elseif {![file exists $ifilename] && !$inmemory} {
+    puts " -E- no file $ifilename does not exist"
+    incr error
+  }
+
+  if  {$query == {}} {
+    puts " -E- no SQL query provided"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+  }
+
+  if {$inmemory} {
+    set SQL $ifilename
+  } else {
+    if {[catch {sqlite3 SQL[pid] $ifilename -readonly true} errorstring]} {
+      error " -E- $errorstring"
+    }
+    set SQL SQL[pid]
+  }
+
+  if {$verbose} {
+    puts " -I- database $ifilename"
+  }
+
+  set result [list]
+  if {$print} {
+    # Dump the query result
+    set tbl [::tb::prettyTable]
+    $tbl configure -title "$query"
+    set header {}
+    if {[catch {
+        $SQL eval $query values {
+          set header $values(*)
+          set row [list]
+          foreach el $header {
+            lappend row $values($el)
+            lappend result $values($el)
+          }
+          $tbl addrow $row
+        }
+      } errorstring]} {
+      if {!$inmemory} {
+        # Close SQlite database
+        $SQL close
+        set SQL {}
+      }
+      error " -E- $errorstring"
+    }
+    $tbl header $header
+    puts [$tbl print]
+    catch {$tbl destroy}
+    # In table mode, do not return anything
+    set result [list]
+  } else {
+    if {[catch {set result [execSQL $SQL $query]} errorstring]} {
+      if {!$inmemory} {
+        # Close SQlite database
+        $SQL close
+        set SQL {}
+      }
+      error " -E- $errorstring"
+    } else {
+    }
+  }
+
+  if {!$inmemory} {
+    # Close SQlite database
+    $SQL close
+    set SQL {}
+  }
+
+  # Return the result from the query
+  return $result
+}
+
+##-----------------------------------------------------------------------
+## dbinfo
+##-----------------------------------------------------------------------
+##
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::dbinfo {args} {
+
+  variable SCRIPT_VERSION
+
+  variable params
+  variable SQL
+
+  set verbose $params(verbose)
+  set debug $params(debug)
+
+  set sqltable {}
+  set print 0
+  set error 0
+  set show_help 0
+  set standalone 0
+  set ifilenames {}
+  set inmemory 0
+  if {([llength $args] == 0) || ($args == {-standalone})} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-db$} {
+        set patterns [lshift args]
+        if {![catch {$patterns version}]} {
+          # An in-memory SQL database is provided instead of an
+          # on-disk database
+          set inmemory 1
+          set ifilenames $patterns
+        } else {
+          foreach pattern $patterns {
+            foreach file [glob -nocomplain $pattern] {
+              if {![file exists $file]} {
+                puts " -E- File '$file' does not exist"
+                incr error
+                continue
+              }
+              lappend ifilenames [file normalize $file]
+            }
+          }
+          set ifilenames [lsort -unique $ifilenames]
+        }
+      }
+      {^-p(r(i(nt?)?)?)?$} {
+        set print 1
+      }
+      {^-t(a(b(le?)?)?)?$} {
+        set sqltable [lshift args]
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set verbose 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set debug 1
+        set verbose 1
+      }
+      {^-standalone$} {
+        set standalone 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+
+          if {![catch {$name version}]} {
+            # An in-memory SQL database is provided instead of an
+            # on-disk database
+            set inmemory 1
+          } else {
+            if {![file exists $name]} {
+              puts " -W- file '$name' does not exist"
+            } else {
+              foreach file [glob -nocomplain $name] {
+                if {![file exists $file]} {
+                  puts " -E- File '$file' does not exist"
+                  incr error
+                  continue
+                }
+                lappend ifilenames [file normalize $file]
+              }
+              set ifilenames [lsort -unique $ifilenames]
+            }
+          }
+#           puts " -E- option '$name' is not a valid option"
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    set help [format {
+      Usage: tb::dbinfo
+                  [<pattern>|<SQL>|-db <filename>|-db <pattern>|-db <SQL>]
+                  [-table <sqltable>]
+                  [-print]
+                  [-verbose|-v]
+                  [-help|-h]
+
+      Description: Utility to provides information on SQLite database
+
+      Version: %s
+
+      Example:
+         tb::dbinfo -db file1.db
+         tb::dbinfo -db {*/metrics.db} -print
+         tb::dbinfo -db {*/metrics.db} -print -table csv0
+         tb::dbinfo -db {*/metrics.db} -print -table {csv*}
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    if {$standalone} {
+      regsub -all {tb::} $help {} help
+      regsub -all {\{} $help {'} help
+      regsub -all {\}} $help {'} help
+    }
+    puts $help
+    return -code ok
+  }
+
+  if  {$ifilenames == {}} {
+    puts " -E- no input database provided"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+  }
+
+  foreach database $ifilenames {
+    if {$inmemory} {
+      set SQL $database
+    } else {
+      if {[catch {sqlite3 SQL[pid] $database -readonly true} errorstring]} {
+        error " -E- $errorstring"
+      }
+      set SQL SQL[pid]
+    }
+
+    set tables [dbGetTables $SQL]
+    # Remove 'sqlite_sequence' from the list
+    set tables [lsearch -inline -all -not -exact $tables {sqlite_sequence}]
+
+    if {$sqltable != {}} {
+      set L [list]
+      foreach idx [lsearch -all -glob $tables $sqltable] {
+        lappend L [lindex $tables $idx]
+      }
+      if {[llength $L] == 0} {
+        puts " -E- table '$sqltable' does not exist"
+        if {!$inmemory} {
+          # Close SQlite database
+          $SQL close
+          set SQL {}
+        }
+        continue
+      }
+      set tables $L
+    }
+
+    if {$verbose} {
+        puts " -I- database: $database"
+        puts " -I- tables \[[llength $tables]\]: [lsort $tables]"
+    }
+
+    foreach table [lsort $tables] {
+      set columns [dbGetSQLTableColumns $SQL $table]
+      set count [execSQL $SQL [format {SELECT count(*) FROM '%s' ;} $table]]
+      puts " -I- Table: '$table' \t # columns = [llength $columns] \t # entries = $count"
+      if {$verbose} { puts " -I- Columns: $columns" }
+      if {$print} {
+        # Dump the table content
+        set tbl [::tb::prettyTable]
+        if {$verbose} {
+          $tbl configure -title "$table ($database)"
+        } else {
+          $tbl configure -title "$table"
+        }
+        $tbl header $columns
+        catch {unset values}
+        execSQL $SQL {pragma integrity_check}
+        $SQL eval [format {SELECT * FROM '%s' ;} $table] values {
+          set row [list]
+          foreach col $columns {
+            lappend row $values($col)
+          }
+          $tbl addrow $row
+        }
+        puts [$tbl print]
+        catch {$tbl destroy}
+      }
+    }
+
+    if {!$inmemory} {
+      # Close SQlite database
+      $SQL close
+      set SQL {}
+    }
+  }
+
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## db2tbl
+##-----------------------------------------------------------------------
+## Return list of prettyTable(s) from an SQL database
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::db2tbl {args} {
+
+  variable SCRIPT_VERSION
+  variable params
+  variable SQL
+
+  set verbose $params(verbose)
+  set debug $params(debug)
+
+  set error 0
+  set show_help 0
+  set show_long_help 0
+  set standalone 0
+  set ifilename {}
+  set tableName {}
+  set tableType {default} ; # default | sql
+  set inmemory 0
+  set print 0
+  if {([llength $args] == 0) || ($args == {-standalone})} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-db$} {
+        set ifilename [lshift args]
+      }
+      {^-ta(b(le?)?)?$} {
+        set tableName [lshift args]
+      }
+      {^-table_(t(y(pe?)?)?)?$} {
+        set tableType [lshift args]
+      }
+      {^-pr(i(nt?)?)?$} {
+        set print 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set verbose 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set debug 1
+        set verbose 1
+      }
+      {^-standalone$} {
+        set standalone 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      {^-lo(n(g(h(e(lp?)?)?)?)?)?$} {
+        incr show_help
+        incr show_long_help
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          set ifilename $name
+#           puts " -E- optin '$name' is not a valid option"
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    set help [format {
+      Usage: tb::db2tbl
+                  [<filename>|<SQL>]
+                  [-db <filename>|-db <SQL>]
+                  [-table <pattern>]
+                  [-table_type <default|sql>]
+                  [-print]
+                  [-verbose|-v]
+                  [-help|-h]
+                  [-longhelp]
+
+      Description: Convert SQL table(s) to prettyTable
+
+      Version: %s
+
+      Example:
+         tb::db2tbl -db file.db -table csv0
+         tb::db2tbl -db $SQL -table csv.*
+
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    if {$standalone} {
+      regsub -all {tb::} $help {} help
+    }
+    puts $help
+    if {$show_long_help} { print_help }
+
+    return -code ok
+  }
+
+  if  {$ifilename == {}} {
+    puts " -E- no input database provided"
+    incr error
+  } else {
+    if {![catch {$ifilename version}]} {
+      # An in-memory SQL database is provided instead of an
+      # on-disk database
+      set inmemory 1
+    } elseif {![file exists $ifilename]} {
+      puts " -E- no file $ifilename does not exist"
+      incr error
+    }
+  }
+
+  if  {$tableName == {}} {
+    puts " -E- no table specified (-table)"
+    incr error
+  }
+
+  if {[lsearch [list {default} {sql}] $tableType] == -1} {
+    puts " -E- Unsupported table type '$tableType'. The supported values are: default sql"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+  }
+
+  if {$inmemory} {
+    # In-memory database
+    set SQL $ifilename
+  } else {
+    sqlite3 SQL[pid] $ifilename -readonly true
+    set SQL SQL[pid]
+  }
+
+  set listTables [dbDB2Tbl $SQL $tableName $tableType]
+
+  if {$print} {
+    foreach tbl $listTables {
+      puts [$tbl print]
+    }
+  }
+
+  if {!$inmemory} {
+    # Close SQlite database if it is not an im-memory database
+    $SQL close
+    set SQL {}
+  }
+
+  return $listTables
+}
+
+##-----------------------------------------------------------------------
+## db2csv
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::db2csv {args} {
+
+  variable SCRIPT_VERSION
+  variable params
+  variable SQL
+
+  set verbose $params(verbose)
+  set debug $params(debug)
+
+  set error 0
+  set show_help 0
+  set show_long_help 0
+  set standalone 0
+  set ifilename {}
+  set ofilename {}
+  set tableName {}
+  set tableType {default} ; # default | sql
+  set csvDelimiter {,}
+  set inmemory 0
+  set force 0
+  if {([llength $args] == 0) || ($args == {-standalone})} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-db$} {
+        set ifilename [lshift args]
+      }
+      {^-csv?$} -
+      {^-o(ut?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-ta(b(le?)?)?$} {
+        set tableName [lshift args]
+      }
+      {^-table_(t(y(pe?)?)?)?$} {
+        set tableType [lshift args]
+      }
+      {^-de(l(i(m(i(t(er?)?)?)?)?)?)?$} {
+        set csvDelimiter [lshift args]
+      }
+      {^-force?$} {
+        set force 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set verbose 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set debug 1
+        set verbose 1
+      }
+      {^-standalone$} {
+        set standalone 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      {^-lo(n(g(h(e(lp?)?)?)?)?)?$} {
+        incr show_help
+        incr show_long_help
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          set ifilename $name
+#           puts " -E- option '$name' is not a valid option"
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    set help [format {
+      Usage: tb::db2csv
+                  [<filename>|<SQL>]
+                  [-db <filename>|-db <SQL>]
+                  [-delimiter <csv-delimiter>]
+                  [-out <prefix>|-csv <prefix>]
+                  [-table <pattern>]
+                  [-table_type <default|sql>]
+                  [-force|-f]
+                  [-verbose|-v]
+                  [-help|-h]
+                  [-longhelp]
+
+      Description: Utility to convert SQLite tables to CSV formated files
+
+      Version: %s
+
+        -table can specify a single table name or a regexp pattern
+
+      Example:
+         tb::db2csv -db file1.db -delimiter {;}
+         tb::db2csv -db file1.db -table {.*} -csv res
+         tb::db2csv -db $SQL -table {.*} -csv res
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    if {$standalone} {
+      regsub -all {csv2db} $help {dbutils} help
+      regsub -all {tb::} $help {} help
+    }
+    puts $help
+    if {$show_long_help} { print_help }
+
+    return -code ok
+  }
+
+  if  {$ifilename == {}} {
+    puts " -E- no input database provided"
+    incr error
+  } else {
+    if {![catch {$ifilename version}]} {
+      # An in-memory SQL database is provided instead of an
+      # on-disk database
+      set inmemory 1
+    } elseif {![file exists $ifilename]} {
+      puts " -E- no file $ifilename does not exist"
+      incr error
+    }
+  }
+
+  if  {$ofilename == {}} {
+    set ofilename "[file rootname [file tail $ifilename]]"
+  }
+
+  if  {$ofilename == {}} {
+    puts " -E- no output CSV file provided"
+    incr error
+  } elseif {[file exists $ofilename]} {
+    switch ${force} {
+      0 {
+        puts " -E- file [file normalize $ofilename] already exists"
+        incr error
+      }
+      1 {
+        puts " -W- database [file normalize $ofilename] is overriden (-force)"
+        # Delete existing database if it already exist
+        catch {file delete -force $ofilename}
+      }
+      default {
+      }
+    }
+  }
+
+  if  {$tableName == {}} {
+    puts " -E- no table specified (-table)"
+    incr error
+  }
+
+  if {[lsearch [list {default} {sql}] $tableType] == -1} {
+    puts " -E- Unsupported table type '$tableType'. The supported values are: default sql"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+  }
+
+  if {$inmemory} {
+    # In-memory database
+    set SQL $ifilename
+  } else {
+    sqlite3 SQL[pid] $ifilename -readonly true
+    set SQL SQL[pid]
+  }
+
+  set tables [dbGetTables $SQL]
+  # Remove 'sqlite_sequence' from the list
+  set tables [lsearch -inline -all -not -exact $tables {sqlite_sequence}]
+
+  if {$verbose} {
+    puts " -I- database: $ifilename"
+    puts " -I- tables \[[llength $tables]\]: [lsort $tables]"
+  }
+
+  set count 0
+  set prettyTables [list]
+  foreach table $tables {
+    if {[regexp [format {^%s$} $tableName] $table]} {
+      set tbl [dbDB2Tbl $SQL $table $tableType]
+      set CSV [open ${ofilename}.${table}.csv {w}]
+      puts $CSV "# Generated on [clock format [clock seconds]]"
+      puts $CSV "# Database: [file normalize $ifilename]"
+      puts $CSV "# Table: $table"
+      puts $CSV "# Records: [$tbl numrows]"
+      puts $CSV [$tbl export -format csv -delimiter $csvDelimiter]
+      close $CSV
+      puts " -I- CSV file [file normalize ${ofilename}.${table}.csv] has been generated"
+      catch { $tbl destroy }
+      incr count
+    }
+  }
+
+  puts " -I- $count CSV file(s) have been generated"
+
+  if {!$inmemory} {
+    # Close SQlite database if it is not an im-memory database
+    $SQL close
+    set SQL {}
+  }
+
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## tbl2db
+##-----------------------------------------------------------------------
+##
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::tbl2db {args} {
+
+  variable SCRIPT_VERSION
+
+  variable params
+  variable SQL
+
+  set verbose $params(verbose)
+  set debug $params(debug)
+  set safe $params(safe)
+
+  set error 0
+  set show_help 0
+  set show_long_help 0
+  set standalone 0
+  set itables [list]
+  set ofilename {}
+  set tableName {tbl}
+  set merge 0
+  set inmemory 0
+  set force 0
+  set append 0
+  set tag {UNSET}
+  if {([llength $args] == 0) || ($args == {-standalone})} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-in?$} -
+      {^-tab(le?)?$} {
+        while {![string match "-*" [set table [lshift args]]]} {
+          if {$table == {}} {
+            break
+          } else {
+            lappend itables $table
+          }
+        }
+        # The last argument needs to be put back on the stack
+        if {$table != {}} { unlshift args $table }
+      }
+      {^-db$} -
+      {^-o(ut?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-tag$} {
+        set tag [lshift args]
+      }
+      {^-m(e(r(ge?)?)?)?$} {
+        set merge 1
+      }
+      {^-u(n(s(a(fe?)?)?)?)?$} {
+          set safe 0
+      }
+      {^-force?$} {
+        set force 1
+      }
+      {^-ap(p(e(nd?)?)?)?$} {
+        set append 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set verbose 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set debug 1
+        set verbose 1
+      }
+      {^-standalone$} {
+        set standalone 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      {^-lo(n(g(h(e(lp?)?)?)?)?)?$} {
+        incr show_help
+        incr show_long_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            lappend itables $names
+#             puts " -E- option '$name' is not a valid option"
+#             incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    set help [format {
+      Usage: tb::tbl2db
+                  [<prettyTable> [<prettyTable> ...]]
+                  [-table <prettyTable> [<prettyTable> ...]]
+                  [-out <database>|-db <database>]
+                  [-tag <string>|-t <string>]
+                  [-merge|-m]
+                  [-unsafe|-u]
+                  [-force|-f]
+                  [-append|-a]
+                  [-verbose|-v]
+                  [-help|-h]
+                  [-longhelp]
+
+      Description: Utility to convert prettyTable objects to SQLite database
+
+      Version: %s
+
+        Use -merge to merge data to existing tables whenever possible. By default, each table
+        is imported to a different SQL table.
+        Use -unsafe to enable merging rows that are smaller than the SQL header.
+        Use -tag to add a tag to the data inside the database.
+
+      Example:
+         tb::tbl2db -csv file1.csv -delimiter {;}
+         tb::tbl2db -csv *.csv -out result.db -merge
+         tb::tbl2db -csv *.csv -db result.db -tag {exp} -force -append
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    if {$standalone} {
+      regsub -all {tb::} $help {} help
+      regsub -all {\{} $help {'} help
+      regsub -all {\}} $help {'} help
+    }
+    puts $help
+    if {$show_long_help} { print_help }
+
+    return -code ok
+  }
+
+  if  {$itables == {}} {
+    puts " -E- no input table provided"
+    incr error
+  }
+
+  if  {$ofilename == {}} {
+    puts " -E- no output database name provided"
+    incr error
+  } else {
+    if {![catch {$ofilename version}]} {
+      # An in-memory SQL database is provided instead of an
+      # on-disk database
+      set inmemory 1
+    } elseif {[file exists $ofilename]} {
+      switch ${force}${append} {
+        00 {
+          puts " -E- file [file normalize $ofilename] already exists. Use -force to override"
+          incr error
+        }
+        01 {
+          puts " -E- file [file normalize $ofilename] already exists. Use -force to override"
+          incr error
+        }
+        10 {
+          puts " -W- database [file normalize $ofilename] is overriden (-force/-append)"
+          # Delete existing database if it already exist
+          catch {file delete -force $ofilename}
+        }
+        11 {
+          puts " -W- database [file normalize $ofilename] is updated (-force)"
+        }
+        default {
+        }
+      }
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+  }
+
+  if {$inmemory} {
+    # In-memory database
+    set SQL $ofilename
+  } else {
+    set SQL [dbCreateDB $ofilename]
+  }
+
+  set count 0
+  foreach tbl $itables {
+    incr count
+    if {$debug} {
+      puts " -D- ####################"
+      puts " -D- # $tbl"
+      puts " -D- ####################"
+    }
+    if {$verbose} {
+      puts " -I- Processing table \[$count/[llength $itables]\] $tbl"
+    }
+    if {$tag == {UNSET}} {
+      # If not tag has been defined, use filename
+      set tag $tbl
+    }
+
+    # Save table object inside SQL database
+    dbTbl2DB $SQL $tbl $tableName $tag $merge $safe
+
+  }
+
+  puts " -I- [llength $itables] table(s) have been imported"
+  if {$inmemory} {
+    puts " -I- database: $ofilename has been updated"
+  } else {
+    puts " -I- database: $ofilename has been generated"
+  }
+  # Remove 'sqlite_sequence' from the list
+  set tables [lsearch -inline -all -not -exact [dbGetTables $SQL] {sqlite_sequence}]
+
+  if {!$inmemory} {
+    # Close SQlite database if it is not an im-memory database
+    execSQL $SQL {VACUUM;}
+    $SQL close
+    set SQL {}
+  }
+
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## csv2db
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::utils::dbutils::csv2db {args} {
+
+  variable SCRIPT_VERSION
+
+  variable params
+  variable SQL
+
+  set verbose $params(verbose)
+  set debug $params(debug)
+  set safe $params(safe)
+
+  set error 0
+  set show_help 0
+  set show_long_help 0
+  set standalone 0
+  set ifilename [list]
+  set ofilename {}
+  set tableName {csv}
+  set csvDelimiter {,}
+  set merge 0
+  set inmemory 0
+  set force 0
+  set append 0
+  set tag {UNSET}
+  if {([llength $args] == 0) || ($args == {-standalone})} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-c(sv?)?$} {
+        while {![string match "-*" [set filename [lshift args]]]} {
+          if {$filename == {}} {
+            break
+          } else {
+            # Expand the pattern (if any)
+            foreach file [glob -nocomplain $filename] {
+              if {![file exists $file]} {
+                puts " -W- file '$file' does not exist"
+              } else {
+                lappend ifilename $file
+              }
+            }
+          }
+        }
+        # The last argument needs to be put back on the stack
+        if {$filename != {}} { unlshift args $filename }
+      }
+      {^-db$} -
+      {^-o(ut?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-t(ag?)?$} {
+        set tag [lshift args]
+      }
+      {^-de(l(i(m(i(t(er?)?)?)?)?)?)?$} {
+        set csvDelimiter [lshift args]
+      }
+      {^-m(e(r(ge?)?)?)?$} {
+        set merge 1
+      }
+      {^-u(n(s(a(fe?)?)?)?)?$} {
+          set safe 0
+      }
+      {^-force?$} {
+        set force 1
+      }
+      {^-ap(p(e(nd?)?)?)?$} {
+        set append 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set verbose 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set debug 1
+        set verbose 1
+      }
+      {^-standalone$} {
+        set standalone 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      {^-lo(n(g(h(e(lp?)?)?)?)?)?$} {
+        incr show_help
+        incr show_long_help
+      }
+      default {
+          if {[string match "-*" $name]} {
+            puts " -E- option '$name' is not a valid option"
+            incr error
+          } else {
+            # Expand the pattern (if any)
+            foreach file [glob -nocomplain $name] {
+              if {![file exists $file]} {
+                puts " -W- file '$file' does not exist"
+              } else {
+                lappend ifilename $file
+              }
+            }
+#             puts " -E- option '$name' is not a valid option"
+#             incr error
+          }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    set help [format {
+      Usage: tb::csv2db
+                  [<filename> [<filename> ...]]
+                  [-csv <filename> [<filename> ...]]
+                  [-delimiter <csv-delimiter>]
+                  [-out <database>|-db <database>]
+                  [-tag <string>|-t <string>]
+                  [-merge|-m]
+                  [-unsafe|-u]
+                  [-force|-f]
+                  [-append|-a]
+                  [-verbose|-v]
+                  [-help|-h]
+                  [-longhelp]
+
+      Description: Utility to convert CSV formated files to SQLite database
+
+      Version: %s
+
+        Use -merge to merge CSV data to existing tables whenever possible. By default, each CSV file
+        is imported to a different table.
+        Use -unsafe to enable merging CSV rows that are smaller than the CSV header.
+        Use -tag to add a tag to the CSV data inside the database.
+
+      Example:
+         tb::csv2db -csv file1.csv -delimiter {;}
+         tb::csv2db -csv *.csv -out result.db -merge
+         tb::csv2db -csv *.csv -db result.db -tag {exp} -force -append
+    } $SCRIPT_VERSION ]
+    # HELP -->
+
+    if {$standalone} {
+      regsub -all {csv2db} $help {dbutils} help
+      regsub -all {tb::} $help {} help
+      regsub -all {\{} $help {'} help
+      regsub -all {\}} $help {'} help
+    }
+    puts $help
+    if {$show_long_help} { print_help }
+
+    return -code ok
+  }
+
+  if  {$ifilename == {}} {
+    puts " -E- no input file provided"
+    incr error
+  }
+
+  if  {$ofilename == {}} {
+    puts " -E- no output database name provided"
+    incr error
+  } else {
+    if {![catch {$ofilename version}]} {
+      # An in-memory SQL database is provided instead of an
+      # on-disk database
+      set inmemory 1
+    } elseif {[file exists $ofilename]} {
+      switch ${force}${append} {
+        00 {
+          puts " -E- file [file normalize $ofilename] already exists. Use -force to override"
+          incr error
+        }
+        01 {
+          puts " -E- file [file normalize $ofilename] already exists. Use -force to override"
+          incr error
+        }
+        10 {
+          puts " -W- database [file normalize $ofilename] is overriden (-force/-append)"
+          # Delete existing database if it already exist
+          catch {file delete -force $ofilename}
+        }
+        11 {
+          puts " -W- database [file normalize $ofilename] is updated (-force)"
+        }
+        default {
+        }
+      }
+    }
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+  }
+
+  if {$inmemory} {
+    # In-memory database
+    set SQL $ofilename
+  } else {
+    set SQL [dbCreateDB $ofilename]
+  }
+
+  set header [list]
+  set mergeheader [list]
+  set rows [list]
+
+  set tableNum 0
+  set columnNum 0
+
+  # Create prettyTable object
+  set tbl [::tb::prettyTable]
+
+  set first 1
+  set count 0
+  foreach filename $ifilename {
+    incr count
+    if {$debug} {
+      puts " -D- ####################"
+      puts " -D- # $filename"
+      puts " -D- ####################"
+    }
+    set header [list]
+    set rows [list]
+    if {$verbose} {
+      puts " -I- Processing file \[$count/[llength $ifilename]\] $filename"
+    }
+    read-csv header rows $filename $csvDelimiter
+    if {$header == [list]} {
+      if {$verbose} {
+        puts " -W- empty CSV header. Skipping file"
+      }
+      continue
+    }
+    if {$tag == {UNSET}} {
+      # If not tag has been defined, use filename
+      set tag [file normalize $filename]
+    }
+
+    # Set the table
+    $tbl reset
+    $tbl header $header
+    foreach row $rows {
+      $tbl addrow $row
+    }
+
+    # Save table object inside SQL database
+    dbTbl2DB $SQL $tbl $tableName $tag $merge $safe
+
+  }
+
+  catch {$tbl destroy}
+
+  puts " -I- [llength $ifilename] CSV file(s) have been imported"
+  puts " -I- database: [file normalize $ofilename] has been generated"
+  # Remove 'sqlite_sequence' from the list
+  set tables [lsearch -inline -all -not -exact [dbGetTables $SQL] {sqlite_sequence}]
+  puts " -I- number of tables: [llength $tables]"
+  puts " -I- tables: $tables"
+
+  if {!$inmemory} {
+    # Close SQlite database if it is not an im-memory database
+    execSQL $SQL {VACUUM;}
+    $SQL close
+    set SQL {}
+  }
+
+  return -code ok
+}
+
+namespace eval ::tb {
+  namespace import ::tb::utils::dbutils::csv2db
+  namespace import ::tb::utils::dbutils::tbl2db
+  namespace import ::tb::utils::dbutils::db2csv
+  namespace import ::tb::utils::dbutils::db2tbl
+  namespace import ::tb::utils::dbutils::dbinfo
+  namespace import ::tb::utils::dbutils::dbquery
+}
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+#   puts " INFO - sourcing [info script]"
+} else {
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  set ::argv [lrange $::argv 1 end]
+  set tail [file tail [info script]]
+  if {($::argv == {--install}) && ($tail == {dbutils})} {
+    # Create links for supported commands
+    if {[catch { file link -symbolic csv2db dbutils } errorstring]} { puts $errorstring }
+    if {[catch { file link -symbolic db2csv dbutils } errorstring]} { puts $errorstring }
+    if {[catch { file link -symbolic dbinfo dbutils } errorstring]} { puts $errorstring }
+    if {[catch { file link -symbolic dbquery dbutils } errorstring]} { puts $errorstring }
+    puts " -I- dbutils install links created"
+    exit 0
+  }
+  set exitCode 0
+  switch $tail {
+    dbutils -
+    csv2db {
+      if {[catch {set result eval [concat ::tb::utils::dbutils::csv2db -standalone $argv]]} errorstring]} {
+        puts $errorstring
+        set exitCode 1
+      } else {
+        puts $result
+      }
+    }
+    default {
+      if {[info proc ::tb::utils::dbutils::${tail}] != {}} {
+        if {[catch {set result [eval [concat ::tb::utils::dbutils::${tail} -standalone $argv]]} errorstring]} {
+          puts $errorstring
+          set exitCode 1
+        } else {
+          puts $result
+        }
+      } else {
+        puts " ERROR - unsupported command '$tail'"
+      }
+    }
+  }
+  # Close SQlite database
+  catch { if {$::tb::utils::dbutils::SQL != {}} { $::tb::utils::dbutils::SQL close } }
+  exit $exitCode
+}
