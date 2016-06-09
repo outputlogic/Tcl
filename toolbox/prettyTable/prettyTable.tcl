@@ -267,7 +267,7 @@ namespace eval ::tb {
 ########################################################################################
 ## 2016.06.09 - Added 'delrows', 'delcolumns' methods
 ##            - Added 'getcell', 'setcell' methods
-##            - Added 'settable' method
+##            - Added 'insertcolumn', 'settable' methods
 ## 2016.05.23 - Updated 'title' method to set/get the table's title
 ## 2016.05.20 - Added 'getrow', 'getcolumns', 'gettable' methods
 ## 2016.04.08 - Added 'appendrow' method
@@ -1134,6 +1134,50 @@ proc ::tb::prettyTable::method:appendrow {self args} {
   }
   set table [lreplace $table end end $row]
   return 0
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:insertcolumn
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> insertcolumn <col_idx> <col_header> <row_filler>
+#------------------------------------------------------------------------
+# Insert a column
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:insertcolumn {self col_idx col_header row_filler} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Insert a column
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {$col_idx == {}} {
+    return {}
+  }
+  if {$col_idx == {end}} {
+    set col_idx [llength $header]
+  } elseif {$col_idx > [llength $header]} {
+    puts " -W- column '$col_idx' out of bound"
+    return {}
+  }
+  if {[catch {
+    # Insert column inside header
+    set header [linsert $header $col_idx $col_header]
+    set L [list]
+    foreach row $table {
+      # Insert column inside row
+      set row [linsert $row $col_idx $row_filler]
+      lappend L $row
+    }
+    set table $L
+  } errorstring]} {
+    puts " -W- $errorstring"
+  } else {
+  }
+  return -code ok
 }
 
 #------------------------------------------------------------------------
