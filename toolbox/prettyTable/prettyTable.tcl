@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.05.23
+## Version:        2016.06.09
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,6 +265,9 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.06.09 - Added 'delrows', 'delcolumns' methods
+##            - Added 'getcell', 'setcell' methods
+##            - Added 'settable' method
 ## 2016.05.23 - Updated 'title' method to set/get the table's title
 ## 2016.05.20 - Added 'getrow', 'getcolumns', 'gettable' methods
 ## 2016.04.08 - Added 'appendrow' method
@@ -335,7 +338,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
-  variable version {2016.05.23}
+  variable version {2016.06.09}
 } ]
 
 #------------------------------------------------------------------------
@@ -1134,6 +1137,147 @@ proc ::tb::prettyTable::method:appendrow {self args} {
 }
 
 #------------------------------------------------------------------------
+# ::tb::prettyTable::method:delcolumns
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> delcolumns <list_of_column_indexes>
+#------------------------------------------------------------------------
+# Delete a list of column(s)
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:delcolumns {self columns} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Delete a list of column(s)
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {$columns == {}} {
+    return {}
+  }
+  foreach col [lsort -decreasing $columns] {
+    if {[catch {
+      # Remove column from header
+      set header [lreplace $header $col $col]
+      set L [list]
+      foreach row $table {
+        # Remove column from row
+        set row [lreplace $row $col $col]
+        lappend L $row
+      }
+      set table $L
+    } errorstring]} {
+      puts " -W- $errorstring"
+    } else {
+    }
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:delrows
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> delrows <list_of_row_indexes>
+#------------------------------------------------------------------------
+# Delete a list of row(s)
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:delrows {self rows} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Delete a list of row(s)
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {$rows == {}} {
+    return {}
+  }
+  foreach pos [lsort -decreasing $rows] {
+    if {[catch {
+      set table [lreplace $table $pos $pos]
+    } errorstring]} {
+      puts " -W- $errorstring"
+    } else {
+      incr numRows -1
+    }
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:getcell
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> getcell <col> <row>
+#------------------------------------------------------------------------
+# Return a cell by its <col> and <row> index
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:getcell {self column row} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Get a table cell value
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {($column == {}) || ($row == {})} {
+    return {}
+  }
+  if {$column > [expr [llength $header] -1]} {
+    puts " -W- column '$column' out of bound"
+    return {}
+  }
+  if {$row > [expr [llength $table] -1]} {
+    puts " -W- row '$row' out of bound"
+    return {}
+  }
+  set res [lindex [lindex $table $row] $column]
+  return $res
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:setcell
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> setcell <col> <row>
+#------------------------------------------------------------------------
+# Set a cell value directly by its <col> and <row> index
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:setcell {self column row value} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Set a table cell value
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {($column == {}) || ($row == {})} {
+    return {}
+  }
+  if {$column > [expr [llength $header] -1]} {
+    puts " -W- column '$column' out of bound"
+    return {}
+  }
+  if {$row > [expr [llength $table] -1]} {
+    puts " -W- row '$row' out of bound"
+    return {}
+  }
+  set L [lindex $table $row]
+  lreplace $L $column $column $value
+  set table [lreplace $table $row $row [lreplace $L $column $column $value] ]
+  return $value
+}
+
+#------------------------------------------------------------------------
 # ::tb::prettyTable::method:getcolumns
 #------------------------------------------------------------------------
 # Usage: <prettyTableObject> getcolumns <list_of_column_indexes>
@@ -1186,6 +1330,25 @@ proc ::tb::prettyTable::method:getrow {self index} {
   # Return a row
   upvar #0 ${self}::table table
   return [lindex $table $index]
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:settable
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> settable
+#------------------------------------------------------------------------
+# Set the entire table
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:settable {self rows} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Set the table at once
+  upvar #0 ${self}::table table
+  set table $rows
 }
 
 #------------------------------------------------------------------------
