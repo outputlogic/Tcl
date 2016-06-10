@@ -1144,7 +1144,7 @@ proc ::tb::prettyTable::method:appendrow {self args} {
 #------------------------------------------------------------------------
 # Insert a column
 #------------------------------------------------------------------------
-proc ::tb::prettyTable::method:creatematrix {self numcols numrows row_filler} {
+proc ::tb::prettyTable::method:creatematrix {self numcols numrows {row_filler {}}} {
   # Summary :
   # Argument Usage:
   # Return Value:
