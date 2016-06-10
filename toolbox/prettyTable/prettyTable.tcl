@@ -268,6 +268,7 @@ namespace eval ::tb {
 ## 2016.06.09 - Added 'delrows', 'delcolumns' methods
 ##            - Added 'getcell', 'setcell' methods
 ##            - Added 'insertcolumn', 'settable' methods
+##            - Added 'creatematrix' method
 ## 2016.05.23 - Updated 'title' method to set/get the table's title
 ## 2016.05.20 - Added 'getrow', 'getcolumns', 'gettable' methods
 ## 2016.04.08 - Added 'appendrow' method
@@ -1134,6 +1135,37 @@ proc ::tb::prettyTable::method:appendrow {self args} {
   }
   set table [lreplace $table end end $row]
   return 0
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:creatematrix
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> creatematrix <numcols> <numrows> <row_filler>
+#------------------------------------------------------------------------
+# Insert a column
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:creatematrix {self numcols numrows row_filler} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Create a matrix
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  set row [list]
+  set table [list]
+  set header [list]
+  for {set col 0} {$col < $numcols} {incr col} {
+    lappend header $col
+    lappend row $row_filler
+  }
+  for {set r 0} {$r < $numrows} {incr r} {
+    lappend table $row
+  }
+  return -code ok
 }
 
 #------------------------------------------------------------------------
