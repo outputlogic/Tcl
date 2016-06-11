@@ -535,7 +535,7 @@ proc ::tb::utils::dbutils::dbTbl2DB {SQL tbl args} {
   set debug $params(debug)
 
   # First assign default values...
-  array set options [list -tableName {csv} -merge 0 -safe 0 -strict 0 -add_extra_columns 1 -tag {} -project {} -version {} -experiment {} -step {} -directive {}]
+  array set options [list -tableName {csv} -merge 0 -safe 0 -strict 0 -add_extra_columns 1 -primary_key 1 -tag {} -project {} -version {} -experiment {} -step {} -directive {}]
   # ...then possibly override them with user choices
   array set options $args
   set tableName $options(-tableName)
@@ -543,6 +543,7 @@ proc ::tb::utils::dbutils::dbTbl2DB {SQL tbl args} {
   set safe $options(-safe)
   set strict $options(-strict)
   set addExtraColumns $options(-add_extra_columns)
+  set primaryKey $options(-primary_key)
   set tag $options(-tag)
   set project $options(-project)
   set version $options(-version)
@@ -615,16 +616,16 @@ proc ::tb::utils::dbutils::dbTbl2DB {SQL tbl args} {
       # In strict mode, data type for created tables should match the type of the first
       # table row
       if {$addExtraColumns} {
-        dbCreateTable $SQL $table [concat _tag_ _project_ _version_ _experiment_ _step_ _directive_ $sqlheader] [concat [list {} {} {} {} {} {}] [lindex $rows 0] ]
+        dbCreateTable $SQL $table [concat _tag_ _project_ _version_ _experiment_ _step_ _directive_ $sqlheader] [concat [list {} {} {} {} {} {}] [lindex $rows 0] ] $primaryKey
       } else {
-        dbCreateTable $SQL $table $sqlheader [lindex $rows 0]
+        dbCreateTable $SQL $table $sqlheader [lindex $rows 0] $primaryKey
       }
     } else {
       # When NOT in strict mode, all data type will use the type TEXT
       if {$addExtraColumns} {
-        dbCreateTable $SQL $table [concat _tag_ _project_ _version_ _experiment_ _step_ _directive_ $sqlheader]
+        dbCreateTable $SQL $table [concat _tag_ _project_ _version_ _experiment_ _step_ _directive_ $sqlheader] {} $primaryKey
       } else {
-        dbCreateTable $SQL $table $sqlheader
+        dbCreateTable $SQL $table $sqlheader {} $primaryKey
       }
     }
 #     dbCreateTable $SQL $table [concat _tag_ $sqlheader] [concat {} {*}[lindex $rows 0] ]
@@ -870,7 +871,7 @@ proc ::tb::utils::dbutils::dbTableExist {&SQL table} {
 #------------------------------------------------------------------------
 # Create SQL table
 #------------------------------------------------------------------------
-proc ::tb::utils::dbutils::dbCreateTable {&SQL table sqlheader {row {}}} {
+proc ::tb::utils::dbutils::dbCreateTable {&SQL table sqlheader {row {}} {primaryKey 1}} {
   variable params
 
   set tables [dbGetTables ${&SQL}]
@@ -899,12 +900,24 @@ proc ::tb::utils::dbutils::dbCreateTable {&SQL table sqlheader {row {}}} {
     }
     # Remove last comma
     regsub {,$} $string {} string
-    set SQLTable [format {
+    if {$primaryKey} {
+
+      set SQLTable [format {
     CREATE TABLE IF NOT EXISTS %s (
     _id_ INTEGER PRIMARY KEY AUTOINCREMENT,
     %s
     );
     } $table $string ]
+
+    } else {
+
+      set SQLTable [format {
+    CREATE TABLE IF NOT EXISTS %s (
+    %s
+    );
+    } $table $string ]
+
+    }
 #     tag TEXT DEFAULT NULL,
 # puts $SQLTable
 
@@ -2795,7 +2808,8 @@ proc ::tb::prettyTable::method:getsql {self args} {
                                             -merge 0 \
                                             -safe 0 \
                                             -strict 1 \
-                                            -add_extra_columns 0
+                                            -add_extra_columns 0 \
+                                            -primary_key 0
 #   ::tb::utils::dbutils::dbDumpTable $SQL tbl0
 #   ::tb::utils::dbutils::dbGetSchema $SQL tbl0
 
