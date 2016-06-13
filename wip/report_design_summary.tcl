@@ -14,11 +14,13 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
+## Version:        2016.06.13
 ## Description:    Generate a design summary report
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.06.13 - Added tag.date, tag.time metrics
 ## 2016.03.14 - Minor changes to prevent failure when not running inside vivado
 ## 2016.03.04 - Added new DRC metrics from report_methodology
 ##            - Added support for -drc/-rm/-report_methodology
@@ -218,7 +220,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_design_summary {
   namespace export -force report_design_summary
-  variable version {2016.03.14}
+  variable version {2016.06.13}
   variable params
   variable output {}
   variable reports
@@ -261,6 +263,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set step {}
   set directive {}
   set runtime {}
+  set time [clock seconds]
+  set date [clock format $time]
   set showdetails 0
   set prescript {}
   set postscript {}
@@ -356,6 +360,12 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       }
       {^-ru(n(t(i(me?)?)?)?)?$} {
         set runtime [lshift args]
+      }
+      {^-ti(me?)?$} {
+        set time [lshift args]
+      }
+      {^-da(te?)?$} {
+        set date [lshift args]
       }
       {^-de(t(a(i(ls?)?)?)?)?$} {
         set showdetails 1
@@ -500,6 +510,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-step <string>]
               [-directive <string>]
               [-runtime <string>]
+              [-date <string>]
+              [-time <string>]
             +--------------------+
               [-rts <filename>|-report_timing_summary <filename>]
               [-rct <filename>|-report_check_timing <filename>]
@@ -724,6 +736,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {tag.step}         {Step}
       addMetric {tag.directive}    {Directive}
       addMetric {tag.runtime}      {Runtime}
+      addMetric {tag.date}         {Date}
+      addMetric {tag.time}         {Time}
 
       setMetric {tag.project}      $project
       setMetric {tag.version}      $version
@@ -731,6 +745,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       setMetric {tag.step}         $step
       setMetric {tag.directive}    $directive
       setMetric {tag.runtime}      $runtime
+      setMetric {tag.date}         $date
+      setMetric {tag.time}         $time
     }
 
     ########################################################################################
@@ -2370,6 +2386,8 @@ proc ::tb::utils::report_design_summary::orderedMetrics {} {
           tag.step \
           tag.directive \
           tag.runtime \
+          tag.date \
+          tag.time \
            \
           vivado.version \
           vivado.build \

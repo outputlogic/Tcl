@@ -18,12 +18,13 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.04.04
+## Version:        2016.06.13
 ## Description:    Compare design summary reports
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.06.13 - Updated the list of ordered metrics (tag.time, tag.date)
 ## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.03.04 - Updated the list of metric categories
 ##            - Reordered the metric categories
@@ -47,7 +48,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::compare_design_summary {
   namespace export -force compare_design_summary
-  variable version {2016.04.04}
+  variable version {2016.06.13}
   variable params
   variable output {}
   variable reports
@@ -876,6 +877,8 @@ proc ::tb::utils::compare_design_summary::orderedMetrics {} {
           tag.step \
           tag.directive \
           tag.runtime \
+          tag.date \
+          tag.time \
            \
           vivado.version \
           vivado.build \

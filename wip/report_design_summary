@@ -3,6 +3,7 @@
 exec tclsh "$0" -- ${1+"$@"}
 
 ########################################################################################
+## 2016.06.13 - Added support for -runtime/-date/-time
 ## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.03.25 - Added support for -exclude
 ## 2016.02.29 - Added support for -directive
@@ -276,6 +277,9 @@ set experiment {}
 set version {}
 set step {}
 set directive {}
+set runtime {}
+set date {}
+set time {}
 set exclude {}
 set script {}
 set error 0
@@ -319,6 +323,15 @@ while {[llength $::argv]} {
     -d -
     -directive {
          set directive [lshift ::argv]
+    }
+    -runtime {
+         set runtime [lshift ::argv]
+    }
+    -date {
+         set date [lshift ::argv]
+    }
+    -time {
+         set time [lshift ::argv]
     }
     -ex -
     -exclude {
@@ -371,6 +384,9 @@ Usage: report_design_summary
             [-experiment|-e <string>]
             [-step|-s <string>]
             [-directive|-d <string>]
+            [-runtime <string>]
+            [-date <string>]
+            [-time <string>]
             [-exclude <list_sections>]
             [-script <filename>]
             [-lsf]
@@ -438,6 +454,9 @@ if {$version != {}} { set cmdLine [concat $cmdLine -version [list $version] ] }
 if {$experiment != {}} { set cmdLine [concat $cmdLine -experiment [list $experiment] ] }
 if {$step != {}} { set cmdLine [concat $cmdLine -step [list $step] ] }
 if {$directive != {}} { set cmdLine [concat $cmdLine -directive [list $directive] ] }
+if {$runtime != {}} { set cmdLine [concat $cmdLine -runtime [list $runtime] ] }
+if {$date != {}} { set cmdLine [concat $cmdLine -date [list $date] ] }
+if {$time != {}} { set cmdLine [concat $time -runtime [list $time] ] }
 if {$exclude != {}} { set cmdLine [concat $cmdLine -exclude [list $exclude] ] }
 if {$script != {}} { set cmdLine [concat $cmdLine -script [list $script] ] }
 
