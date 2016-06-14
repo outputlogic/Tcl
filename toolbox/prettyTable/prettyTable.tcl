@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.09
+## Version:        2016.06.13
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,6 +265,7 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.06.13 - Added 'setrow', 'setcolumn' methods
 ## 2016.06.09 - Added 'delrows', 'delcolumns' methods
 ##            - Added 'getcell', 'setcell' methods
 ##            - Added 'insertcolumn', 'settable' methods
@@ -339,7 +340,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
-  variable version {2016.06.09}
+  variable version {2016.06.13}
 } ]
 
 #------------------------------------------------------------------------
@@ -1351,6 +1352,71 @@ proc ::tb::prettyTable::method:setcell {self column row value} {
   lreplace $L $column $column $value
   set table [lreplace $table $row $row [lreplace $L $column $column $value] ]
   return $value
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:setrow
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> setrow <row_index> <row>
+#------------------------------------------------------------------------
+# Set an entire row by its index
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:setrow {self idx row} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Set a row
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {$idx == {end}} { set idx [expr [llength $table] -1] }
+  if {($idx < 0) || ($idx > [expr [llength $table] -1])} {
+    puts " -W- row '$idx' out of bound"
+    return {}
+  }
+  if {[llength $row] != [llength $header]} {
+    puts " -W- invalid row length (length:[llength $row] / header:[llength $header] )"
+    return {}
+  }
+  set table [lreplace $table $idx $idx $row ]
+  return $row
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:setcolumn
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> setcolumn <col> <row>
+#------------------------------------------------------------------------
+# Set an entire column by its index
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:setcolumn {self idx column} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Set a column
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {$idx == {end}} { set idx [expr [llength $header] -1] }
+  if {($idx < 0) || ($idx > [expr [llength $header] -1])} {
+    puts " -W- column '$idx' out of bound"
+    return {}
+  }
+  if {[llength $column] != [llength $table]} {
+    puts " -W- invalid column length (length:[llength $column] / table:[llength $table] )"
+    return {}
+  }
+  for {set r 0} {$r < [llength $table]} {incr r} {
+    set L [lindex $table $r]
+    set table [lreplace $table $r $r [lreplace $L $idx $idx [lindex $column $r]] ]
+  }
+  return $column
 }
 
 #------------------------------------------------------------------------
