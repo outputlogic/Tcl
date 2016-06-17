@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.13
+## Version:        2016.06.17
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,6 +265,11 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.06.17 - Added 'appendcell', 'cleartable', 'incrcell' methods
+##            - Added support for -origin/-offsetx/-offsety (configure)
+##            - Added support for templates for table creation
+##            - Updated 'separator' method to accept a list of row numbers
+##              E.g: create table based on device view
 ## 2016.06.13 - Added 'setrow', 'setcolumn' methods
 ## 2016.06.09 - Added 'delrows', 'delcolumns' methods
 ##            - Added 'getcell', 'setcell' methods
@@ -339,8 +344,8 @@ proc ::tb::prettyTable { args } {
 eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
-  variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} ]
-  variable version {2016.06.13}
+  variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} origin {topleft} offsetx 0 offsety 0 template {}]
+  variable version {2016.06.17}
 } ]
 
 #------------------------------------------------------------------------
@@ -385,6 +390,10 @@ proc ::tb::prettyTable::prettyTable { args } {
     create {
       return [eval [concat ::tb::prettyTable::Create $args] ]
     }
+    template {
+      # Create table based on template
+      return [eval [concat ::tb::prettyTable::Template $args] ]
+    }
     default {
       # The 'method' variable has the table's title. Since it can have multiple words
       # it is cast as a List to work well with 'eval'
@@ -397,8 +406,8 @@ proc ::tb::prettyTable::prettyTable { args } {
     puts [format {
       Usage: prettyTable
                   [<title>]                - Create a new prettyTable object (optional table title)
-                  [[create] [<title>]]     - Create a new prettyTable object (optional table title)
                   [create|create <title>]  - Create a new prettyTable object (optional table title)
+                  [template <name>]        - Create a new prettyTable object based on template
                   [sizeof]                 - Provides the memory consumption of all the prettyTable objects
                   [info]                   - Provides a summary of all the prettyTable objects that have been created
                   [destroyall]             - Destroy all the prettyTable objects and release the memory
@@ -462,6 +471,90 @@ proc ::tb::prettyTable::Create { {title {}} } {
   set ${instance}::params(title) $title
   interp alias {} $instance {} ::tb::prettyTable::do $instance
   set instance
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::Create
+#------------------------------------------------------------------------
+# Constructor for a new prettyTable object
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::Template { {name {}} } {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+  switch $name {
+    "" {
+      puts " -I- The supported templates are: device | deviceview"
+      return -code ok
+    }
+    device -
+    deviceview {
+      # +-----+----+----+----+----+----+----+
+      # |     | X0 | X1 | X2 | X3 | X4 | X5 |
+      # +-----+----+----+----+----+----+----+
+      # | Y14 |    |    |    |    |    |    |
+      # | Y13 |    |    |    |    |    |    |
+      # | Y12 |    |    |    |    |    |    |
+      # | Y11 |    |    |    |    |    |    |
+      # | Y10 |    |    |    |    |    |    |
+      # +-----+----+----+----+----+----+----+
+      # | Y9  |    |    |    |    |    |    |
+      # | Y8  |    |    |    |    |    |    |
+      # | Y7  |    |    |    |    |    |    |
+      # | Y6  |    |    |    |    |    |    |
+      # | Y5  |    |    |    |    |    |    |
+      # +-----+----+----+----+----+----+----+
+      # | Y4  |    |    |    |    |    |    |
+      # | Y3  |    |    |    |    |    |    |
+      # | Y2  |    |    |    |    |    |    |
+      # | Y1  |    |    |    |    |    |    |
+      # | Y0  |    |    |    |    |    |    |
+      # +-----+----+----+----+----+----+----+
+      set maxX 0
+      set maxY 0
+      foreach slr [lsort [get_slrs -quiet]] {
+        foreach region [get_clock_regions -quiet -of $slr] {
+          regexp {^X([0-9]+)Y([0-9]+)$} $region - X Y
+          if {$X > $maxX} { set maxX $X }
+          if {$Y > $maxY} { set maxY $Y }
+          lappend ar(${slr}:X) $X
+          lappend ar(${slr}:Y) $Y
+        }
+      }
+      set column0 [list]
+      set header [list {}]
+      for {set i 0} {$i <= $maxX} {incr i} {
+        lappend header "X$i"
+      }
+      for {set i $maxY} {$i >= 0} {incr i -1} {
+        lappend column0 "Y$i"
+      }
+      set tbl [tb::prettyTable]
+      $tbl creatematrix [expr $maxX +2] [expr $maxY +1]
+      $tbl configure -origin bottomleft -offsetx 1 -offsety 0
+      $tbl header $header
+      $tbl setcolumn 0 $column0
+      # Start from the highest number SLR. The lowest (SLR0)
+      # can be skipped as the number of separators that are needed
+      # is the number of SLRs minus 1
+      foreach slr [lrange [lsort -decreasing [get_slrs -quiet]] 0 end-1] {
+        set Y [lsort -integer -increasing -unique $ar(${slr}:Y)]
+        # Get the lowest Y number for this SLR
+        set n [lindex $Y 0]
+        $tbl separator [expr $maxY - $n +1]
+      }
+      # Save the 'template' parameter with the template name
+      $tbl set_param {template} {deviceview}
+      # Return the table object
+      set tbl
+    }
+    default {
+      puts " -E- invalid template '$name'. Valid templates are: device | deviceview"
+      return -code ok
+    }
+  }
 }
 
 #------------------------------------------------------------------------
@@ -652,6 +745,45 @@ proc ::tb::prettyTable::csv2list { str {sepChar ,} } {
   }
   set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
   return [split $str \0]
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::convertCoordinates
+#------------------------------------------------------------------------
+# **INTERNAL**
+#------------------------------------------------------------------------
+# Convert coordonates for getcell/setcell/appendcell
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::convertCoordinates {self X Y} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::numRows numRows
+  set maxX [expr [llength $header] -1]
+  set maxY [expr [llength $table] -1]
+  switch [subst $${self}::params(origin)] {
+    topleft {
+    }
+    bottomleft {
+      set Y [expr $maxY - $Y]
+    }
+    topright {
+      set X [expr $maxX - $X]
+    }
+    bottomright {
+      set X [expr $maxX - $X]
+      set Y [expr $maxY - $Y]
+    }
+    default {
+    }
+  }
+  set X [expr $X + [subst $${self}::params(offsetx)] ]
+  set Y [expr $Y + [subst $${self}::params(offsety)] ]
+  return [list $X $Y]
 }
 
 #------------------------------------------------------------------------
@@ -1143,7 +1275,7 @@ proc ::tb::prettyTable::method:appendrow {self args} {
 #------------------------------------------------------------------------
 # Usage: <prettyTableObject> creatematrix <numcols> <numrows> <row_filler>
 #------------------------------------------------------------------------
-# Insert a column
+# Create a matrix
 #------------------------------------------------------------------------
 proc ::tb::prettyTable::method:creatematrix {self numcols numrows {row_filler {}}} {
   # Summary :
@@ -1166,6 +1298,7 @@ proc ::tb::prettyTable::method:creatematrix {self numcols numrows {row_filler {}
   for {set r 0} {$r < $numrows} {incr r} {
     lappend table $row
   }
+  set numRows $numrows
   return -code ok
 }
 
@@ -1315,6 +1448,8 @@ proc ::tb::prettyTable::method:getcell {self column row} {
     puts " -W- row '$row' out of bound"
     return {}
   }
+  # Convert coordinates based on origin
+  foreach {column row} [convertCoordinates $self $column $row] { break }
   set res [lindex [lindex $table $row] $column]
   return $res
 }
@@ -1348,10 +1483,91 @@ proc ::tb::prettyTable::method:setcell {self column row value} {
     puts " -W- row '$row' out of bound"
     return {}
   }
+  # Convert coordinates based on origin
+  foreach {column row} [convertCoordinates $self $column $row] { break }
   set L [lindex $table $row]
-  lreplace $L $column $column $value
+#   lreplace $L $column $column $value
   set table [lreplace $table $row $row [lreplace $L $column $column $value] ]
   return $value
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:appendcell
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> appendcell <col> <row>
+#------------------------------------------------------------------------
+# Append to a cell value directly by its <col> and <row> index
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:appendcell {self column row value} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Append a table cell value
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {($column == {}) || ($row == {})} {
+    return {}
+  }
+  if {$column > [expr [llength $header] -1]} {
+    puts " -W- column '$column' out of bound"
+    return {}
+  }
+  if {$row > [expr [llength $table] -1]} {
+    puts " -W- row '$row' out of bound"
+    return {}
+  }
+  # Convert coordinates based on origin
+  foreach {column row} [convertCoordinates $self $column $row] { break }
+  set L [lindex $table $row]
+  set currentValue [lindex $L $column]
+  set newValue [format {%s%s} $currentValue $value]
+  set table [lreplace $table $row $row [lreplace $L $column $column $newValue] ]
+  return $newValue
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:incrcell
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> incrcell <col> <row> <value>
+#------------------------------------------------------------------------
+# Incerment cell value directly by its <col> and <row> index
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:incrcell {self column row {value 1}} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Increment a table cell value
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {($column == {}) || ($row == {})} {
+    return {}
+  }
+  if {$column > [expr [llength $header] -1]} {
+    puts " -W- column '$column' out of bound"
+    return {}
+  }
+  if {$row > [expr [llength $table] -1]} {
+    puts " -W- row '$row' out of bound"
+    return {}
+  }
+  set currentvalue [$self getcell $column $row]
+  if {$currentvalue == {}} {
+    set currentvalue 0
+  }
+  if {[catch {set newvalue [expr $currentvalue + $value]} errorstring]} {
+    puts " -E- $errorstring"
+    return -code ok
+  }
+  $self setcell $column $row $newvalue
+  return $newvalue
 }
 
 #------------------------------------------------------------------------
@@ -1488,7 +1704,7 @@ proc ::tb::prettyTable::method:settable {self rows} {
   # Categories: xilinxtclstore, designutils
 
 
-  # Set the table at once
+  # Set the table content
   upvar #0 ${self}::table table
   set table $rows
 }
@@ -1635,10 +1851,52 @@ proc ::tb::prettyTable::method:separator {self args} {
 
   # Add a row separator
   if {[subst $${self}::numRows] > 0} {
-    # Add the current row number to the list of separators
-    eval lappend ${self}::separators [subst $${self}::numRows]
+    if {$args != {}} {
+      # The row number is passed as parameter
+      foreach row $args {
+        eval lappend ${self}::separators $row
+      }
+    } else {
+      # Add the current row number to the list of separators
+      eval lappend ${self}::separators [subst $${self}::numRows]
+    }
   }
   return 0
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:cleartable
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> cleartable
+#------------------------------------------------------------------------
+# Clear table content
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:cleartable {self args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Clear table content
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  set tmp $header
+  set col0 [$self getcolumns 0]
+  # Clear table content by creating an empty matrix
+  $self creatematrix [llength $header] [llength $table]
+  # Restore header
+  $self header $tmp
+  # Restore first column if the table was created from the template 'deviceview'
+  set template [$self get_param {template}]
+  switch $template {
+    device -
+    deviceview {
+      $self setcolumn 0 $col0
+    }
+  }
+  return -code ok
 }
 
 #------------------------------------------------------------------------
@@ -2298,6 +2556,20 @@ proc ::tb::prettyTable::method:configure {self args} {
       -display_limit {
            set ${self}::params(maxNumRowsToDisplay) [lshift args]
       }
+      -origin {
+           set origin [lshift args]
+           if {[lsearch [list topleft topright bottomleft bottomright ] $origin] != -1} {
+             set ${self}::params(origin) $origin
+           } else {
+             puts " -W- invalid value '$origin' for -origin. Valid values are: topleft topright bottomleft bottomright"
+           }
+      }
+      -offsetx {
+           set ${self}::params(offsetx) [lshift args]
+      }
+      -offsety {
+           set ${self}::params(offsety) [lshift args]
+      }
       -remove_separator -
       -remove_separators {
            set ${self}::separators [list]
@@ -2334,9 +2606,16 @@ proc ::tb::prettyTable::method:configure {self args} {
               [-display_columns <list_of_columns_to_display>]
               [-display_limit <max_number_of_rows_to_display>]
               [-remove_separators]
+              [-origin <topleft|topright|bottomleft|bottomright>]
+              [-offsetx <num>][-offsety <num>]
               [-help|-h]
 
   Description: Configure some of the internal parameters.
+
+    -origin: set the origin of coordinates for setcell/getcell/appendcell
+      Valid values are: topleft|topright|bottomleft|bottomright
+      Default value is: topleft
+    -offsetx/-offsety: offset added to coordinates for setcell/getcell/appendcell
 
   Example:
      <prettyTableObject> configure -format lean -align_right
@@ -2760,3 +3039,49 @@ if 0 {
   $tbl sort -SETUP_SLACK
   $tbl print -file table.rpt
 }
+
+if {0} {
+  set tbl [::tb::prettyTable template deviceview]
+
+  set net [get_nets u0_cbus_map_f7/ocbus_addr_die[1]]
+  set driver [get_pins -of $net -leaf -filter {DIRECTION == OUT}] ; llength $driver
+  set loads [get_pins -of $net -leaf -filter {DIRECTION == IN}] ; llength $loads
+
+  foreach load [get_cells -of $loads] {
+    set region [get_clock_regions -of $load]
+    regexp {^X([0-9]+)Y([0-9]+)$} $region - X Y
+    $tbl incrcell $X $Y
+  }
+
+  foreach cell [get_cells -of $driver] {
+    set region [get_clock_regions -of $cell]
+    regexp {^X([0-9]+)Y([0-9]+)$} $region - X Y
+    $tbl appendcell $X $Y " (D)"
+  }
+
+  $tbl print
+
+  # +-----+-----+-----+-----+---------+-----+------+
+  # |     | X0  | X1  | X2  | X3      | X4  | X5   |
+  # +-----+-----+-----+-----+---------+-----+------+
+  # | Y14 |     |     |     |         |     |      |
+  # | Y13 |     |     |     |         |     |      |
+  # | Y12 |     |     |     |         |     |      |
+  # | Y11 |     |     |     |         |     |      |
+  # | Y10 |     |     |     |         |     |      |
+  # +-----+-----+-----+-----+---------+-----+------+
+  # | Y9  |     |     |     |         |     |      |
+  # | Y8  |     |     |     |         |     |      |
+  # | Y7  |     |     |     |         |     |      |
+  # | Y6  |     |     |     |         |     |      |
+  # | Y5  |     |     |     | 1       |     |      |
+  # +-----+-----+-----+-----+---------+-----+------+
+  # | Y4  | 300 | 199 | 643 | 192     | 169 | 902  |
+  # | Y3  | 301 | 113 | 343 | 312 (D) | 164 | 384  |
+  # | Y2  | 87  | 551 | 483 | 517     | 116 | 1057 |
+  # | Y1  | 725 | 682 | 436 | 163     | 155 | 1021 |
+  # | Y0  | 634 | 62  | 2   | 19      | 158 | 1188 |
+  # +-----+-----+-----+-----+---------+-----+------+
+
+}
+
