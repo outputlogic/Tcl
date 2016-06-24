@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.17
+## Version:        2016.06.24
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,6 +265,11 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.06.24 - Added 'search', 'filter', 'prependcell' methods
+##            - Fixed issue with 'set_param' method
+##            - Added support for private methods for templates
+##            - Added 'plotcells', 'plotnets', 'plotregions' methods for
+##              template 'deviceview'
 ## 2016.06.17 - Added 'appendcell', 'cleartable', 'incrcell' methods
 ##            - Added support for -origin/-offsetx/-offsety (configure)
 ##            - Added support for templates for table creation
@@ -344,8 +349,8 @@ proc ::tb::prettyTable { args } {
 eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
-  variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} origin {topleft} offsetx 0 offsety 0 template {}]
-  variable version {2016.06.17}
+  variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} origin {topleft} offsetx 0 offsety 0 template {} methods {method}]
+  variable version {2016.06.24}
 } ]
 
 #------------------------------------------------------------------------
@@ -547,6 +552,7 @@ proc ::tb::prettyTable::Template { {name {}} } {
       }
       # Save the 'template' parameter with the template name
       $tbl set_param {template} {deviceview}
+      $tbl set_param {methods} {method deviceview}
       # Return the table object
       set tbl
     }
@@ -1077,26 +1083,36 @@ proc ::tb::prettyTable::do {self args} {
     # The first argument is the method
     set method [lshift args]
   }
-  if {[info proc ::tb::prettyTable::method:${method}] == "::tb::prettyTable::method:${method}"} {
-    eval ::tb::prettyTable::method:${method} $self $args
+  set methods [subst $${self}::params(methods)]
+  # The line below only match if $methods has a length of 1 and the
+  # full method name has been specified by the user
+  if {[info proc ::tb::prettyTable::${methods}:${method}] == "::tb::prettyTable::${methods}:${method}"} {
+    eval ::tb::prettyTable::${methods}:${method} $self $args
   } else {
     # Search for a unique matching method among all the available methods
-    set match [list]
-    foreach procname [info proc ::tb::prettyTable::method:*] {
-      if {[string first $method [regsub {::tb::prettyTable::method:} $procname {}]] == 0} {
-        lappend match [regsub {::tb::prettyTable::method:} $procname {}]
+    set match [dict create]
+    set procnames [list]
+    foreach m $methods {
+      set procnames [concat $procnames [info proc ::tb::prettyTable::${m}:*]]
+    }
+    foreach procname $procnames {
+      set str [regsub {::tb::prettyTable::[^\:]+:} $procname {}]
+      if {[string first $method $str] == 0} {
+        dict lappend match $str $procname
       }
     }
-    switch [llength $match] {
+    set keys [dict keys $match]
+    switch [llength $keys] {
       0 {
         error " -E- unknown method $method"
       }
       1 {
-        set method $match
-        eval ::tb::prettyTable::method:${method} $self $args
+        # Last win: if multiple methods match (with different paths), take the last one
+        set method [lindex [dict get $match $keys] end]
+        eval $method $self $args
       }
       default {
-        error " -E- multiple methods match '$method': $match"
+        error " -E- multiple methods match '$method': $keys"
       }
     }
   }
@@ -1120,8 +1136,22 @@ proc ::tb::prettyTable::method:? {self args} {
   # This help message
   puts "   Usage: <prettyTableObject> <method> \[<arguments>\]"
   puts "   Where <method> is:"
-  foreach procname [lsort [info proc ::tb::prettyTable::method:*]] {
-    regsub {::tb::prettyTable::method:} $procname {} method
+  set method [dict create]
+  set methods [subst $${self}::params(methods)]
+  set procnames [list]
+  # Build the list of all the proc names based on the list of methods
+  foreach m $methods {
+    set procnames [concat $procnames [info proc ::tb::prettyTable::${m}:*]]
+  }
+  # Build the dict: key=method name  value=proc name
+  foreach procname $procnames {
+    set method [regsub {::tb::prettyTable::[^\:]+:} $procname {}]
+    dict lappend match $method $procname
+  }
+  foreach key [lsort [dict keys $match]] {
+    # Last win: if multiple methods match (with different paths), take the last one
+    set procname [lindex [dict get $match $key] end]
+    set method [regsub {::tb::prettyTable::[^\:]+:} $procname {}]
     set help [::tb::prettyTable::docstring $procname]
     if {$help ne ""} {
       puts "         [format {%-12s%s- %s} $method \t $help]"
@@ -1505,7 +1535,7 @@ proc ::tb::prettyTable::method:appendcell {self column row value} {
   # Categories: xilinxtclstore, designutils
 
 
-  # Append a table cell value
+  # Append to a table cell value
   upvar #0 ${self}::header header
   upvar #0 ${self}::table table
   upvar #0 ${self}::numRows numRows
@@ -1525,6 +1555,44 @@ proc ::tb::prettyTable::method:appendcell {self column row value} {
   set L [lindex $table $row]
   set currentValue [lindex $L $column]
   set newValue [format {%s%s} $currentValue $value]
+  set table [lreplace $table $row $row [lreplace $L $column $column $newValue] ]
+  return $newValue
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:prependcell
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> prependcell <col> <row>
+#------------------------------------------------------------------------
+# Prepend to a cell value directly by its <col> and <row> index
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:prependcell {self column row value} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Prepend to a table cell value
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
+  if {($column == {}) || ($row == {})} {
+    return {}
+  }
+  if {$column > [expr [llength $header] -1]} {
+    puts " -W- column '$column' out of bound"
+    return {}
+  }
+  if {$row > [expr [llength $table] -1]} {
+    puts " -W- row '$row' out of bound"
+    return {}
+  }
+  # Convert coordinates based on origin
+  foreach {column row} [convertCoordinates $self $column $row] { break }
+  set L [lindex $table $row]
+  set currentValue [lindex $L $column]
+  set newValue [format {%s%s} $value $currentValue ]
   set table [lreplace $table $row $row [lreplace $L $column $column $newValue] ]
   return $newValue
 }
@@ -1706,7 +1774,9 @@ proc ::tb::prettyTable::method:settable {self rows} {
 
   # Set the table content
   upvar #0 ${self}::table table
+  upvar #0 ${self}::numRows numRows
   set table $rows
+  set numRows [llength $rows]
 }
 
 #------------------------------------------------------------------------
@@ -1831,7 +1901,7 @@ proc ::tb::prettyTable::method:set_param {self args} {
   if {[llength $args] < 2} {
     error " -E- wrong number of parameters: <prettyTableObject> set_param <param> <value>"
   }
-  set ${self}::params([lindex $args 0]) [lrange $args 1 end]
+  set ${self}::params([lindex $args 0]) [lindex $args 1]
   return 0
 }
 
@@ -2980,6 +3050,466 @@ proc ::tb::prettyTable::method:export {self args} {
   }
 }
 
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:search
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> search [<options>]
+#------------------------------------------------------------------------
+# Search inside the table
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:search {self args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Search inside the table (-help)
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::params params
+  upvar #0 ${self}::numRows numRows
+  set error 0
+  set help 0
+  set verbose 0
+  set str {}
+  set matchStyle {-glob}
+  set caseStyle {}
+  set all {}
+  set returnformat {rowidx}
+  set columns {}
+  set print 0
+  if {[llength $args] == 0} { incr help }
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-p(a(t(t(e(rn?)?)?)?)?)?$} {
+        set str [lshift args]
+      }
+      {^-no(c(a(se?)?)?)?$} {
+        set caseStyle {-nocase}
+      }
+      {^-re(g(e(xp?)?)?)?$} {
+        set matchStyle {-regexp}
+      }
+      {^-gl(ob?)?$} {
+        set matchStyle {-glob}
+      }
+      {^-ex(a(ct?)?)?$} {
+        set matchStyle {-exact}
+      }
+      {^-all?$} {
+        set all {-all}
+      }
+      {^-pr(i(nt?)?)?$} {
+        set print 1
+      }
+      {^-co(l(u(m(ns?)?)?)?)?$} {
+        set columns [lshift args]
+      }
+      {^-return_row_c(o(l(u(m(n(_(i(n(d(e(x(es?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set returnformat {rowcolidx}
+      }
+      {^-return_c(o(l(u(m(n(_(i(n(d(e(x(es?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set returnformat {colidx}
+      }
+      {^-return_row_i(n(d(e(x(es?)?)?)?)?)?$} {
+        set returnformat {rowidx}
+      }
+      {^-return_matching_s(t(r(i(n(gs?)?)?)?)?)?$} {
+        set returnformat {matchingstring}
+      }
+      {^-return_matching_r(o(ws?)?)?$} {
+        set returnformat {matchingrows}
+      }
+      {^-return_t(a(b(le?)?)?)?$} {
+        set returnformat {table}
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set verbose 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set help 1
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          set str $name
+#           puts " -E- option '$name' is not a valid option."
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$help} {
+    puts [format {
+  Usage: <prettyTableObject> search
+              -pattern <string>|<string>
+              [-nocase]
+              [-glob][-exact][-regexp]
+              [-columns <list_of_columns_to_search>]
+              [-return_row_column_indexes]
+              [-return_column_indexes]
+              [-return_row_indexes]
+              [-return_matching_strings]
+              [-return_matching_rows]
+              [-return_table]
+              [-print]
+              [-verbose|-v]
+              [-help|-h]
+
+  Description: Search for values inside the table
+
+  Example:
+     <prettyTableObject> search -pattern {foo*} -nocase -glob
+     <prettyTableObject> search {foo.+} -regexp -return_matching_rows -columns {0 2 3 4}
+} ]
+    # HELP -->
+    return {}
+  }
+
+  if {$error} {
+    error " -E- some error(s) happened. Cannot continue"
+  }
+
+  set res [list]
+  set tbl {}
+  if {$print || ($returnformat == {table})} {
+    set tbl [::tb::prettyTable]
+    $tbl header [$self header]
+  }
+
+  set rowidx -1
+  set res [list]
+  set matchrows [list]
+  # Search for pattern for each row
+  foreach row $table {
+    incr rowidx
+    set match [lsearch {*}$all {*}$caseStyle {*}$matchStyle $row $str]
+    if {($match != {}) && ($match != {-1})} {
+      foreach colidx $match {
+        if {($columns != {}) && ([lsearch $columns $colidx] == -1)} {
+          # The column that has match is not in the list of columns specified by -columns
+          continue
+        }
+        lappend res [list $rowidx $colidx [lindex $row $colidx]]
+      }
+      lappend matchrows $row
+      if {$print} {
+        $tbl addrow $row
+      }
+    }
+  }
+
+  if {$print} {
+    puts [$tbl print]
+  }
+
+  set L [list]
+  switch $returnformat {
+    rowcolidx {
+      foreach el $res {
+        foreach {row col val} $el { break }
+        lappend L [list $row $col]
+      }
+    }
+    colidx {
+      foreach el $res {
+        foreach {row col val} $el { break }
+        lappend L $col
+      }
+      set L [lsort -unique $L]
+    }
+    rowidx {
+      foreach el $res {
+        foreach {row col val} $el { break }
+        lappend L $row
+      }
+      set L [lsort -unique $L]
+    }
+    matchingstring {
+      foreach el $res {
+        foreach {row col val} $el { break }
+        lappend L $val
+      }
+      set L [lsort -unique $L]
+    }
+    matchingrows {
+      set L $matchrows
+    }
+    table {
+      set L $tbl
+      # To prevent the table from being destroyed
+      set print 0
+    }
+  }
+
+  if {$print} {
+    catch {$tbl destroy}
+  }
+
+  return $L
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::method:filter
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> filter [<options>]
+#------------------------------------------------------------------------
+# Filter table content
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::method:filter {self args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Filter table (-help)
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::table table
+  upvar #0 ${self}::params params
+  upvar #0 ${self}::numRows numRows
+  set error 0
+  set help 0
+  set verbose 0
+  set procname {}
+  set procargs [list]
+  set print 0
+  if {[llength $args] == 0} { incr help }
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-co(m(m(a(nd?)?)?)?)?$} {
+        set procname [lshift args]
+      }
+      {^-ar(gs?)?$} {
+        set procargs [lshift args]
+      }
+      {^-pr(i(nt?)?)?$} {
+        set print 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set verbose 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set help 1
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          set procname $name
+#           puts " -E- option '$name' is not a valid option."
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$help} {
+    puts [format {
+  Usage: <prettyTableObject> filter
+              -command <proc>|<proc>
+              [-args <list_of_arguments>]
+              [-print]
+              [-verbose|-v]
+              [-help|-h]
+
+  Description: Filter table content
+
+    The filter proc should be defined as: proc <procname> {row args} { ... ; return $row }
+
+  Example:
+     <prettyTableObject> filter myprocname
+     <prettyTableObject> filter myprocname -args {-arg1 ... -argN}
+} ]
+    # HELP -->
+    return {}
+  }
+
+  if {$procname == {}} {
+    puts " -E- no proc name specified (-command)"
+    incr error
+  } elseif { [uplevel #0 [list info proc $procname]] == {} } {
+    puts " -E- proc '$procname' does not exists<[info proc $procname]>"
+    incr error
+  }
+
+  if {$error} {
+    error " -E- some error(s) happened. Cannot continue"
+  }
+
+  set res [list]
+  set tbl {}
+  if {$print} {
+    set tbl [::tb::prettyTable]
+    $tbl header [$self header]
+  }
+
+  set rowidx -1
+  set newtable [list]
+  # Search for pattern for each row
+  foreach row $table {
+    incr rowidx
+    if {[catch {set res [$procname $row {*}$procargs]} errorstring]} {
+      # Tcl Error => the row shold not be prserved
+    } else {
+      lappend newtable $res
+      if {$print} {
+        $tbl addrow $res
+      }
+    }
+  }
+
+  set table $newtable
+  set numRows [llength $table]
+
+  if {$print} {
+    puts [$tbl print]
+    catch {$tbl destroy}
+  }
+
+  return -code ok
+}
+
+###########################################################################
+##
+## Methods for template 'deviceview'
+##
+###########################################################################
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::deviceview:plotregions
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> plotregions [<list>]
+#------------------------------------------------------------------------
+# Plot a list of clock regions for template 'deviceview'
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::deviceview:plotregions {self L args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Plot a list of clock regions
+  array set defaults [list \
+      -clear 1 \
+    ]
+  array set options [array get defaults]
+  array set options $args
+  if {$options(-clear)} {
+    ::tb::prettyTable::method:cleartable $self
+  }
+  foreach el $L {
+    if {$el == {}} { continue }
+    if {[regexp {^X([0-9]+)Y([0-9]+)$} $el - X Y]} {
+#       $self incrcell $X $Y
+      ::tb::prettyTable::method:incrcell $self $X $Y
+    }
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::deviceview:plotcells
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> plotcells [<list>]
+#------------------------------------------------------------------------
+# Plot a list of cells for template 'deviceview'
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::deviceview:plotcells {self cells args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Plot a list of cells
+  array set defaults [list \
+      -clear 1 \
+    ]
+  array set options [array get defaults]
+  array set options $args
+  if {$options(-clear)} {
+    ::tb::prettyTable::method:cleartable $self
+  }
+  set L [list]
+  foreach cell [filter [get_cells -quiet $cells] {IS_PRIMITIVE}] {
+    lappend L [get_clock_regions -quiet -of $cell]
+  }
+  if {[llength $L]} {
+#     $self plotregions $L
+    ::tb::prettyTable::deviceview:plotregions $self $L -clear 0
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::prettyTable::deviceview:plotnets
+#------------------------------------------------------------------------
+# Usage: <prettyTableObject> plotnets [<list>]
+#------------------------------------------------------------------------
+# Plot a list of nets (loads + driver) for template 'deviceview'
+#------------------------------------------------------------------------
+proc ::tb::prettyTable::deviceview:plotnets {self nets args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+  # Categories: xilinxtclstore, designutils
+
+
+  # Plot a list of nets
+  array set defaults [list \
+      -clear 1 \
+    ]
+  array set options [array get defaults]
+  array set options $args
+  if {$options(-clear)} {
+    ::tb::prettyTable::method:cleartable $self
+  }
+  set nets [get_nets -quiet $nets -filter {TYPE != POWER && TYPE != GROUND}]
+  set drivers [list]
+  foreach net $nets {
+    set driver [get_cells -quiet -of [get_pins -quiet -of $net -leaf -filter {DIRECTION == OUT}]] ; llength $driver
+    lappend drivers $driver
+    set loads [get_cells -quiet -of [get_pins -quiet -of $net -leaf -filter {DIRECTION == IN}]] ; llength $loads
+    if {[llength $loads]} {
+#       $self plotcells $loads
+      ::tb::prettyTable::deviceview:plotcells $self $loads -clear 0
+    }
+  }
+  # Keep track of how many drivers in each clock region
+  set drvs [dict create]
+  foreach cell $drivers {
+    set region [get_clock_regions -quiet -of $cell]
+    dict incr drvs $region
+  }
+  foreach region [dict keys $drvs] {
+    set num [dict get $drvs $region]
+    if {[regexp {^X([0-9]+)Y([0-9]+)$} $region - X Y]} {
+#       $self appendcell $X $Y " (D)"
+      set val [::tb::prettyTable::method:getcell $self $X $Y]
+      if {$num >= 2} {
+#         set val [format {(%sxD) %s} $num $val]
+        set val [format {(%s D) %s} $num $val]
+#         ::tb::prettyTable::method:prependcell $self $X $Y " (${num} D)"
+#         ::tb::prettyTable::method:appendcell $self $X $Y " (${num} D)"
+      } else {
+        set val [format {(D) %s} $val]
+#         ::tb::prettyTable::method:prependcell $self $X $Y " (D)"
+#         ::tb::prettyTable::method:appendcell $self $X $Y " (D)"
+      }
+      ::tb::prettyTable::method:setcell $self $X $Y $val
+    }
+  }
+  return -code ok
+}
 
 ###########################################################################
 ##
