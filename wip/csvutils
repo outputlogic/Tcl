@@ -17,12 +17,13 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.03
+## Version:        2016.06.29
 ## Description:    Utility to manipulate CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.06.29 - Do not create new table when separator is detected (CSV reader)
 ## 2016.06.03 - Added proc csv2tbl
 ## 2016.04.19 - Minor code clean-up
 ## 2016.04.11 - Added support for -inline
@@ -67,7 +68,7 @@ namespace eval ::tb::utils::csvutils {
   namespace export csvutils
   namespace export csv2tbl
 
-  variable version {2016.06.03}
+  variable version {2016.06.29}
   variable channel {}
   variable callbackfile {}
   array set params [list indent 0 maxlines -1 verbose 0 debug 0 addcolumns {} ]
@@ -312,7 +313,15 @@ proc ::tb::utils::csvutils::read-csv {&tbl FHin FHout filename {merge 0} {inline
   while {![eof $FHin]} {
     gets $FHin line
     if {$foundtable} {
-      if {[regexp {^\s*#} $line]} {
+      if {[regexp {^\s*#\s*\"?\++\"?\s*$} $line]} {
+       # E.g:
+       #     # "++++++++++++++++++++++++++++++++++++++++++++++++++"
+       #     # ++++++++++++++++++++++++++++++++++++++++++++++++++
+       # Once a table has been found, a comment line means
+       # end of the current table unless it is a separator
+#         break
+        continue
+      } elseif {[regexp {^\s*#} $line]} {
        # Once a table has been found, a comment line means
        # end of the current table
         break
