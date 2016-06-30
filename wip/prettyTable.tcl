@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.24
+## Version:        2016.06.30
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,6 +265,7 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.06.30 - Fixed issue with 'delcolumns', 'delrows' methods
 ## 2016.06.24 - Added 'search', 'filter', 'prependcell' methods
 ##            - Fixed issue with 'set_param' method
 ##            - Added support for private methods for templates
@@ -350,7 +351,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} origin {topleft} offsetx 0 offsety 0 template {} methods {method}]
-  variable version {2016.06.24}
+  variable version {2016.06.30}
 } ]
 
 #------------------------------------------------------------------------
@@ -1397,7 +1398,7 @@ proc ::tb::prettyTable::method:delcolumns {self columns} {
   if {$columns == {}} {
     return {}
   }
-  foreach col [lsort -decreasing $columns] {
+  foreach col [lsort -integer -decreasing $columns] {
     if {[catch {
       # Remove column from header
       set header [lreplace $header $col $col]
@@ -1437,7 +1438,7 @@ proc ::tb::prettyTable::method:delrows {self rows} {
   if {$rows == {}} {
     return {}
   }
-  foreach pos [lsort -decreasing $rows] {
+  foreach pos [lsort -integer -decreasing $rows] {
     if {[catch {
       set table [lreplace $table $pos $pos]
     } errorstring]} {
@@ -3163,6 +3164,8 @@ proc ::tb::prettyTable::method:search {self args} {
 
   Description: Search for values inside the table
 
+    Returns by default the row index(es) (-return_row_indexes)
+
   Example:
      <prettyTableObject> search -pattern {foo*} -nocase -glob
      <prettyTableObject> search {foo.+} -regexp -return_matching_rows -columns {0 2 3 4}
@@ -3498,11 +3501,11 @@ proc ::tb::prettyTable::deviceview:plotnets {self nets args} {
       if {$num >= 2} {
 #         set val [format {(%sxD) %s} $num $val]
         set val [format {(%s D) %s} $num $val]
-#         ::tb::prettyTable::method:prependcell $self $X $Y " (${num} D)"
+#         ::tb::prettyTable::method:prependcell $self $X $Y "(${num} D) "
 #         ::tb::prettyTable::method:appendcell $self $X $Y " (${num} D)"
       } else {
         set val [format {(D) %s} $val]
-#         ::tb::prettyTable::method:prependcell $self $X $Y " (D)"
+#         ::tb::prettyTable::method:prependcell $self $X $Y "(D) "
 #         ::tb::prettyTable::method:appendcell $self $X $Y " (D)"
       }
       ::tb::prettyTable::method:setcell $self $X $Y $val
