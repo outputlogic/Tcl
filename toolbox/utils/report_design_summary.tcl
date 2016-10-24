@@ -14,12 +14,29 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.13
+## Version:        2016.10.08
 ## Description:    Generate a design summary report
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.10.08 - Fixed command line options collisions
+##            - Added new design/utilization metrics
+## 2016.07.27 - Added support for -prefix (config_flow_automation)
+##            - Added support for -vivadolog (config_flow_automation)
+## 2016.07.25 - Added support for -methodology. Forced split between DRC & Methodology
+##              checks. Added methodology.* metrics
+##            - Internal data structures can now be forced to be reset in debug mode
+## 2016.07.18 - Added support for -vivadolog
+##            - Added congestion.estimated.global, congestion.estimated.long,
+##              congestion.estimated.short metrics
+##            - Added design.cells.ratiofdlut, vivado.os.description metrics
+##            - Updated ordered metrics for congestion.estimated.* metrics
+## 2016.07.12 - Added support for -save_reports
+##            - Added design.slls metric
+##            - Added support for automation of design summaries throughout
+##              the implementation flow (config_flow_automation)
+## 2016.06.30 - Added support for gzip-ed input files
 ## 2016.06.13 - Added tag.date, tag.time metrics
 ## 2016.03.14 - Minor changes to prevent failure when not running inside vivado
 ## 2016.03.04 - Added new DRC metrics from report_methodology
@@ -41,7 +58,7 @@
 ##            - Added support for -cdc/-rcdc
 ##            - Added support for incremental mode (-incremental)
 ##            - Added support for -script
-##            - Fixed missing seperator in CSV
+##            - Fixed missing separator in CSV
 ##            - Script is more silent
 ## 2016.01.28 - Fixed metric pattern (check_timing)
 ##            - Code re-organization
@@ -210,24 +227,41 @@
 #       | constraints.set_system_jitter                | set_system_jitter                                                         | 0                        |
 #       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
 
+# Example of code for .Xilinx/Vivado/init.tcl
+#   # Design summary (support for project mode)
+#   switch -glob -- [uplevel #0 pwd] {
+#     /home/dpefour/myproject/* {
+#       package require toolbox
+#       source /home/dpefour/git/scripts/wip/report_design_summary.tcl
+#       tb::utils::report_design_summary::config_flow_automation -enable -project myproject -experiment myexperiment -version [lindex [file split [uplevel #0 pwd]] end]
+#     }
+#   }
+
 namespace eval ::tb {
 #   namespace export -force report_design_summary
+#   namespace export -force config_flow_automation
 }
 
 namespace eval ::tb::utils {
   namespace export -force report_design_summary
+  namespace export -force config_flow_automation
 }
 
 namespace eval ::tb::utils::report_design_summary {
   namespace export -force report_design_summary
-  variable version {2016.06.13}
+  namespace export -force config_flow_automation
+  variable version {2016.10.08}
   variable params
   variable output {}
   variable reports
   variable metrics
-  array set params [list vivado 1 format {table} incremental 0 verbose 0 debug 0]
+  variable tracedb
+  array set params [list project {} version {} release {} experiment {} step {} directive {} runtime 0 vivado 1 format {table} incremental 0 verbose 0 debug 0]
   array set reports [list]
   array set metrics [list]
+#   array set tracedb [list prefix {} vivadolog {} count 0 dir [uplevel #0 pwd] enter {} leave {} history {} cmdlist {opt_design place_design phys_opt_design route_design} cmdline {-verbose -details -all -exclude {cdc drc methodology} -csv} callback {::tb::utils::report_design_summary::callbackAutomation} ]
+  array set tracedb [list prefix {} vivadolog {} count 0 dir [uplevel #0 pwd] enter {} leave {} history {} cmdlist {opt_design place_design phys_opt_design route_design} cmdline {-verbose -details -timing -utilization -route -csv} callback {::tb::utils::report_design_summary::callbackAutomation} ]
+#   array set tracedb [list prefix {} vivadolog {} count 0 dir [uplevel #0 pwd] enter {} leave {} history {} cmdlist {opt_design place_design phys_opt_design route_design} cmdline {-verbose -details -all -exclude {cdc drc methodology check_timing constraints clock_interaction congestion} -csv} callback {::tb::utils::report_design_summary::callbackAutomation} ]
 }
 
 proc ::tb::utils::report_design_summary::lshift {inputlist} {
@@ -257,11 +291,16 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set returnstring 0
   set returnmetrics 0
   set usermetrics [list]
-  set project {}
-  set version {}
-  set experiment {}
-  set step {}
-  set directive {}
+#   set project {}
+#   set version {}
+#   set experiment {}
+#   set step {}
+#   set directive {}
+  set project $params(project)
+  set version $params(version)
+  set experiment $params(experiment)
+  set step $params(step)
+  set directive $params(directive)
   set runtime {}
   set time [clock seconds]
   set date [clock format $time]
@@ -279,6 +318,10 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set reportRouteStatus {}
   set reportCDC {}
   set reportMethodology {}
+  set reportDRC {}
+  set vivadoLog {}
+  set saveReports 0
+  set saveReportsPrefix {}
   set error 0
   set help 0
 #   if {[llength $args] == 0} {
@@ -309,6 +352,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
                                              check_timing \
                                              cdc \
                                              drc \
+                                             methodology \
                                              route_status] ]
       }
       {^-ex(c(l(u(de?)?)?)?)?$} {
@@ -327,6 +371,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       }
       {^-drc?$} {
         lappend sections {drc}
+      }
+      {^-me(t(h(o(d(o(l(o(gy?)?)?)?)?)?)?)?)?$} {
+        lappend sections {methodology}
       }
       {^-cl(o(c(k(_(i(n(t(e(r(a(c(t(i(on?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
         lappend sections {clock_interaction}
@@ -358,7 +405,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       {^-di(r(e(c(t(i(ve?)?)?)?)?)?)?$} {
         set directive [lshift args]
       }
-      {^-ru(n(t(i(me?)?)?)?)?$} {
+      {^-run(t(i(me?)?)?)?$} {
         set runtime [lshift args]
       }
       {^-ti(me?)?$} {
@@ -455,6 +502,18 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
           incr error
         }
       }
+      -rdrc -
+      -report_drc {
+        set reportDRC [lshift args]
+        if {![file exists $reportDRC]} {
+          puts " -E- file '$reportDRC' does not exist"
+          incr error
+        }
+      }
+      {^-sa(v(e(_(r(e(p(o(r(ts?)?)?)?)?)?)?)?)?)?$} {
+        set saveReports 1
+        set saveReportsPrefix [lshift args]
+      }
       {^-tclpre$} {
         set prescript [lshift args]
       }
@@ -466,6 +525,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       }
       {^-tclpostcmd$} {
         set postcommand [lshift args]
+      }
+      {^-vi(v(a(d(o(l(og?)?)?)?)?)?)?$} {
+        set vivadoLog [lshift args]
       }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
@@ -500,9 +562,11 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-check_timing]
               [-cdc]
               [-drc]
+              [-methodology]
               [-clock_interaction]
               [-route]
               [-exclude <list_sections>]
+              [-vivadolog <filename>]
             +--------------------+
               [-project <string>]
               [-version <string>]
@@ -521,6 +585,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-rru <filename>|-report_ram_utilization <filename>]
               [-rrs <filename>|-report_route_status <filename>]
               [-rcdc <filename>|-report_cdc <filename>]
+              [-rdrc <filename>|-report_drc <filename>]
               [-rm <filename>|-report_methodology <filename>]
             +--------------------+
               [-details]
@@ -531,6 +596,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
               [-hide_missing]
               [-return_string]
               [-return_metrics]
+              [-save_reports <prefix>]
               [-add_metrics <list_user_metrics>]
               [-tclpre <filename>]
               [-tclpost <filename>]
@@ -541,6 +607,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
   Description: Generate a design summary report
 
+    Use -vivadolog to point to Vivado log file to extract additional metrics
     Use -details with -file to append full reports
     Use -project/-version/-experiment/-step/-directive/-runtime to save informative tags
     Use -hide_missing to suppress metrics that have not been found
@@ -551,11 +618,16 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     Use -tclprecmd/-tclpostcmd to provide a command to be executed
       at the beginning and at the end
     Use -return_metrics to return a Tcl list of metrics
+    Use -save_reports to save all reports on disk
     Use -add_metrics to add custom metrics
+    Use -exclude to exclude sections. Valid sections:
+      utilization|constraints|timing|clock_interaction|congestion
+      check_timing|cdc|methodology|drc|route_status
 
   Example:
      tb::report_design_summary -file myreport.rpt -details -all
      tb::report_design_summary -timing -csv -return_string -hide_missing
+     tb::report_design_summary -vivadolog ./vivado.log -all -csv -file summary.csv
 } ]
     # HELP -->
     return -code ok
@@ -609,17 +681,32 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
     incr error
   }
 
-  if {[lsearch $sections {drc}] != -1} {
-    # If -drc has been selected, make sure Vivado version is above 2016.1
+  if {[lsearch $sections {methodology}] != -1} {
+    # If -methodology has been selected, make sure Vivado version is above 2016.1
     # (report_methodology from 2016.1 and above)
     # package vcompare [package present Vivado] {1.2016.1}
     if {$params(vivado)} {
       set ver [regsub {\..+$} [version -short] {}]
       if { [regexp {^[0-9]+$} $ver] && ($ver < 2016) && ($reportMethodology == {})} {
-        puts " -E- -drc without -report_methodology can only be used with Vivado 2016.1 and above"
+        puts " -E- -methodology without -report_methodology can only be used with Vivado 2016.1 and above"
         incr error
       }
     }
+  }
+
+  if {$saveReports && ($saveReportsPrefix == {})} {
+    puts " -E- invalid empty prefix with -save_reports"
+    incr error
+  }
+
+  if {$saveReports && [regexp {^\-} $saveReportsPrefix]} {
+    puts " -E- invalid prefix '$saveReportsPrefix' with -save_reports"
+    incr error
+  }
+
+  if {($vivadoLog != {}) && ![file exists $vivadoLog]} {
+    puts " -E- Vivado log file '$vivadoLog' does not exist"
+    incr error
   }
 
   if {$error} {
@@ -639,6 +726,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   if {[file exists $reportRouteStatus]}      { importReport {report_route_status}      $reportRouteStatus }
   if {[file exists $reportCDC]}              { importReport {report_cdc}               $reportCDC }
   if {[file exists $reportMethodology]}      { importReport {report_methodology}       $reportMethodology }
+  if {[file exists $reportDRC]}              { importReport {report_drc}               $reportDRC }
 
   set startTime [clock seconds]
   set output [list]
@@ -706,7 +794,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {vivado.build}     {Vivado Build}
       addMetric {vivado.plateform} {Plateform}
       addMetric {vivado.os}        {OS}
-      addMetric {vivado.osVersion} {OS Version}
+      addMetric {vivado.os.version} {OS Version}
       addMetric {vivado.top}       {Top Module Name}
       addMetric {vivado.dir}       {Project Directory}
 
@@ -716,10 +804,24 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       }
       setMetric {vivado.plateform} $::tcl_platform(platform)
       setMetric {vivado.os}        $::tcl_platform(os)
-      setMetric {vivado.osVersion} $::tcl_platform(osVersion)
+      setMetric {vivado.os.version} $::tcl_platform(osVersion)
       if {$params(vivado)} {
         setMetric {vivado.top}       [get_property -quiet TOP [current_design -quiet]]
-        setMetric {vivado.dir}       [get_property -quiet XLNX_PROJ_DIR [current_design -quiet]]
+        set dir [get_property -quiet XLNX_PROJ_DIR [current_design -quiet]]
+        if {$dir == {}} { set dir [uplevel #0 pwd] }
+        setMetric {vivado.dir}       $dir
+      }
+      catch {
+        # For Linux, try to get an OS description such as:
+        #   Red Hat Enterprise Linux Workstation release 6.6 (Santiago)
+        set res [uplevel #0 [list exec lsb_release -a]]
+        foreach line [split $res \n] {
+          regexp -nocase {^Description\s*:\s*(.+)\s*$} $line - description
+        }
+        if {$description != {}} {
+          addMetric {vivado.os.description}  {OS Description}
+          setMetric {vivado.os.description}  $description
+        }
       }
     }
 
@@ -768,6 +870,9 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {design.cells.primitive}        {Number of primitive cells}
       addMetric {design.cells.hier}             {Number of hierarchical cells}
       addMetric {design.cells.blackbox}         {Number of blackbox cells}
+      addMetric {design.cells.ratiofdlut}       {Ratio of registers over LUTs}
+      addMetric {design.cells.hlutnm}           {Number of HLUTNM cells}
+      addMetric {design.cells.hlutnm.pct}       {Number of HLUTNM cells (%)}
       addMetric {design.ports}                  {Number of ports}
       addMetric {design.clocks}                 {Number of clocks (all inclusive)}
       addMetric {design.clocks.primary}         {Number of primary clocks}
@@ -778,6 +883,12 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {design.ips}                    {Number of IPs}
       addMetric {design.ips.list}               {List of IPs}
       addMetric {design.slrs}                   {Number of SLRs}
+      if {[llength [get_slrs -quiet]] > 1} {
+        if {[regexp {route} $step]} {
+          # Only extract this metric in flow step *route*
+          addMetric {design.slls}                   {SLLs Connections}
+        }
+      }
 
       set part [get_property -quiet PART [current_design]]
       setMetric {design.part}                   $part
@@ -804,6 +915,17 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       setMetric {design.cells.primitive}  [llength [filter -quiet $cells {IS_PRIMITIVE}]]
       setMetric {design.cells.hier}       [llength [filter -quiet $cells {!IS_PRIMITIVE}]]
       setMetric {design.cells.blackbox}   [llength [filter -quiet $cells {IS_BLACKBOX}]]
+      set fds [filter -quiet $cells {IS_PRIMITIVE && REF_NAME =~ FD*}]
+      set luts [filter -quiet $cells {IS_PRIMITIVE && REF_NAME =~ LUT*}]
+      if {[llength $luts]} {
+        setMetric {design.cells.ratiofdlut} [format {%.2f} [expr double([llength $fds]) / double([llength $luts])]]
+      } else {
+        setMetric {design.cells.ratiofdlut} {n/a}
+      }
+      set hlutnm [filter -quiet $luts {SOFT_HLUTNM != "" || HLUTNM != ""}]
+      setMetric {design.cells.hlutnm} [llength $hlutnm]
+      # Calculate the percent of HLUTNM over the total number of LUT
+      setMetric {design.cells.hlutnm.pct} [format {%.2f} [expr {100.0 * double([llength $hlutnm]) / double([llength $luts])}] ]
 
       set clocks [get_clocks -quiet]
       setMetric {design.clocks}               [llength $clocks]
@@ -811,6 +933,16 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       setMetric {design.clocks.usergenerated} [llength [filter -quiet $clocks {!IS_VIRTUAL && IS_GENERATED && IS_USER_GENERATED}] ]
       setMetric {design.clocks.autoderived}   [llength [filter -quiet $clocks {!IS_VIRTUAL && IS_GENERATED && !IS_USER_GENERATED}] ]
       setMetric {design.clocks.virtual}       [llength [filter -quiet $clocks {IS_VIRTUAL}] ]
+
+      if {[llength [get_slrs -quiet]] > 1} {
+        if {[regexp {route} $step]} {
+          # Only extract the SSLs metric in flow step *route*
+          # SLLs connections using tb::report_slls (7-serie not supported)
+          set SLLs {n/a}
+          catch { set SLLs [tb::report_slls -return_summary] }
+          setMetric {design.slls}     $SLLs
+        }
+      }
     }
 
     ########################################################################################
@@ -821,7 +953,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     if {[lsearch $sections {timing}] != -1} {
       # Get report
-      set report [split [getReport {report_timing_summary} {-quiet -no_detailed_paths -no_check_timing -no_header}] \n]
+#       set report [split [getReport {report_timing_summary} {-quiet -no_detailed_paths -no_check_timing -no_header}] \n]
+      set report [split [getReport {report_timing_summary} {-quiet -no_detailed_paths -no_check_timing}] \n]
 
       addMetric {timing.wns}           {WNS}
       addMetric {timing.tns}           {TNS}
@@ -966,7 +1099,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     if {[lsearch $sections {clock_interaction}] != -1} {
       # Get report
-      set report [getReport {report_clock_interaction} {-quiet -no_header}]
+#       set report [getReport {report_clock_interaction} {-quiet -no_header}]
+      set report [getReport {report_clock_interaction} {-quiet}]
 
       # Extract metrics
       set clock_interaction_table [::tb::utils::report_design_summary::parseClockInteractionReport $report]
@@ -1088,7 +1222,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     if {[lsearch $sections {congestion}] != -1} {
       # Get report
-      set report [getReport {report_design_analysis} {-quiet -congestion -no_header}]
+#       set report [getReport {report_design_analysis} {-quiet -congestion -no_header}]
+      set report [getReport {report_design_analysis} {-quiet -congestion}]
 
       addMetric {congestion.placer}    {Placer Congestion (N-S-E-W)}
       addMetric {congestion.router}    {Router Congestion (N-S-E-W)}
@@ -1176,6 +1311,23 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       # Get report
       set report [getReport {report_utilization} {-quiet}]
 
+      # +----------------------------+------+-------+-----------+-------+
+      # |          Site Type         | Used | Fixed | Available | Util% |
+      # +----------------------------+------+-------+-----------+-------+
+      # | CLB LUTs                   | 2088 |     0 |    230400 |  0.91 |
+      # |   LUT as Logic             | 1916 |     0 |    230400 |  0.83 |
+      # |   LUT as Memory            |  172 |     0 |    101760 |  0.17 |
+      # |     LUT as Distributed RAM |   56 |     0 |           |       |
+      # |     LUT as Shift Register  |  116 |     0 |           |       |
+      # | CLB Registers              | 2612 |     0 |    460800 |  0.57 |
+      # |   Register as Flip Flop    | 2612 |     0 |    460800 |  0.57 |
+      # |   Register as Latch        |    0 |     0 |    460800 |  0.00 |
+      # | CARRY8                     |    8 |     0 |     28800 |  0.03 |
+      # | F7 Muxes                   |    7 |     0 |    115200 | <0.01 |
+      # | F8 Muxes                   |    0 |     0 |     57600 |  0.00 |
+      # | F9 Muxes                   |    0 |     0 |     28800 |  0.00 |
+      # +----------------------------+------+-------+-----------+-------+
+
       # +-------------------------------------------------------------+----------+-------+-----------+-------+
       # |                          Site Type                          |   Used   | Fixed | Available | Util% |
       # +-------------------------------------------------------------+----------+-------+-----------+-------+
@@ -1201,15 +1353,31 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {utilization.clb.lut.pct}    {CLB LUTs (%)}
       addMetric {utilization.clb.ff}         {CLB Registers}
       addMetric {utilization.clb.ff.pct}     {CLB Registers (%)}
+      addMetric {utilization.clb.carry8}     {CARRY8}
+      addMetric {utilization.clb.carry8.pct} {CARRY8 (%)}
+      addMetric {utilization.clb.f7mux}      {F7 Muxes}
+      addMetric {utilization.clb.f7mux.pct}  {F7 Muxes (%)}
+      addMetric {utilization.clb.f8mux}      {F8 Muxes}
+      addMetric {utilization.clb.f8mux.pct}  {F8 Muxes (%)}
+      addMetric {utilization.clb.f9mux}      {F9 Muxes}
+      addMetric {utilization.clb.f9mux.pct}  {F9 Muxes (%)}
       addMetric {utilization.ctrlsets.uniq}  {Unique Control Sets}
       addMetric {utilization.ctrlsets.lost}  {Registers Lost due to Control Sets}
 
-      extractMetric {report_utilization} {utilization.clb.lut}       {\|\s+CLB LUTs[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                      {n/a}
-      extractMetric {report_utilization} {utilization.clb.lut.pct}   {\|\s+CLB LUTs[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
-      extractMetric {report_utilization} {utilization.clb.ff}        {\|\s+CLB Registers[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                 {n/a}
-      extractMetric {report_utilization} {utilization.clb.ff.pct}    {\|\s+CLB Registers[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
-      extractMetric {report_utilization} {utilization.ctrlsets.uniq} {\|\s+Unique Control Sets[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                           {n/a}
-      extractMetric {report_utilization} {utilization.ctrlsets.lost} {\|\s+.+registers lost to control set restriction[^\|]*\s*\|\s+([0-9\.]+).+\s+\|}                 {n/a}
+      extractMetric {report_utilization} {utilization.clb.lut}         {\|\s+CLB LUTs[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                      {n/a}
+      extractMetric {report_utilization} {utilization.clb.lut.pct}     {\|\s+CLB LUTs[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
+      extractMetric {report_utilization} {utilization.clb.ff}          {\|\s+CLB Registers[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                 {n/a}
+      extractMetric {report_utilization} {utilization.clb.ff.pct}      {\|\s+CLB Registers[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
+      extractMetric {report_utilization} {utilization.clb.carry8}      {\|\s+CARRY8[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                        {n/a}
+      extractMetric {report_utilization} {utilization.clb.carry8.pct}  {\|\s+CARRY8[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}        {n/a}
+      extractMetric {report_utilization} {utilization.clb.f7mux}       {\|\s+F7 Muxes[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                      {n/a}
+      extractMetric {report_utilization} {utilization.clb.f7mux.pct}   {\|\s+F7 Muxes[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
+      extractMetric {report_utilization} {utilization.clb.f8mux}       {\|\s+F8 Muxes[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                      {n/a}
+      extractMetric {report_utilization} {utilization.clb.f8mux.pct}   {\|\s+F8 Muxes[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
+      extractMetric {report_utilization} {utilization.clb.f9mux}       {\|\s+F9 Muxes[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                      {n/a}
+      extractMetric {report_utilization} {utilization.clb.f9mux.pct}   {\|\s+F9 Muxes[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
+      extractMetric {report_utilization} {utilization.ctrlsets.uniq}   {\|\s+Unique Control Sets[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                           {n/a}
+      extractMetric {report_utilization} {utilization.ctrlsets.lost}   {\|\s+.+registers lost to control set restriction[^\|]*\s*\|\s+([0-9\.]+).+\s+\|}                 {n/a}
 
       # +-------------------+------+-------+-----------+-------+
       # |     Site Type     | Used | Fixed | Available | Util% |
@@ -1237,6 +1405,44 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
       extractMetric {report_utilization} {utilization.dsp}     {\|\s+DSPs[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                 {n/a}
       extractMetric {report_utilization} {utilization.dsp.pct} {\|\s+DSPs[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
+
+      # +----------------------+------+-------+-----------+-------+
+      # |       Site Type      | Used | Fixed | Available | Util% |
+      # +----------------------+------+-------+-----------+-------+
+      # | GLOBAL CLOCK BUFFERs |    5 |     0 |       544 |  0.92 |
+      # |   BUFGCE             |    5 |     0 |       208 |  2.40 |
+      # |   BUFGCE_DIV         |    0 |     0 |        32 |  0.00 |
+      # |   BUFG_GT            |    0 |     0 |       144 |  0.00 |
+      # |   BUFG_PS            |    0 |     0 |        96 |  0.00 |
+      # |   BUFGCTRL*          |    0 |     0 |        64 |  0.00 |
+      # +----------------------+------+-------+-----------+-------+
+
+      addMetric {utilization.clk.bufgce}           {BUFGCE Buffers}
+      addMetric {utilization.clk.bufgce.pct}       {BUFGCE Buffers (%)}
+      addMetric {utilization.clk.bufgcediv}        {BUFGCE_DIV Buffers}
+      addMetric {utilization.clk.bufgcediv.pct}    {BUFGCE_DIV Buffers (%)}
+      addMetric {utilization.clk.bufggt}           {BUFG_GT Buffers}
+      addMetric {utilization.clk.bufggt.pct}       {BUFG_GT Buffers (%)}
+      addMetric {utilization.clk.bufgps}           {BUFG_PS Buffers}
+      addMetric {utilization.clk.bufgps.pct}       {BUFG_PS Buffers (%)}
+      addMetric {utilization.clk.bufgctrl}         {BUFGCTRL Buffers}
+      addMetric {utilization.clk.bufgctrl.pct}     {BUFGCTRL Buffers (%)}
+
+      extractMetric {report_utilization} {utilization.clk.bufgce}        {\|\s+BUFGCE[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                {n/a}
+#       extractMetric {report_utilization} {utilization.clk.bufgce.pct}    {\|\s+BUFGCE[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgce.pct}    {\|\s+BUFGCE[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgcediv}     {\|\s+BUFGCE_DIV[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                            {n/a}
+#       extractMetric {report_utilization} {utilization.clk.bufgcediv.pct} {\|\s+BUFGCE_DIV[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}  {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgcediv.pct} {\|\s+BUFGCE_DIV[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+([0-9\.]+)\s+\|}  {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufggt}        {\|\s+BUFG_GT[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                               {n/a}
+#       extractMetric {report_utilization} {utilization.clk.bufggt.pct}    {\|\s+BUFG_GT[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}     {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufggt.pct}    {\|\s+BUFG_GT[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+([0-9\.]+)\s+\|}     {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgps}        {\|\s+BUFG_PS[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                               {n/a}
+#       extractMetric {report_utilization} {utilization.clk.bufgps.pct}    {\|\s+BUFG_PS[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}     {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgps.pct}    {\|\s+BUFG_PS[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+([0-9\.]+)\s+\|}     {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgctrl}      {\|\s+BUFGCTRL\*?[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                           {n/a}
+#       extractMetric {report_utilization} {utilization.clk.bufgctrl.pct}  {\|\s+BUFGCTRL\*?[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgctrl.pct}  {\|\s+BUFGCTRL\*?[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
 
       # +------------------+------+-------+-----------+-------+
       # |     Site Type    | Used | Fixed | Available | Util% |
@@ -1357,13 +1563,40 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 
     ########################################################################################
     ##
-    ## Report methodology DRCs metrics
+    ## Report methodology checks metrics
+    ##
+    ########################################################################################
+
+    if {[lsearch $sections {methodology}] != -1} {
+      # Get report
+      set report [getReport {report_methodology}]
+
+      # 1 CKLD-2 [Warning] [Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads]
+      # 1 PDRC-190 [Warning] [Suboptimally placed synchronized register chain]
+      # 127 SYNTH-4 [Warning] [Shallow depth for a dedicated block RAM]
+      # 1000 TIMING-10 [Warning] [Missing property on synchronizer]
+      # 12 XDCB-1 [Warning] [Runtime intensive exceptions]
+      foreach line [split $report \n] {
+        set num {} ; set drc {} ; set severity {} ; set msg {}
+        if {[regexp {^\s*([0-9]+)\s+([^s]+)\s+\[(.+)\]\s+\[(.+)\]\s*$} $line - num drc severity msg]} {
+          addMetric [format {methodology.%s} [string tolower $drc]] [format {%s (%s)} $msg $severity]
+          setMetric [format {methodology.%s} [string tolower $drc]] $num
+        } else {
+          puts " -W- invalid methodology check format for '[string trim $line]'"
+        }
+      }
+
+    }
+
+    ########################################################################################
+    ##
+    ## Report DRC checks metrics
     ##
     ########################################################################################
 
     if {[lsearch $sections {drc}] != -1} {
       # Get report
-      set report [getReport {report_methodology}]
+      set report [getReport {report_drc}]
 
       # 1 CKLD-2 [Warning] [Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads]
       # 1 PDRC-190 [Warning] [Suboptimally placed synchronized register chain]
@@ -1376,10 +1609,37 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
           addMetric [format {drc.%s} [string tolower $drc]] [format {%s (%s)} $msg $severity]
           setMetric [format {drc.%s} [string tolower $drc]] $num
         } else {
-          puts " -W- invalid DRC format for '[string trim $line]'"
+          puts " -W- invalid DRC check format for '[string trim $line]'"
         }
       }
 
+    }
+
+    ########################################################################################
+    ##
+    ## Metrics from Vivado log file
+    ##
+    ########################################################################################
+
+#     if {($vivadoLog != {}) && ([lsearch $sections {congestion}] != -1)} {}
+    if {($vivadoLog != {})} {
+      if {[regexp {route} $step]} {
+        # Only extract those congestion metrics in flow step *route*
+        addMetric {congestion.estimated.global}    {Estimated Global Congestion (N-S-E-W)}
+        addMetric {congestion.estimated.long}      {Estimated Long Congestion (N-S-E-W)}
+        addMetric {congestion.estimated.short}     {Estimated Short Congestion (N-S-E-W)}
+
+        # Extract metrics
+        set congestion [::tb::utils::report_design_summary::parseLOGCongestion $vivadoLog {last}]
+        setMetric {congestion.estimated.global}  [lindex $congestion 0]
+        setMetric {congestion.estimated.long}  [lindex $congestion 1]
+        setMetric {congestion.estimated.short}  [lindex $congestion 2]
+
+        if {$hidemissing} {
+          # Cleaning: remove metrics that have values of u-u-u-u
+          delMetrics congestion.estimated.* [list {u-u-u-u}]
+        }
+      }
     }
 
     ########################################################################################
@@ -1488,6 +1748,42 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
   set stopTime [clock seconds]
   puts " -I- report_design_summary completed in [expr $stopTime - $startTime] seconds"
 
+  # Export reports
+  if {$saveReports} {
+    if {$filename != {}} {
+      # If an output filename was provided, then save reports into same directory
+      set dir [file dirname $filename]
+    } else {
+      # Otherwise save reports inside current working directory
+      set dir [uplevel #0 pwd]
+    }
+    # Dump full reports on disk
+    foreach el [list {report_utilization ru} \
+                     {report_ram_utilization rru} \
+                     {report_timing_summary rts} \
+                     {WNS wns} \
+                     {WHS whs} \
+                     {report_clock_interaction rci} \
+                     {check_timing ct} \
+                     {report_design_analysis rda} \
+                     {report_cdc cdc} \
+                     {report_drc drc} \
+                     {report_methodology rm} \
+                     {report_route_status rrs} \
+                 ] {
+      foreach {name suffix} $el { break }
+      if {[info exists reports($name)]} {
+        set report $reports($name)
+#         set rptfile [format {%s/%s.%s.rpt} $dir $saveReportsPrefix $suffix]
+        set rptfile [file join $dir [format {%s.%s.rpt} $saveReportsPrefix $suffix]]
+        set FH [open $rptfile {w}]
+        puts $FH $report
+        close $FH
+        puts " -I- Saved $name report: [file normalize $rptfile]"
+      }
+    }
+  }
+
   # Get all metrics as pair-value
   set allMetrics [serializeMetrics]
 
@@ -1509,6 +1805,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
                          report_design_analysis \
                          report_cdc \
                          report_methodology \
+                         report_drc \
                          report_route_status \
                    ] {
         if {[info exists reports($name)]} {
@@ -1560,11 +1857,11 @@ proc ::tb::utils::report_design_summary::serializeMetrics {} {
   return $L
 }
 
-proc ::tb::utils::report_design_summary::reset {} {
+proc ::tb::utils::report_design_summary::reset { {force 0} } {
   variable reports
   variable metrics
   variable params
-  if {$params(debug)} {
+  if {$params(debug) && !$force} {
     # Do not remove arrays in debug mode
     return -code ok
   }
@@ -1592,13 +1889,24 @@ proc ::tb::utils::report_design_summary::importReport {name filename} {
     if {$params(verbose)} { puts " -I- Found report '$name'. Overridding existing report with new one" }
   }
   switch $name {
+    report_drc {
+      # The report_drc report can be fairly large
+      # so create a summary table out of it
+      set report [createSummaryDRCReport $filename]
+    }
     report_methodology {
       # The report_methodology report can be fairly large
       # so create a summary table out of it
       set report [createSummaryDRCReport $filename]
     }
     default {
-      set FH [open $filename {r}]
+      if {[regexp {.gz$} $filename]} {
+        # gzip-ed file
+        set FH [open "| zcat $filename" {r}]
+      } else {
+        set FH [open $filename {r}]
+      }
+#       set FH [open $filename {r}]
       set report [read $FH]
       close $FH
     }
@@ -1631,6 +1939,10 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
     if {$params(verbose)} { puts " -I- Found report '$name'" }
     return $reports($name)
   }
+  if {!$params(vivado)} {
+    # If not running inside Vivado, then there is command that can be run
+    return {}
+  }
   set res {}
   set startTime [clock seconds]
   switch $name {
@@ -1649,6 +1961,21 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
         }
       }
     }
+    report_drc {
+      catch {
+        set file [format {report_drc.%s} [clock seconds]]
+        report_drc -quiet -file $file
+        # The report_drc report can be fairly large
+        # so create a summary table out of it
+        set res [createSummaryDRCReport $file]
+        if {!$params(debug)} {
+          # Keep the file in debug mode
+          file delete $file
+        } else {
+          dputs " -D- writing report_drc file '$file'"
+        }
+      }
+    }
     report_cdc {
       # Only get the first table of the detailed report:
       #  ID      Severity  Count  Description
@@ -1661,7 +1988,13 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
       catch {
         set file [format {report_cdc.%s} [clock seconds]]
         report_cdc -quiet -details -file $file
-        set FH [open $file {r}]
+        if {[regexp {.gz$} $file]} {
+          # gzip-ed file
+          set FH [open "| zcat $file" {r}]
+        } else {
+          set FH [open $file {r}]
+        }
+#         set FH [open $file {r}]
         set content [list]
         set loop 1
         while {$loop && ![eof $FH]} {
@@ -1688,7 +2021,13 @@ proc ::tb::utils::report_design_summary::getReport {name {options {}}} {
       catch {
         set file [format {check_timing.%s} [clock seconds]]
         check_timing -quiet -file $file
-        set FH [open $file {r}]
+        if {[regexp {.gz$} $file]} {
+          # gzip-ed file
+          set FH [open "| zcat $file" {r}]
+        } else {
+          set FH [open $file {r}]
+        }
+#         set FH [open $file {r}]
         set res [read $FH]
         close $FH
         if {!$params(debug)} {
@@ -1813,6 +2152,50 @@ proc ::tb::utils::report_design_summary::presort_list {l1 l2} {
   return $l
 }
 
+##-----------------------------------------------------------------------
+## duration
+##-----------------------------------------------------------------------
+## Convert a number of seconds in a human readable string.
+## Example:
+##      set startTime [clock seconds]
+##      ...
+##      set endTime [clock seconds]
+##      puts "The runtime is: [duration [expr $endTime - startTime]]"
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::duration { int_time } {
+   set timeList [list]
+   if {$int_time == 0} { return "0 sec" }
+   foreach div {86400 3600 60 1} mod {0 24 60 60} name {day hr min sec} {
+     set n [expr {$int_time / $div}]
+     if {$mod > 0} {set n [expr {$n % $mod}]}
+     if {$n > 1} {
+       lappend timeList "$n ${name}s"
+     } elseif {$n == 1} {
+       lappend timeList "$n $name"
+     }
+   }
+   return [join $timeList]
+}
+
+##-----------------------------------------------------------------------
+## formatRuntime
+##-----------------------------------------------------------------------
+## Format runtime metric
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::formatRuntime {runtime} {
+  if {$runtime == {}} { return {-} }
+  if {![regexp {^[0-9]+$} $runtime]} { return {-} }
+  if {$runtime == 0} { return {-} }
+  set duration [duration $runtime]
+  set str [regsub {\s*[0-9]+\s+secs?} $duration {}]
+  if {$str == {}} {
+    # $str is empty if $duration <= 59 seconds
+    # In this case, return $duration to prevent empty string
+    set str $duration
+  }
+  return $str
+}
+
 # Generate a list of integers
 proc ::tb::utils::report_design_summary::iota {from to} {
   set out [list]
@@ -1832,12 +2215,1042 @@ proc ::tb::utils::report_design_summary::dputs {args} {
   return -code ok
 }
 
-namespace eval ::tb::utils {
-  namespace import -force ::tb::utils::report_design_summary::report_design_summary
+# Convert a congestion window to a congestion level
+proc ::tb::utils::report_design_summary::congestionWindowToLevel {window} {
+  set level {u}
+  switch -exact $window {
+    "1x1"     { set level 0 }
+    "2x2"     { set level 1 }
+    "4x4"     { set level 2 }
+    "8x8"     { set level 3 }
+    "16x16"   { set level 4 }
+    "32x32"   { set level 5 }
+    "64x64"   { set level 6 }
+    "128x128" { set level 7 }
+    "256x256" { set level 8 }
+    default   { set level u }
+  }
+  return $level
 }
 
-namespace eval ::tb {
-  namespace import -force ::tb::utils::report_design_summary
+# Code from Frederic Revenu
+# Extract the placement + routing congestions from report_design_analysis
+# Format: North-South-East-West
+#         PlacerNorth-PlacerSouth-PlacerEast-PlacerWest RouterNorth-RouterSouth-RouterEast-RouterWest
+proc ::tb::utils::report_design_summary::parseRDACongestion {report} {
+  set section "other"
+  set placerCong [list u u u u]
+  set routerCong [list u u u u]
+  foreach line [split $report \n] {
+    if {[regexp {^\d. (\S+) Maximum Level Congestion Reporting} $line foo step]} {
+      switch -exact $step {
+        "Placed" { set section "placer" }
+        "Router" { set section "router" }
+        default  { set section "other" }
+      }
+    } elseif {[regexp {^\| (\S+)\s*\| (\S+)\s*\| \S+\s*\| \S+\s*| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\|} $line foo card cong] || \
+              [regexp {^\| (\S+)\s*\| (\S+)\s*\| \S+\s*\| \s*\S+ -> \S+\s*\|\s*$} $line foo card cong]} {
+#       switch -exact $cong {
+#         "1x1"     { set level 0 }
+#         "2x2"     { set level 1 }
+#         "4x4"     { set level 2 }
+#         "8x8"     { set level 3 }
+#         "16x16"   { set level 4 }
+#         "32x32"   { set level 5 }
+#         "64x64"   { set level 6 }
+#         "128x128" { set level 7 }
+#         "256x256" { set level 8 }
+#         default   { set level u }
+#       }
+      set level [congestionWindowToLevel $cong]
+      if {$section == "placer"} {
+        switch -exact $card {
+          "North" { set placerCong [lreplace $placerCong 0 0 $level] }
+          "South" { set placerCong [lreplace $placerCong 1 1 $level] }
+          "East"  { set placerCong [lreplace $placerCong 2 2 $level] }
+          "West"  { set placerCong [lreplace $placerCong 3 3 $level] }
+        }
+      } elseif {$section == "router"} {
+        switch -exact $card {
+          "North" { set routerCong [lreplace $routerCong 0 0 $level] }
+          "South" { set routerCong [lreplace $routerCong 1 1 $level] }
+          "East"  { set routerCong [lreplace $routerCong 2 2 $level] }
+          "West"  { set routerCong [lreplace $routerCong 3 3 $level] }
+        }
+      }
+    } elseif {[regexp {^\d\. } $line]} {
+      set section "other"
+    }
+  }
+  return [list [join $placerCong -] [join $routerCong -]]
+}
+
+# INFO: [Route 35-449] Initial Estimated Congestion
+#  ________________________________________________________________________
+# |           | Global Congestion | Long Congestion   | Short Congestion  |
+# |           |___________________|___________________|___________________|
+# | Direction | Size   | % Tiles  | Size   | % Tiles  | Size   | % Tiles  |
+# |___________|________|__________|________|__________|________|__________|
+# |      NORTH|   64x64|      7.62|   64x64|      7.96|   64x64|     11.11|
+# |___________|________|__________|________|__________|________|__________|
+# |      SOUTH|   32x32|      4.03|   32x32|      3.33|   32x32|      8.74|
+# |___________|________|__________|________|__________|________|__________|
+# |       EAST|   32x32|      6.97|   16x16|      2.96| 128x128|     15.34|
+# |___________|________|__________|________|__________|________|__________|
+# |       WEST|     8x8|      0.87|     4x4|      0.52|   32x32|      8.85|
+# |___________|________|__________|________|__________|________|__________|
+proc ::tb::utils::report_design_summary::parseLOGCongestion {filename {table {first}}} {
+  set globalCong [list u u u u]
+  set longCong [list u u u u]
+  set shortCong [list u u u u]
+  if {![file exists $filename]} {
+    puts " -E- Vivado log file '[file normalize $filename]' does not exist"
+    return [list {} {} {} ]
+#     return [list [join $globalCong -] [join $longCong -] [join $shortCong -] ]
+  }
+  if {[regexp {.gz$} $filename]} {
+    # gzip-ed file
+    set FH [open "| zcat $filename" {r}]
+  } else {
+    set FH [open $filename {r}]
+  }
+#   set FH [open $filename {r}]
+  set loop 1
+  set found 0
+  set match 0
+  while {$loop && ![eof $FH]} {
+    set line [gets $FH]
+    if {!$found} {
+      if {[regexp {Initial Estimated Congestion} $line]} {
+        # Begining of the 'Initial Estimated Congestion' table
+        set found 1
+        incr match
+      }
+    } else {
+      if {![regexp {^\s*(\||\_)} $line]} {
+        # End of table
+        if {$table == {first}} {
+          # Return first instance of 'Initial Estimated Congestion' table
+          # ... exit loop
+          set loop 0
+        } else {
+          # Return last instance of 'Initial Estimated Congestion' table
+          # ... keep looping
+        }
+        set found 0
+      } else {
+        # The table is parsed here
+        # E.g:
+        #  # |      NORTH|   64x64|      7.62|   64x64|      7.96|   64x64|     11.11|
+        if {[regexp -nocase {(NORTH|SOUTH|EAST|WEST)\s*\|\s*(\d+x\d+)\s*\|.+\|\s*(\d+x\d+)\s*\|.+\|\s*(\d+x\d+)\s*\|.+} $line - direction global long short]} {
+          switch -nocase $direction {
+            "NORTH" {
+              set globalCong [lreplace $globalCong 0 0 [congestionWindowToLevel $global]]
+              set longCong [lreplace $longCong 0 0 [congestionWindowToLevel $long]]
+              set shortCong [lreplace $shortCong 0 0 [congestionWindowToLevel $short]]
+            }
+            "SOUTH" {
+              set globalCong [lreplace $globalCong 1 1 [congestionWindowToLevel $global]]
+              set longCong [lreplace $longCong 1 1 [congestionWindowToLevel $long]]
+              set shortCong [lreplace $shortCong 1 1 [congestionWindowToLevel $short]]
+            }
+            "EAST" {
+              set globalCong [lreplace $globalCong 2 2 [congestionWindowToLevel $global]]
+              set longCong [lreplace $longCong 2 2 [congestionWindowToLevel $long]]
+              set shortCong [lreplace $shortCong 2 2 [congestionWindowToLevel $short]]
+            }
+            "WEST" {
+              set globalCong [lreplace $globalCong 3 3 [congestionWindowToLevel $global]]
+              set longCong [lreplace $longCong 3 3 [congestionWindowToLevel $long]]
+              set shortCong [lreplace $shortCong 3 3 [congestionWindowToLevel $short]]
+            }
+          }
+        }
+      }
+    }
+  }
+  catch { close $FH }
+  if {!$match} {
+    # No table found
+    return [list {} {} {} ]
+  }
+  # E.g:
+  #  [list {6-5-5-3} {6-5-4-2} {6-5-7-5} ]
+  return [list [join $globalCong -] [join $longCong -] [join $shortCong -] ]
+}
+
+# Return a list of Vivado commands used in a Tcl script.
+# Format: <command> <number>
+# For example:
+#   get_nets 35 get_pins 242 set_false_path 162 set_multicycle_path 66 \
+#   create_generated_clock 67 set_clock_groups 292 current_instance 10 \
+#   set_case_analysis 15 get_cells 191 get_clocks 717 get_ports 26 create_clock 12
+proc ::tb::utils::report_design_summary::getVivadoCommands {filename} {
+  set slave [interp create]
+  $slave eval [format {
+    catch {unset commands}
+    global commands
+
+    proc unknown {args} {
+      global commands
+      set cmd [lindex $args 0]
+      if {[regexp {^[0-9]$} $cmd]} {
+        return -code ok
+      }
+      if {![info exists commands($cmd)]} {
+        set commands($cmd) 0
+      }
+      incr commands($cmd)
+      return -code ok
+    }
+
+    source %s
+  } $filename ]
+
+  set result [$slave eval array get commands]
+  interp delete $slave
+  return $result
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::extract_columns
+#------------------------------------------------------------------------
+# Extract position of columns based on the column separator string
+#  str:   string to be used to extract columns
+#  match: column separator string
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::extract_columns { str match } {
+  set col 0
+  set columns [list]
+  set previous -1
+  while {[set col [string first $match $str [expr $previous +1]]] != -1} {
+    if {[expr $col - $previous] > 1} {
+      lappend columns $col
+    }
+    set previous $col
+  }
+  return $columns
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::extract_row
+#------------------------------------------------------------------------
+# Extract all the cells of a row (string) based on the position
+# of the columns
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::extract_row {str columns} {
+  lappend columns [string length $str]
+  set row [list]
+  set pos 0
+  foreach col $columns {
+    set value [string trim [string range $str $pos $col]]
+    lappend row $value
+    set pos [incr col 2]
+  }
+  return $row
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::parseClockInteractionReport
+#------------------------------------------------------------------------
+# Extract the clock table from report_clock_interaction and return
+# a Tcl list
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::parseClockInteractionReport {report} {
+  set columns [list]
+  set table [list]
+  set report [split $report \n]
+  set SM {header}
+  for {set index 0} {$index < [llength $report]} {incr index} {
+    set line [lindex $report $index]
+    switch $SM {
+      header {
+        if {[regexp {^\-+\s+\-+\s+\-+} $line]} {
+          set columns [extract_columns [string trimright $line] { }]
+          set header1 [extract_row [lindex $report [expr $index -2]] $columns]
+          set header2 [extract_row [lindex $report [expr $index -1]] $columns]
+          set row [list]
+          foreach h1 $header1 h2 $header2 {
+            lappend row [string trim [format {%s %s} [string trim [format {%s} $h1]] [string trim [format {%s} $h2]]] ]
+          }
+          lappend table $row
+          set SM {table}
+        }
+      }
+      table {
+        # Check for empty line or for line that match '<empty>'
+        if {(![regexp {^\s*$} $line]) && (![regexp -nocase {^\s*No clocks found.\s*$} $line])} {
+          set row [extract_row $line $columns]
+          lappend table $row
+        }
+      }
+      end {
+      }
+    }
+  }
+  return $table
+}
+
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::createSummaryDRCReport
+#------------------------------------------------------------------------
+# Create a summary from the report_methodology/report_drc report to
+# reduce the memory footprint
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::createSummaryDRCReport {file} {
+  # Abstract original report_methodology report:
+  #   2. REPORT DETAILS
+  #   -----------------
+  #   CKLD-2#1 Warning
+  #   Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads
+  #   Clock net FC_TSCLK_IBUF_inst/O is directly driven by an IO rather than a Clock Buffer or may be an IO driving a mix of Clock Buffer and non-Clock loads. This connectivity should be reviewed and corrected as appropriate. Driver(s): FC_TSCLK_IBUF_inst/IBUFCTRL_INST/O
+  #   Related violations: <none>
+  #
+  #   PDRC-190#1 Warning
+  #   Suboptimally placed synchronized register chain
+  #   The FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/shift_reg_in_reg[2] in site SLICE_X105Y474 is part of a synchronized register chain that is suboptimally placed as the load FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/shift_reg_in_reg[1] is not placed in the same (SLICE) site.
+  #   Related violations: <none>
+  #
+  #   SYNTH-6#1 Warning
+  #   Timing of a block RAM might be sub-optimal
+  #   The timing for the instance gen_phy_user.user/phy_slr_1_1/user_fault_monitor/from_rom_rdata_reg, implemented as a block RAM, might be sub-optimal as no output register was merged into the block
+  #   Related violations: <none>
+  #
+  #   SYNTH-8#1 Warning
+  #   Resource sharing
+  #   The adder gen_phy_user.user/phy_slr_0_1/gen_ports[0].mld_test_pattern_1/TxPreMLD_i/TSXSUMADJ/Cnt_SOFoffsetP1_reg[3]_i_1_CARRY8 is shared. Consider applying a KEEP on the inputs of the operator to prevent sharing.
+  #   Related violations: <none>
+  if {[regexp {.gz$} $file]} {
+    # gzip-ed file
+    set FH [open "| zcat $file" {r}]
+  } else {
+    set FH [open $file {r}]
+  }
+#   set FH [open $file {r}]
+  set content [list]
+  catch {unset drcs}
+  catch {unset drcmsg}
+  catch {unset drcseverity}
+  set keys [list]
+  set loop 1
+  set found 0
+  set drcname {n/a}; set drcnum {n/a}; set severity {n/a}
+  while {$loop && ![eof $FH]} {
+    gets $FH line
+    if {[regexp {^\s*([^-]+)-([0-9]+)#[0-9]+\s+([\w]+)} $line -- drcname drcnum severity]} {
+      set found 1
+      # Capture the first line of the DRC
+      # e.g:
+      #  PDRC-190#1 Warning
+    } else {
+      if {$found} {
+        # Capture the second line of the DRC
+        # e.g:
+        #  Suboptimally placed synchronized register chain
+        set drcmsg(${drcname}-${drcnum}) [string trim $line]
+        set drcseverity(${drcname}-${drcnum}) [string trim $severity]
+        if {![info exists drcs(${drcname}-${drcnum})]} {
+          set drcs(${drcname}-${drcnum}) 0
+        }
+        incr drcs(${drcname}-${drcnum})
+        lappend keys [list $drcname $drcnum ${drcname}-${drcnum} ]
+        set found 0
+        set drcname {n/a}; set drcnum {n/a}; set severity {n/a}
+      }
+    }
+  }
+  close $FH
+  # Sort by drc name and drc number
+  set keys [lsort -unique $keys]
+  set keys [lsort -increasing -dictionary -index 0 [lsort -increasing -integer -index 1 $keys]]
+  # Recreate a fake summary report which is much smaller
+  # E.g:
+  #   1 CKLD-2 [Warning] [Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads]
+  #   1 CLKC-5 [Warning] [BUFGCE with constant CE has BUFG driver]
+  #   2 CLKC-21 [Warning] [MMCME3 with ZHOLD does not drive sequential IO]
+  #   1 CLKC-29 [Warning] [MMCME3 not driven by IO has BUFG in feedback loop]
+  #   4 CLKC-39 [Warning] [Substitute PLLE3 for MMCME3 check]
+  #   1 PDRC-190 [Warning] [Suboptimally placed synchronized register chain]
+  #   127 SYNTH-4 [Warning] [Shallow depth for a dedicated block RAM]
+  #   249 SYNTH-6 [Warning] [Timing of a block RAM might be sub-optimal]
+  #   721 SYNTH-8 [Warning] [Resource sharing]
+  #   73 SYNTH-9 [Warning] [Small multiplier]
+  #   3 TIMING-3 [Warning] [Invalid primary clock on Clock Modifying Block]
+  #   1000 TIMING-9 [Warning] [Unknown CDC Logic]
+  #   1000 TIMING-10 [Warning] [Missing property on synchronizer]
+  #   96 TIMING-11 [Warning] [Inappropriate max delay with datapath only option]
+  #   11 TIMING-17 [Warning] [Non-clocked sequential cell]
+  #   23 TIMING-18 [Warning] [Missing input or output delay]
+  #   31 TIMING-24 [Warning] [Overridden Max delay datapath only]
+  #   234 TIMING-28 [Warning] [Auto-derived clock referenced by a timing constraint]
+  #   12 XDCB-1 [Warning] [Runtime intensive exceptions]
+  #   2 XDCB-2 [Warning] [Clock defined on multiple objects]
+  #   1 XDCC-4 [Warning] [User Clock constraint overwritten with the same name]
+  #   1 XDCC-8 [Warning] [User Clock constraint overwritten on the same source]
+  #   1 XDCV-2 [Warning] [Incomplete constraint coverage due to missing replicated objects.]
+  foreach el $keys {
+    foreach {- - key} $el { break }
+    lappend content [format {  %s %s [%s] [%s]} $drcs($key) $key $drcseverity($key) $drcmsg($key)]
+  }
+  set res [join $content \n]
+  return $res
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::enter
+#------------------------------------------------------------------------
+# Used for flow automation
+#------------------------------------------------------------------------
+# Called before a command is executed
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::enter {cmd op} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable tracedb
+  lappend tracedb(enter) [list [clock seconds] 1 $cmd]
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::leave
+#------------------------------------------------------------------------
+# Used for flow automation
+#------------------------------------------------------------------------
+# Called after a command is executed
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::leave {cmd code result op} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable params
+  variable tracedb
+  lappend tracedb(leave) [list [clock seconds] 1 $cmd $code $result]
+
+  foreach {start - cmd} [lindex $tracedb(enter) end] { break }
+  foreach {end - - code result} [lindex $tracedb(leave) end] { break }
+
+  if {$code} {
+    puts " -W- Design summary skipped. Command [lindex $cmd 0] failed: [regsub {\n} $result {}]"
+    return -code ok
+  }
+
+  foreach var {project version release experiment step directive runtime} { set $var $params($var) }
+  set duration 0
+  set directive {Default}
+  # E.g: place_design
+  set step [lindex $cmd 0]
+  set skipsummary 0
+  for {set idx 1} {$idx < [llength $cmd]} {incr idx} {
+    set el [lindex $cmd $idx]
+    switch -regexp -- $el {
+      {^-di(r(e(c(t(i(ve?)?)?)?)?)?)?$} {
+        set directive [lindex $cmd [expr $idx +1]]
+        # Skip next argument
+        incr idx
+      }
+      {^-u(n(p(l(a(ce?)?)?)?)?)?$} -
+      {^-u(n(r(o(u(te?)?)?)?)?)?$} {
+        # Do not generate a design summary
+        set skipsummary 1
+      }
+      {^-h(e(lp?)?)?$} {
+        # Do not generate a design summary
+        set skipsummary 1
+      }
+      {^-d(i(s(a(b(l(e(_(a(r(cs?)?)?)?)?)?)?)?)?)?)?$} -
+      {^-fo(r(c(e(_(r(e(p(l(i(c(a(t(i(o(n(_(o(n(_(n(e(ts?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+        # Do not generate a design summary
+        set skipsummary 1
+        # Skip next argument
+        incr idx
+      }
+    }
+  }
+
+  if {$skipsummary} {
+    set tracedb(enter) [list]
+    set tracedb(leave) [list]
+    return -code ok
+  }
+
+  set stepnum $tracedb(count)
+  catch { set duration [expr $end - $start] }
+  incr tracedb(count)
+  set dir $tracedb(dir)
+  set filename [file join $dir ${tracedb(prefix)}summary.${stepnum}.${step}.${directive}.csv]
+#   tb::report_design_summary -project $project -version $version -experiment $experiment -step ${stepnum}.$step -directive $directive \
+#                             -runtime $duration \
+#                             -file $filename \
+#                             {*}$tracedb(cmdline)
+  set cmdline $tracedb(cmdline)
+  if {$params(vivadolog) != {}} {
+    if {[file exists $params(vivadolog)]} {
+      lappend cmdline {-vivadolog}
+      lappend cmdline $params(vivadolog)
+    } else {
+      puts " -W- Vivado log file '$params(vivadolog)' does not exist"
+    }
+  }
+  # Callback proc to extract the design summary
+  set callback $tracedb(callback)
+  if {[catch { $callback $project $version $experiment $step $directive $stepnum $duration $dir $tracedb(prefix) $cmdline } errorstring]} {
+    puts " -E- Callback failed: $errorstring"
+  }
+
+  # Keep history
+  lappend tracedb(history) [list $step $directive $start $end $duration $filename \
+                                 [tb::utils::report_design_summary::getMetric {timing.wns}] \
+                                 [tb::utils::report_design_summary::getMetric {timing.tns}] \
+                                 [tb::utils::report_design_summary::getMetric {timing.tnsFallingEp}] \
+                                 [tb::utils::report_design_summary::getMetric {timing.whs}] \
+                                 [tb::utils::report_design_summary::getMetric {timing.ths}] \
+                                 [tb::utils::report_design_summary::getMetric {timing.thsFallingEp}] \
+                           ]
+  # Report flow summary
+  reportFlowSummary [format {%s%s} $tracedb(prefix) flow_summary.rpt]
+
+  # Reset variables
+  set tracedb(enter) [list]
+  set tracedb(leave) [list]
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::trace_off
+#------------------------------------------------------------------------
+# Used for flow automation
+#------------------------------------------------------------------------
+# Remove all 'trace' commands
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::trace_off {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable tracedb
+  foreach cmd $tracedb(cmdlist) {
+    catch { trace remove execution $cmd enter ::tb::utils::report_design_summary::enter }
+    catch { trace remove execution $cmd leave ::tb::utils::report_design_summary::leave }
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::trace_on
+#------------------------------------------------------------------------
+# Used for flow automation
+#------------------------------------------------------------------------
+# Add all 'trace' commands
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::trace_on {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable tracedb
+  # For safety, tries to remove any existing 'trace' commands
+  ::tb::utils::report_design_summary::trace_off
+  # Now adds 'trace' commands
+  foreach cmd $tracedb(cmdlist) {
+    catch { trace add execution $cmd enter ::tb::utils::report_design_summary::enter }
+    catch { trace add execution $cmd leave ::tb::utils::report_design_summary::leave }
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::trace_info
+#------------------------------------------------------------------------
+# Used for flow automation
+#------------------------------------------------------------------------
+# Dump the 'trace' information on each command
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::trace_info {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable tracedb
+  foreach cmd $tracedb(cmdlist) {
+    if {[catch { puts "   $cmd:[trace info execution $cmd]" } errorstring]} {
+       puts "   $cmd: <ERROR: $errorstring>"
+    }
+  }
+  return -code ok
+}
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::callbackAutomation
+#------------------------------------------------------------------------
+# Used for flow automation
+#------------------------------------------------------------------------
+# Callback proc to generate the design summary
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::callbackAutomation {project version experiment step directive count runtime dir prefix cmdline} {
+  set SLLs {}
+  catch { set SLLs [tb::report_slls -return_summary] }
+  set filename [file join $dir ${prefix}summary.${count}.${step}.${directive}.csv]
+  tb::report_design_summary -project $project -version $version -experiment $experiment -step ${count}.$step -directive $directive \
+                            -runtime $runtime \
+                            -file $filename \
+                            {*}$cmdline
+  return -code ok
+}
+
+# proc ::tb::utils::report_design_summary::callbackAutomation {project version experiment step directive count runtime dir prefix cmdline} {
+#   set SLLs {}
+#   catch { set SLLs [tb::report_slls -return_summary] }
+#   set filename [file join $dir ${prefix}summary.${count}.${step}.${directive}.csv]
+#   tb::report_design_summary -project $project -version $version -experiment $experiment -step ${count}.$step -directive $directive \
+#                             -runtime $runtime \
+#                             -file $filename \
+#                             {*}$cmdline \
+#                             -add_metrics [list \
+#                                            [list design.slls {SLLs Connections} $SLLs] \
+#                                          ]
+#   return -code ok
+# }
+
+#------------------------------------------------------------------------
+# ::tb::utils::report_design_summary::reportFlowSummary
+#------------------------------------------------------------------------
+# Used for flow automation
+#------------------------------------------------------------------------
+# Report flow summary
+#------------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::reportFlowSummary {{filename {flow_summary.rpt}}} {
+  variable params
+  variable tracedb
+
+  # +-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+  # | Flow Summary                                                                                                                                                                              |
+  # +-----------------+-----------+--------+---------+---+--------+---------+---+---------+------------------------------+------------------------------+---------------------------------------+
+  # | Step            | Directive | WNS    | TNS     | # | WHS    | THS     | # | Runtime | Start                        | End                          | Filename                              |
+  # +-----------------+-----------+--------+---------+---+--------+---------+---+---------+------------------------------+------------------------------+---------------------------------------+
+  # | opt_design      | Default   | -3.887 | -5.923  | 2 | -0.997 | -2.886  | 6 | 1 sec   | Thu Jul 07 17:10:21 PDT 2016 | Thu Jul 07 17:10:22 PDT 2016 | summary.0.opt_design.Default.csv      |
+  # | place_design    | Explore   | -5.974 | -14.049 | 5 | -2.357 | -10.817 | 6 | 13 secs | Thu Jul 07 17:10:24 PDT 2016 | Thu Jul 07 17:10:37 PDT 2016 | summary.1.place_design.Explore.csv    |
+  # | phys_opt_design | Default   | -5.869 | -13.944 | 5 | -2.050 | -10.367 | 6 | 2 secs  | Thu Jul 07 17:10:39 PDT 2016 | Thu Jul 07 17:10:41 PDT 2016 | summary.2.phys_opt_design.Default.csv |
+  # | route_design    | Default   | -6.022 | -19.179 | 9 | 0.120  | 0.000   | 0 | 21 secs | Thu Jul 07 17:10:46 PDT 2016 | Thu Jul 07 17:11:07 PDT 2016 | summary.4.route_design.Default.csv    |
+  # | phys_opt_design | Default   | -6.022 | -19.010 | 9 | 0.120  | 0.000   | 0 | 4 secs  | Thu Jul 07 17:11:14 PDT 2016 | Thu Jul 07 17:11:18 PDT 2016 | summary.6.phys_opt_design.Default.csv |
+  # +-----------------+-----------+--------+---------+---+--------+---------+---+---------+------------------------------+------------------------------+---------------------------------------+
+  set tbl [::prettyTable {Flow Summary}]
+  $tbl header {Step Directive WNS TNS # WHS THS # Runtime Start End Filename}
+  foreach el $tracedb(history) {
+    foreach {step directive start end duration file wns tns sviols whs ths hviols} $el { break }
+    $tbl addrow [list $step $directive $wns $tns $sviols $whs $ths $hviols [formatRuntime $duration] [clock format $start] [clock format $end] [file tail $file] ]
+  }
+  if {$filename != {}} {
+    puts [$tbl print]
+    puts [$tbl export -format {table} -file $filename]
+    puts " -I- Generated file [file normalize $filename]"
+  } else {
+    puts [$tbl print]
+  }
+  catch {$tbl destroy}
+
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## config_flow_automation
+##-----------------------------------------------------------------------
+## Used for flow automation
+##-----------------------------------------------------------------------
+## Configuration proc
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_design_summary::config_flow_automation {args} {
+  variable params
+  variable tracedb
+
+  set enableFlowAutomation -1
+  set ofilename {}
+  set summary 0
+  set error 0
+  set show_help 0
+  if {[llength $args] == 0} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-o(u(t(p(ut?)?)?)?)?$} -
+      {^-f(i(le?)?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-pr(o(j(e(ct?)?)?)?)?$} {
+        set params(project) [lshift args]
+      }
+      {^-ve(r(s(i(on?)?)?)?)?$} {
+        set params(version) [lshift args]
+      }
+      {^-ex(p(e(r(i(m(e(nt?)?)?)?)?)?)?)?$} {
+        set params(experiment) [lshift args]
+      }
+      {^-st(ep?)?$} {
+        set params(step) [lshift args]
+      }
+      {^-di(r(e(c(t(i(ve?)?)?)?)?)?)?$} {
+        set params(directive) [lshift args]
+      }
+      {^-di(r(e(c(t(o(ry?)?)?)?)?)?)?$} {
+        set dir [lshift args]
+        if {![file isdirectory $dir]} {
+          puts " -W- Ignoring invalid directory '$dir'"
+        } else {
+          set tracedb(dir) $dir
+        }
+      }
+      {^-pr(e(f(ix?)?)?)?$} {
+        set tracedb(prefix) [lshift args]
+      }
+      {^-cm(d(l(i(ne?)?)?)?)?$} {
+        set tracedb(cmdline) [lshift args]
+      }
+      {^-en(a(b(l(e(_(f(l(ow?)?)?)?)?)?)?)?)?$} {
+        set enableFlowAutomation 1
+      }
+      {^-di(s(a(b(l(e(_(f(l(ow?)?)?)?)?)?)?)?)?)?$} {
+        set enableFlowAutomation 0
+      }
+      {^-ca(l(l(b(a(ck?)?)?)?)?)?$} {
+        set tracedb(callback) [lshift args]
+      }
+      {^-trace_info$} {
+        ::tb::utils::report_design_summary::trace_info
+      }
+      {^-su(m(m(a(ry?)?)?)?)?$} {
+        set summary 1
+      }
+      {^-reset$} {
+        set params(project) {}
+        set params(version) {}
+        set params(experiment) {}
+        set tracedb(count) 0
+        set tracedb(dir) [uplevel #0 pwd]
+        set tracedb(cmdlist) {opt_design place_design phys_opt_design route_design}
+        set tracedb(cmdline) {-verbose -details -all -exclude {cdc methodology drc check_timing constraints clock_interaction congestion} -csv}
+#         set tracedb(cmdline) {-verbose -details -all -exclude {cdc methodology drc} -csv}
+        set tracedb(callback) {::tb::utils::report_design_summary::callbackAutomation}
+        set tracedb(history) [list]
+        set tracedb(enter) [list]
+        set tracedb(leave) [list]
+      }
+      {^-vi(v(a(d(o(l(og?)?)?)?)?)?)?$} {
+        set params(vivadolog) [lshift args]
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^qu(i(et?)?)?$} -
+      {^-nov(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 0
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-nod(e(b(ug?)?)?)?$} {
+        set params(debug) 0
+      }
+      {^-debug$} {
+        set params(debug) 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    puts [format {
+      Usage: tb::utils::report_design_summary::config_flow_automation
+                  [-enable_flow]
+                  [-disable_flow]
+                  [-cmdline <string>]
+                  [-callback <proc>]
+                +--------------------+
+                  [-project <string>]
+                  [-version <string>]
+                  [-experiment <string>]
+                  [-step <string>]
+                  [-directive <string>]
+                +--------------------+
+                  [-vivadolog <filename>]
+                  [-prefix <string>]
+                  [-summary]
+                  [-file <filename>|-output <filename>]
+                  [-reset]
+                  [-debug|-nodebug]
+                  [-verbose|-noverbose]
+                  [-help]
+
+      Description: Configure flow automation for design summary
+
+        -enable_flow: enable auto-capturing of design summaries during implementation flow
+        -disable_flow: disable auto-capturing of design summaries during implementation flow
+        -vivadolog to point to Vivado log file to extract additional metrics
+        -cmdline: command line to be passed to tb::report_design_summary command
+          Default: -verbose -details -timing -utilization -route -csv
+        -prefix: prefix to be added to the design summary filename
+
+      Example:
+         ::tb::utils::report_design_summary::config_flow_automation -enable_flow -cmdline {-details -all -exclude {cdc methodology drc} -csv}
+         ::tb::utils::report_design_summary::config_flow_automation -enable_flow -prefix opt_
+         ::tb::utils::report_design_summary::config_flow_automation -disable_flow
+
+
+    } ]
+    # HELP -->
+
+    return -code ok
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#    exit -1
+  }
+
+  switch $enableFlowAutomation {
+    0 {
+      ::tb::utils::report_design_summary::trace_off
+    }
+    1 {
+      set tracedb(cmdlist) [list opt_design place_design phys_opt_design route_design]
+      set tracedb(enter) [list]
+      set tracedb(leave) [list]
+      ::tb::utils::report_design_summary::trace_on
+    }
+    default {
+    }
+  }
+
+  if {$summary} {
+    reportFlowSummary $ofilename
+  }
+
+  return -code ok
+}
+
+
+##-----------------------------------------------------------------------
+## orderedCategories orderedMetrics
+##-----------------------------------------------------------------------
+## Order for categories and metrics
+##-----------------------------------------------------------------------
+# Keep the list below in sync between report_design_summary.tcl
+# and compare_design_summary
+proc ::tb::utils::report_design_summary::orderedCategories {} {
+  # Ordered list of categories
+  set L [list \
+          tag \
+          vivado \
+          design \
+          utilization \
+          timing \
+          clockpair \
+          clkinteraction \
+          checktiming \
+          congestion \
+          route \
+          cdc \
+          methodology \
+          drc \
+          constraints \
+        ]
+
+  return $L
+}
+
+# Keep the list below in sync between report_design_summary.tcl
+# and compare_design_summary
+proc ::tb::utils::report_design_summary::orderedMetrics {} {
+  # Ordered list of metrics
+  set L [list \
+          tag.project \
+          tag.version \
+          tag.experiment \
+          tag.step \
+          tag.directive \
+          tag.runtime \
+          tag.date \
+          tag.time \
+           \
+          vivado.version \
+          vivado.build \
+          vivado.plateform \
+          vivado.os \
+          vivado.os.description \
+          vivado.os.version \
+          vivado.top \
+           \
+          design.part.architecture.name \
+          design.part.architecture \
+          design.part \
+          design.part.speed.class \
+          design.part.speed.label \
+          design.part.speed.id \
+          design.part.speed.date \
+          design.cells.blackbox \
+          design.cells.hier \
+          design.cells.primitive \
+          design.cells.hlutnm \
+          design.cells.ratiofdlut \
+          design.clocks \
+          design.clocks.primary \
+          design.clocks.usergenerated \
+          design.clocks.autoderived \
+          design.clocks.virtual \
+          design.ips.list \
+          design.ips \
+          design.nets \
+          design.nets.slls \
+          design.pblocks \
+          design.ports \
+          design.slrs \
+           \
+          utilization.clb.ff \
+          utilization.clb.ff.pct \
+          utilization.clb.lut \
+          utilization.clb.lut.pct \
+          utilization.clb.carry8 \
+          utilization.clb.carry8.pct \
+          utilization.clb.f7mux \
+          utilization.clb.f7mux.pct \
+          utilization.clb.f8mux \
+          utilization.clb.f8mux.pct \
+          utilization.clb.f9mux \
+          utilization.clb.f9mux.pct \
+          utilization.ctrlsets.lost \
+          utilization.ctrlsets.uniq \
+          utilization.clk.bufgce \
+          utilization.clk.bufgce.pct \
+          utilization.clk.bufgcediv \
+          utilization.clk.bufgcediv.pct \
+          utilization.clk.bufggt \
+          utilization.clk.bufggt.pct \
+          utilization.clk.bufgps \
+          utilization.clk.bufgps.pct \
+          utilization.clk.bufgctrl \
+          utilization.clk.bufgctrl.pct \
+          utilization.dsp \
+          utilization.dsp.pct \
+          utilization.io \
+          utilization.io.pct \
+          utilization.ram.blockram \
+          utilization.ram.distributedram \
+          utilization.ram.tile \
+          utilization.ram.tile.pct \
+           \
+          timing.wns \
+          timing.tns \
+          timing.tnsFallingEp \
+          timing.tnsTotalEp \
+          timing.wns.spclock \
+          timing.wns.epclock \
+          timing.whs \
+          timing.ths \
+          timing.thsFallingEp \
+          timing.thsTotalEp \
+          timing.whs.spclock \
+          timing.whs.epclock \
+          timing.wpws \
+          timing.tpws \
+          timing.tpwsFailingEp \
+          timing.tpwsTotalEp \
+           \
+          clkinteraction.timed \
+          clkinteraction.timed_unsafe \
+          clkinteraction.asynchronous_groups \
+          clkinteraction.exclusive_groups \
+          clkinteraction.false_path \
+          clkinteraction.max_delay_datapath_only \
+          clkinteraction.partial_false_path \
+          clkinteraction.partial_false_path_unsafe \
+           \
+          checktiming.constant_clock \
+          checktiming.generated_clocks \
+          checktiming.latch_loops \
+          checktiming.loops \
+          checktiming.multiple_clock \
+          checktiming.no_clock \
+          checktiming.no_input_delay \
+          checktiming.no_output_delay \
+          checktiming.partial_input_delay \
+          checktiming.partial_output_delay \
+          checktiming.pulse_width_clock \
+          checktiming.unconstrained_internal_endpoints \
+           \
+          congestion.placer \
+          congestion.router \
+          congestion.estimated.global \
+          congestion.estimated.long \
+          congestion.estimated.short \
+           \
+          route.nets \
+          route.routed \
+          route.fixed \
+          route.errors \
+           \
+          constraints.create_clock \
+          constraints.create_generated_clock \
+          constraints.group_path \
+          constraints.set_bus_skew \
+          constraints.set_case_analysis \
+          constraints.set_clock_groups \
+          constraints.set_clock_latency \
+          constraints.set_clock_sense \
+          constraints.set_clock_uncertainty \
+          constraints.set_data_check \
+          constraints.set_disable_timing \
+          constraints.set_external_delay \
+          constraints.set_false_path \
+          constraints.set_input_delay \
+          constraints.set_input_jitter \
+          constraints.set_max_delay \
+          constraints.set_min_delay \
+          constraints.set_multicycle_path \
+          constraints.set_output_delay \
+          constraints.set_system_jitter \
+        ]
+
+  # Trick to order clockpair metrics (clockpair.*)
+  foreach idx [iota 0 9] {
+    lappend L [format {clockpair.%s.wns} $idx]
+    lappend L [format {clockpair.%s.tns} $idx]
+    lappend L [format {clockpair.%s.from} $idx]
+    lappend L [format {clockpair.%s.to} $idx]
+  }
+
+  # Trick to order CDC metrics (cdc.*)
+  foreach idx [iota 0 100] {
+    lappend L [format {cdc.cdc-%s} $idx]
+  }
+
+  # Trick to order methodology check metrics (drc.*)
+  foreach name [list ckld clkc pdrc synth timing xdcb xdcc xdch xdcv] {
+    foreach idx [iota 0 500] {
+      lappend L [format {methodology.%s-%s} $name $idx]
+    }
+  }
+
+  return $L
 }
 
 ###########################################################################
@@ -2087,441 +3500,13 @@ proc ::Table::list2csv { list {sepChar ,} } {
   return $out
 }
 
-# Code from Frederic Revenu
-# Extract the placement + routing congestions from report_design_analysis
-# Format: North-South-East-West
-#         PlacerNorth-PlacerSouth-PlacerEast-PlacerWest RouterNorth-RouterSouth-RouterEast-RouterWest
-proc ::tb::utils::report_design_summary::parseRDACongestion {report} {
-  set section "other"
-  set placerCong [list u u u u]
-  set routerCong [list u u u u]
-  foreach line [split $report \n] {
-    if {[regexp {^\d. (\S+) Maximum Level Congestion Reporting} $line foo step]} {
-      switch -exact $step {
-        "Placed" { set section "placer" }
-        "Router" { set section "router" }
-        default  { set section "other" }
-      }
-    } elseif {[regexp {^\| (\S+)\s*\| (\S+)\s*\| \S+\s*\| \S+\s*| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\| \S+\s*\|} $line foo card cong] || \
-              [regexp {^\| (\S+)\s*\| (\S+)\s*\| \S+\s*\| \s*\S+ -> \S+\s*\|\s*$} $line foo card cong]} {
-      switch -exact $cong {
-        "1x1"     { set level 0 }
-        "2x2"     { set level 1 }
-        "4x4"     { set level 2 }
-        "8x8"     { set level 3 }
-        "16x16"   { set level 4 }
-        "32x32"   { set level 5 }
-        "64x64"   { set level 6 }
-        "128x128" { set level 7 }
-        "256x256" { set level 8 }
-        default   { set level u }
-      }
-      if {$section == "placer"} {
-        switch -exact $card {
-          "North" { set placerCong [lreplace $placerCong 0 0 $level] }
-          "South" { set placerCong [lreplace $placerCong 1 1 $level] }
-          "East"  { set placerCong [lreplace $placerCong 2 2 $level] }
-          "West"  { set placerCong [lreplace $placerCong 3 3 $level] }
-        }
-      } elseif {$section == "router"} {
-        switch -exact $card {
-          "North" { set routerCong [lreplace $routerCong 0 0 $level] }
-          "South" { set routerCong [lreplace $routerCong 1 1 $level] }
-          "East"  { set routerCong [lreplace $routerCong 2 2 $level] }
-          "West"  { set routerCong [lreplace $routerCong 3 3 $level] }
-        }
-      }
-    } elseif {[regexp {^\d\. } $line]} {
-      set section "other"
-    }
-  }
-  return [list [join $placerCong -] [join $routerCong -]]
+namespace eval ::tb::utils {
+  namespace import -force ::tb::utils::report_design_summary::report_design_summary
+  namespace import -force ::tb::utils::report_design_summary::config_flow_automation
 }
 
-# Return a list of Vivado commands used in a Tcl script.
-# Format: <command> <number>
-# For example:
-#   get_nets 35 get_pins 242 set_false_path 162 set_multicycle_path 66 \
-#   create_generated_clock 67 set_clock_groups 292 current_instance 10 \
-#   set_case_analysis 15 get_cells 191 get_clocks 717 get_ports 26 create_clock 12
-
-proc ::tb::utils::report_design_summary::getVivadoCommands {filename} {
-  set slave [interp create]
-  $slave eval [format {
-    catch {unset commands}
-    global commands
-
-    proc unknown {args} {
-      global commands
-      set cmd [lindex $args 0]
-      if {[regexp {^[0-9]$} $cmd]} {
-        return -code ok
-      }
-      if {![info exists commands($cmd)]} {
-        set commands($cmd) 0
-      }
-      incr commands($cmd)
-      return -code ok
-    }
-
-    source %s
-  } $filename ]
-
-  set result [$slave eval array get commands]
-  interp delete $slave
-  return $result
+namespace eval ::tb {
+  namespace import -force ::tb::utils::report_design_summary
+  namespace import -force ::tb::utils::config_flow_automation
 }
 
-#------------------------------------------------------------------------
-# ::tb::utils::report_design_summary::extract_columns
-#------------------------------------------------------------------------
-# Extract position of columns based on the column separator string
-#  str:   string to be used to extract columns
-#  match: column separator string
-#------------------------------------------------------------------------
-proc ::tb::utils::report_design_summary::extract_columns { str match } {
-  set col 0
-  set columns [list]
-  set previous -1
-  while {[set col [string first $match $str [expr $previous +1]]] != -1} {
-    if {[expr $col - $previous] > 1} {
-      lappend columns $col
-    }
-    set previous $col
-  }
-  return $columns
-}
-
-#------------------------------------------------------------------------
-# ::tb::utils::report_design_summary::extract_row
-#------------------------------------------------------------------------
-# Extract all the cells of a row (string) based on the position
-# of the columns
-#------------------------------------------------------------------------
-proc ::tb::utils::report_design_summary::extract_row {str columns} {
-  lappend columns [string length $str]
-  set row [list]
-  set pos 0
-  foreach col $columns {
-    set value [string trim [string range $str $pos $col]]
-    lappend row $value
-    set pos [incr col 2]
-  }
-  return $row
-}
-
-#------------------------------------------------------------------------
-# ::tb::utils::report_design_summary::parseClockInteractionReport
-#------------------------------------------------------------------------
-# Extract the clock table from report_clock_interaction and return
-# a Tcl list
-#------------------------------------------------------------------------
-proc ::tb::utils::report_design_summary::parseClockInteractionReport {report} {
-  set columns [list]
-  set table [list]
-  set report [split $report \n]
-  set SM {header}
-  for {set index 0} {$index < [llength $report]} {incr index} {
-    set line [lindex $report $index]
-    switch $SM {
-      header {
-        if {[regexp {^\-+\s+\-+\s+\-+} $line]} {
-          set columns [extract_columns [string trimright $line] { }]
-          set header1 [extract_row [lindex $report [expr $index -2]] $columns]
-          set header2 [extract_row [lindex $report [expr $index -1]] $columns]
-          set row [list]
-          foreach h1 $header1 h2 $header2 {
-            lappend row [string trim [format {%s %s} [string trim [format {%s} $h1]] [string trim [format {%s} $h2]]] ]
-          }
-          lappend table $row
-          set SM {table}
-        }
-      }
-      table {
-        # Check for empty line or for line that match '<empty>'
-        if {(![regexp {^\s*$} $line]) && (![regexp -nocase {^\s*No clocks found.\s*$} $line])} {
-          set row [extract_row $line $columns]
-          lappend table $row
-        }
-      }
-      end {
-      }
-    }
-  }
-  return $table
-}
-
-
-#------------------------------------------------------------------------
-# ::tb::utils::report_design_summary::createSummaryDRCReport
-#------------------------------------------------------------------------
-# Create a summary from the report_methodology report to reduce the
-# memory footprint
-#------------------------------------------------------------------------
-proc ::tb::utils::report_design_summary::createSummaryDRCReport {file} {
-  # Abstract original report_methodology report:
-  #   2. REPORT DETAILS
-  #   -----------------
-  #   CKLD-2#1 Warning
-  #   Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads
-  #   Clock net FC_TSCLK_IBUF_inst/O is directly driven by an IO rather than a Clock Buffer or may be an IO driving a mix of Clock Buffer and non-Clock loads. This connectivity should be reviewed and corrected as appropriate. Driver(s): FC_TSCLK_IBUF_inst/IBUFCTRL_INST/O
-  #   Related violations: <none>
-  #
-  #   PDRC-190#1 Warning
-  #   Suboptimally placed synchronized register chain
-  #   The FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/shift_reg_in_reg[2] in site SLICE_X105Y474 is part of a synchronized register chain that is suboptimally placed as the load FDCE cell dbg_hub/inst/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/shift_reg_in_reg[1] is not placed in the same (SLICE) site.
-  #   Related violations: <none>
-  #
-  #   SYNTH-6#1 Warning
-  #   Timing of a block RAM might be sub-optimal
-  #   The timing for the instance gen_phy_user.user/phy_slr_1_1/user_fault_monitor/from_rom_rdata_reg, implemented as a block RAM, might be sub-optimal as no output register was merged into the block
-  #   Related violations: <none>
-  #
-  #   SYNTH-8#1 Warning
-  #   Resource sharing
-  #   The adder gen_phy_user.user/phy_slr_0_1/gen_ports[0].mld_test_pattern_1/TxPreMLD_i/TSXSUMADJ/Cnt_SOFoffsetP1_reg[3]_i_1_CARRY8 is shared. Consider applying a KEEP on the inputs of the operator to prevent sharing.
-  #   Related violations: <none>
-  set FH [open $file {r}]
-  set content [list]
-  catch {unset drcs}
-  catch {unset drcmsg}
-  catch {unset drcseverity}
-  set keys [list]
-  set loop 1
-  set found 0
-  set drcname {n/a}; set drcnum {n/a}; set severity {n/a}
-  while {$loop && ![eof $FH]} {
-    gets $FH line
-    if {[regexp {^\s*([^-]+)-([0-9]+)#[0-9]+\s+([\w]+)} $line -- drcname drcnum severity]} {
-      set found 1
-      # Capture the first line of the DRC
-      # e.g:
-      #  PDRC-190#1 Warning
-    } else {
-      if {$found} {
-        # Capture the second line of the DRC
-        # e.g:
-        #  Suboptimally placed synchronized register chain
-        set drcmsg(${drcname}-${drcnum}) [string trim $line]
-        set drcseverity(${drcname}-${drcnum}) [string trim $severity]
-        if {![info exists drcs(${drcname}-${drcnum})]} {
-          set drcs(${drcname}-${drcnum}) 0
-        }
-        incr drcs(${drcname}-${drcnum})
-        lappend keys [list $drcname $drcnum ${drcname}-${drcnum} ]
-        set found 0
-        set drcname {n/a}; set drcnum {n/a}; set severity {n/a}
-      }
-    }
-  }
-  close $FH
-  # Sort by drc name and drc number
-  set keys [lsort -unique $keys]
-  set keys [lsort -increasing -dictionary -index 0 [lsort -increasing -integer -index 1 $keys]]
-  # Recreate a fake summary report which is much smaller
-  # E.g:
-  #   1 CKLD-2 [Warning] [Clock Net has IO Driver, not a Clock Buf, and/or non-Clock loads]
-  #   1 CLKC-5 [Warning] [BUFGCE with constant CE has BUFG driver]
-  #   2 CLKC-21 [Warning] [MMCME3 with ZHOLD does not drive sequential IO]
-  #   1 CLKC-29 [Warning] [MMCME3 not driven by IO has BUFG in feedback loop]
-  #   4 CLKC-39 [Warning] [Substitute PLLE3 for MMCME3 check]
-  #   1 PDRC-190 [Warning] [Suboptimally placed synchronized register chain]
-  #   127 SYNTH-4 [Warning] [Shallow depth for a dedicated block RAM]
-  #   249 SYNTH-6 [Warning] [Timing of a block RAM might be sub-optimal]
-  #   721 SYNTH-8 [Warning] [Resource sharing]
-  #   73 SYNTH-9 [Warning] [Small multiplier]
-  #   3 TIMING-3 [Warning] [Invalid primary clock on Clock Modifying Block]
-  #   1000 TIMING-9 [Warning] [Unknown CDC Logic]
-  #   1000 TIMING-10 [Warning] [Missing property on synchronizer]
-  #   96 TIMING-11 [Warning] [Inappropriate max delay with datapath only option]
-  #   11 TIMING-17 [Warning] [Non-clocked sequential cell]
-  #   23 TIMING-18 [Warning] [Missing input or output delay]
-  #   31 TIMING-24 [Warning] [Overridden Max delay datapath only]
-  #   234 TIMING-28 [Warning] [Auto-derived clock referenced by a timing constraint]
-  #   12 XDCB-1 [Warning] [Runtime intensive exceptions]
-  #   2 XDCB-2 [Warning] [Clock defined on multiple objects]
-  #   1 XDCC-4 [Warning] [User Clock constraint overwritten with the same name]
-  #   1 XDCC-8 [Warning] [User Clock constraint overwritten on the same source]
-  #   1 XDCV-2 [Warning] [Incomplete constraint coverage due to missing replicated objects.]
-  foreach el $keys {
-    foreach {- - key} $el { break }
-    lappend content [format {  %s %s [%s] [%s]} $drcs($key) $key $drcseverity($key) $drcmsg($key)]
-  }
-  set res [join $content \n]
-  return $res
-}
-
-
-# Keep the list below in sync between report_design_summary.tcl
-# and compare_design_summary
-proc ::tb::utils::report_design_summary::orderedCategories {} {
-  # Ordered list of categories
-  set L [list \
-          tag \
-          vivado \
-          design \
-          utilization \
-          timing \
-          clockpair \
-          clkinteraction \
-          checktiming \
-          congestion \
-          route \
-          cdc \
-          drc \
-          constraints \
-        ]
-
-  return $L
-}
-
-# Keep the list below in sync between report_design_summary.tcl
-# and compare_design_summary
-proc ::tb::utils::report_design_summary::orderedMetrics {} {
-  # Ordered list of metrics
-  set L [list \
-          tag.project \
-          tag.version \
-          tag.experiment \
-          tag.step \
-          tag.directive \
-          tag.runtime \
-          tag.date \
-          tag.time \
-           \
-          vivado.version \
-          vivado.build \
-          vivado.plateform \
-          vivado.os \
-          vivado.osVersion \
-          vivado.top \
-           \
-          design.part.architecture.name \
-          design.part.architecture \
-          design.part \
-          design.part.speed.class \
-          design.part.speed.label \
-          design.part.speed.id \
-          design.part.speed.date \
-          design.cells.blackbox \
-          design.cells.hier \
-          design.cells.primitive \
-          design.clocks \
-          design.clocks.primary \
-          design.clocks.usergenerated \
-          design.clocks.autoderived \
-          design.clocks.virtual \
-          design.ips.list \
-          design.ips \
-          design.nets \
-          design.nets.slls \
-          design.pblocks \
-          design.ports \
-          design.slrs \
-           \
-          utilization.clb.ff \
-          utilization.clb.ff.pct \
-          utilization.clb.lut \
-          utilization.clb.lut.pct \
-          utilization.ctrlsets.lost \
-          utilization.ctrlsets.uniq \
-          utilization.dsp \
-          utilization.dsp.pct \
-          utilization.io \
-          utilization.io.pct \
-          utilization.ram.blockram \
-          utilization.ram.distributedram \
-          utilization.ram.tile \
-          utilization.ram.tile.pct \
-           \
-          timing.wns \
-          timing.tns \
-          timing.tnsFallingEp \
-          timing.tnsTotalEp \
-          timing.wns.spclock \
-          timing.wns.epclock \
-          timing.whs \
-          timing.ths \
-          timing.thsFallingEp \
-          timing.thsTotalEp \
-          timing.whs.spclock \
-          timing.whs.epclock \
-          timing.wpws \
-          timing.tpws \
-          timing.tpwsFailingEp \
-          timing.tpwsTotalEp \
-           \
-          clkinteraction.timed \
-          clkinteraction.timed_unsafe \
-          clkinteraction.asynchronous_groups \
-          clkinteraction.exclusive_groups \
-          clkinteraction.false_path \
-          clkinteraction.max_delay_datapath_only \
-          clkinteraction.partial_false_path \
-          clkinteraction.partial_false_path_unsafe \
-           \
-          checktiming.constant_clock \
-          checktiming.generated_clocks \
-          checktiming.latch_loops \
-          checktiming.loops \
-          checktiming.multiple_clock \
-          checktiming.no_clock \
-          checktiming.no_input_delay \
-          checktiming.no_output_delay \
-          checktiming.partial_input_delay \
-          checktiming.partial_output_delay \
-          checktiming.pulse_width_clock \
-          checktiming.unconstrained_internal_endpoints \
-           \
-          congestion.placer \
-          congestion.router \
-           \
-          route.nets \
-          route.routed \
-          route.fixed \
-          route.errors \
-           \
-          constraints.create_clock \
-          constraints.create_generated_clock \
-          constraints.group_path \
-          constraints.set_bus_skew \
-          constraints.set_case_analysis \
-          constraints.set_clock_groups \
-          constraints.set_clock_latency \
-          constraints.set_clock_sense \
-          constraints.set_clock_uncertainty \
-          constraints.set_data_check \
-          constraints.set_disable_timing \
-          constraints.set_external_delay \
-          constraints.set_false_path \
-          constraints.set_input_delay \
-          constraints.set_input_jitter \
-          constraints.set_max_delay \
-          constraints.set_min_delay \
-          constraints.set_multicycle_path \
-          constraints.set_output_delay \
-          constraints.set_system_jitter \
-        ]
-
-  # Trick to order clockpair metrics (clockpair.*)
-  foreach idx [iota 0 9] {
-    lappend L [format {clockpair.%s.wns} $idx]
-    lappend L [format {clockpair.%s.tns} $idx]
-    lappend L [format {clockpair.%s.from} $idx]
-    lappend L [format {clockpair.%s.to} $idx]
-  }
-
-  # Trick to order CDC metrics (cdc.*)
-  foreach idx [iota 0 100] {
-    lappend L [format {cdc.cdc-%s} $idx]
-  }
-
-  # Trick to order DRC metrics (drc.*)
-  foreach name [list ckld clkc pdrc synth timing xdcb xdcc xdch xdcv] {
-    foreach idx [iota 0 500] {
-      lappend L [format {drc.%s-%s} $name $idx]
-    }
-  }
-
-  return $L
-}

@@ -3,6 +3,10 @@
 exec tclsh "$0" -- ${1+"$@"}
 
 ########################################################################################
+## 2016.07.25 - Minor help update for methodology checks
+## 2016.07.18 - Added support for -vivadolog
+## 2016.07.12 - Added dependency to package toolbox
+## 2016.06.17 - Added support for -lsf-limit
 ## 2016.06.13 - Added support for -runtime/-date/-time
 ## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.03.25 - Added support for -exclude
@@ -269,7 +273,8 @@ set dryrun 0
 set reset 0
 set LSFQueue {medium}
 set LSFMemory {8000}
-set LSFCmd [format {bsub -app sil_rhel5 -q %%queue -R {rusage[mem=%%mem]} }]
+set LSFMemoryLimit {20000000} ; # 20GB in KB
+set LSFCmd [format {bsub -app sil_rhel5 -q %%queue -M %%limit -R {rusage[mem=%%mem]} }]
 set mode {localhost}
 set ofilename {}
 set project {}
@@ -280,6 +285,7 @@ set directive {}
 set runtime {}
 set date {}
 set time {}
+set vivadoLog {}
 set exclude {}
 set script {}
 set error 0
@@ -333,6 +339,9 @@ while {[llength $::argv]} {
     -time {
          set time [lshift ::argv]
     }
+    -vivadolog {
+         set vivadoLog [lshift ::argv]
+    }
     -ex -
     -exclude {
       foreach el [lshift ::argv] {
@@ -351,6 +360,11 @@ while {[llength $::argv]} {
     }
     -lsf-mem {
          set LSFMemory [lshift ::argv]
+         # By default, the memory limit is twice the requested memory
+         set LSFMemoryLimit [expr $LSFMemory * 2000]
+    }
+    -lsf-limit {
+         set LSFMemoryLimit [lshift ::argv]
     }
     -lsf-cmd {
          set LSFCmd [lshift ::argv]
@@ -387,10 +401,12 @@ Usage: report_design_summary
             [-runtime <string>]
             [-date <string>]
             [-time <string>]
+            [-vivadolog <filename>]
             [-exclude <list_sections>]
             [-script <filename>]
             [-lsf]
-            [-lsf-mem <number>]
+            [-lsf-mem <number(MB)>]
+            [-lsf-limit <number(KB)>]
             [-lsf-queue <string>]
             [-lsf-cmd <string>]
             [-dry-run|-dry]
@@ -404,12 +420,16 @@ Description: Extract design summary from checkpoint
   -script: user script
   -exclude: remove sections from summary report.
     List of sections: utilization constraints timing clock_interaction congestion
-                      check_timing cdc drc route_status
+                      check_timing cdc methodology drc route_status
+
+  -lsf-mem: LSF memory requirement in MB
+  -lsf-limit: LSF max memory in KB. If not specified, the max memory is
+    twice the memory requirement
 
 Example:
    report_design_summary -dcp post_route.dcp -step route_design -directive Explore
-   report_design_summary -dcp post_route.dcp -file summary.csv -step route_design -lsf -lsf-mem 12000 -lsf-queue long
-   report_design_summary -dcp post_route.dcp -step route_design -directive Explore -exclude 'drc cdc'
+   report_design_summary -dcp post_route.dcp -file summary.csv -step route_design -lsf -lsf-mem 12000 -lsf-limit 20000000 -lsf-queue long
+   report_design_summary -dcp post_route.dcp -step route_design -directive Explore -exclude 'methodology drc cdc'
 } ]
   # HELP -->
 
@@ -432,11 +452,17 @@ if {$checkpoint == {}} {
 
 if {$script != {}} {
   if {![file exists $script]} {
-    puts " -E- file '$script' does not exist"
+    print error "file '$script' does not exist"
+#     puts " -E- file '$script' does not exist"
     incr error
   } else {
     set script [file normalize $script]
   }
+}
+
+if {$LSFMemoryLimit < [expr $LSFMemory * 1000]} {
+  print error "LSF memory limit ($LSFMemoryLimit in KB) is smaller than the LSF memory requirement ($LSFMemory in MB)"
+  incr error
 }
 
 if {$error} {
@@ -457,6 +483,7 @@ if {$directive != {}} { set cmdLine [concat $cmdLine -directive [list $directive
 if {$runtime != {}} { set cmdLine [concat $cmdLine -runtime [list $runtime] ] }
 if {$date != {}} { set cmdLine [concat $cmdLine -date [list $date] ] }
 if {$time != {}} { set cmdLine [concat $time -runtime [list $time] ] }
+if {$vivadoLog != {}} { set cmdLine [concat $time -vivadolog [list $vivadoLog] ] }
 if {$exclude != {}} { set cmdLine [concat $cmdLine -exclude [list $exclude] ] }
 if {$script != {}} { set cmdLine [concat $cmdLine -script [list $script] ] }
 
@@ -477,8 +504,9 @@ puts $FH [format {##############################################################
 set checkpoint {%s}
 
 # Load main script
-# lappend auto_path /home/dpefour/git/scripts/toolbox
-# package require toolbox
+lappend auto_path /home/dpefour/git/scripts/toolbox
+# Require package 'toolbox' to extract 'design.slls' metric using tb::report_slls
+package require toolbox
 # source /home/dpefour/git/scripts/wip/report_design_summary.tcl
 source %s
 
@@ -522,6 +550,7 @@ if {!$dryrun} {
     lsf {
       set LSFCmd [regsub -all {%queue} $LSFCmd $LSFQueue]
       set LSFCmd [regsub -all {%mem} $LSFCmd $LSFMemory]
+      set LSFCmd [regsub -all {%limit} $LSFCmd $LSFMemoryLimit]
       print info "Running Vivado on LSF"
       print info "Job: $LSFCmd $vivadoCmdLine"
       system [concat $LSFCmd $vivadoCmdLine]

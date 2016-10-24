@@ -18,12 +18,16 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.13
+## Version:        2016.07.25
 ## Description:    Compare design summary reports
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.07.25 - Updated ordered metrics for methodology.* metrics
+## 2016.07.18 - Updated ordered metrics for congestion.estimated.*,
+##              design.cells.ratiofdlut, vivado.os.description metrics
+## 2016.06.30 - Added support for gzip-ed input files
 ## 2016.06.13 - Updated the list of ordered metrics (tag.time, tag.date)
 ## 2016.04.04 - Modified sh exec command to execute script
 ## 2016.03.04 - Updated the list of metric categories
@@ -48,7 +52,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::compare_design_summary {
   namespace export -force compare_design_summary
-  variable version {2016.06.13}
+  variable version {2016.07.25}
   variable params
   variable output {}
   variable reports
@@ -488,7 +492,13 @@ proc ::tb::utils::compare_design_summary::readcsv {filename {csvDelimiter ,}} {
   set header [list]
   set rows [list]
   set ids [list]
-  set FH [open $filename]
+  if {[regexp {.gz$} $filename]} {
+    # gzip-ed file
+    set FH [open "| zcat $filename" {r}]
+  } else {
+    set FH [open $filename {r}]
+  }
+#   set FH [open $filename]
   set first 1
   set count 0
   while {![eof $FH]} {
@@ -859,6 +869,7 @@ proc ::tb::utils::compare_design_summary::orderedCategories {} {
           congestion \
           route \
           cdc \
+          methodology \
           drc \
           constraints \
         ]
@@ -884,7 +895,8 @@ proc ::tb::utils::compare_design_summary::orderedMetrics {} {
           vivado.build \
           vivado.plateform \
           vivado.os \
-          vivado.osVersion \
+          vivado.os.description \
+          vivado.os.version \
           vivado.top \
            \
           design.part.architecture.name \
@@ -897,6 +909,7 @@ proc ::tb::utils::compare_design_summary::orderedMetrics {} {
           design.cells.blackbox \
           design.cells.hier \
           design.cells.primitive \
+          design.cells.ratiofdlut \
           design.clocks \
           design.clocks.primary \
           design.clocks.usergenerated \
@@ -966,6 +979,9 @@ proc ::tb::utils::compare_design_summary::orderedMetrics {} {
            \
           congestion.placer \
           congestion.router \
+          congestion.estimated.global \
+          congestion.estimated.long \
+          congestion.estimated.short \
            \
           route.nets \
           route.routed \
