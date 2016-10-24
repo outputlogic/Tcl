@@ -18,12 +18,13 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.03
+## Version:        2016.06.30
 ## Description:    Utility to convert Vivado report(s) into CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.06.30 - Added support for gzip-ed input files
 ## 2016.06.03 - Added proc rpt2tbl
 ##            - Added support for -return_tables (rptutils)
 ## 2016.04.19 - Added support for -default
@@ -52,7 +53,7 @@ namespace eval ::tb::utils::rptutils {
   namespace export rptutils
   namespace export rpt2tbl
 
-  variable version {2016.06.03}
+  variable version {2016.06.30}
   variable channel {}
   variable tables {}
   array set params [list format {csv} extension {csv} writeheader 1 verbose 0 debug 0 ]
@@ -203,7 +204,13 @@ proc ::tb::utils::rptutils::getReportFormat { filename } {
     return -code ok
   }
   set format {}
-  set FH [open $filename {r}]
+  if {[regexp {.gz$} $filename]} {
+    # gzip-ed file
+    set FH [open "| zcat $filename" {r}]
+  } else {
+    set FH [open $filename {r}]
+  }
+#   set FH [open $filename {r}]
   set lineno 0
   while {![eof $FH]} {
     gets $FH line
@@ -380,7 +387,13 @@ proc ::tb::utils::rptutils::processClockInteractionReport {filein channel} {
   variable tables
   variable params
 
-  set FH [open $filein {r}]
+  if {[regexp {.gz$} $filein]} {
+    # gzip-ed file
+    set FH [open "| zcat $filein" {r}]
+  } else {
+    set FH [open $filein {r}]
+  }
+#   set FH [open $filein {r}]
   set report [read $FH]
   close $FH
   puts $channel "#####################################"
@@ -470,7 +483,13 @@ proc ::tb::utils::rptutils::parseClockInteractionReport {report} {
 # Create a summary from the report_clock_interaction report
 #------------------------------------------------------------------------
 proc ::tb::utils::rptutils::createSummaryClockInteractionReport {filein} {
-  set FH [open $filein {r}]
+  if {[regexp {.gz$} $filein]} {
+    # gzip-ed file
+    set FH [open "| zcat $filein" {r}]
+  } else {
+    set FH [open $filein {r}]
+  }
+#   set FH [open $filein {r}]
   set report [read $FH]
   close $FH
   # E.g of summary table created:
@@ -603,7 +622,13 @@ proc ::tb::utils::rptutils::processCDCReport {filein channel {merge 0}} {
 
   # Convert the text report into a Tcl list of elements. Each list
   # element is a single CDC table.
-  set FH [open $filein {r}]
+  if {[regexp {.gz$} $filein]} {
+    # gzip-ed file
+    set FH [open "| zcat $filein" {r}]
+  } else {
+    set FH [open $filein {r}]
+  }
+#   set FH [open $filein {r}]
   set report_cdc [read $FH]
   close $FH
   array set cdcTables [parseCDCReport $report_cdc $merge]
@@ -795,7 +820,13 @@ proc ::tb::utils::rptutils::processDRCReport {filein channel} {
   variable tables
   variable params
 
-  set FH [open $filein {r}]
+  if {[regexp {.gz$} $filein]} {
+    # gzip-ed file
+    set FH [open "| zcat $filein" {r}]
+  } else {
+    set FH [open $filein {r}]
+  }
+#   set FH [open $filein {r}]
   set report [read $FH]
   close $FH
   set rows [createSummaryDRCReport $filein]
@@ -832,7 +863,13 @@ proc ::tb::utils::rptutils::processDRCReport {filein channel} {
   print $channel "#####################################"
   print $channel "# Detailed table"
   print $channel "#####################################"
-  set FHin [open $filein {r}]
+  if {[regexp {.gz$} $filein]} {
+    # gzip-ed file
+    set FHin [open "| zcat $filein" {r}]
+  } else {
+    set FHin [open $filein {r}]
+  }
+#   set FHin [open $filein {r}]
   set content [list]
   set loop 1
   set stage 0
@@ -938,7 +975,13 @@ proc ::tb::utils::rptutils::createSummaryDRCReport {filein} {
   #   Missing original pins:
   #   bb200_top_i/reiska_top/test_features_aurora_1/U0/test_features_aurora.test_ram_b_addr_r_reg[5]/C
   #   Related violations: <none>
-  set FH [open $filein {r}]
+  if {[regexp {.gz$} $filein]} {
+    # gzip-ed file
+    set FH [open "| zcat $filein" {r}]
+  } else {
+    set FH [open $filein {r}]
+  }
+#   set FH [open $filein {r}]
   set content [list]
   catch {unset drcs}
   catch {unset drcmsg}
@@ -1001,7 +1044,13 @@ proc ::tb::utils::rptutils::processTimingSummaryReport {filein channel} {
   variable tables
   variable params
 
-  set FH [open $filein {r}]
+  if {[regexp {.gz$} $filein]} {
+    # gzip-ed file
+    set FH [open "| zcat $filein" {r}]
+  } else {
+    set FH [open $filein {r}]
+  }
+#   set FH [open $filein {r}]
   set report [read $FH]
   close $FH
   foreach section [list {Design Timing Summary} {Clock Summary} {Intra Clock Table} {Inter Clock Table} {Other Path Groups Table}] {
@@ -1107,7 +1156,13 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
   variable tables
   variable params
 
-  set FH [open $filein {r}]
+  if {[regexp {.gz$} $filein]} {
+    # gzip-ed file
+    set FH [open "| zcat $filein" {r}]
+  } else {
+    set FH [open $filein {r}]
+  }
+#   set FH [open $filein {r}]
   set report [split [read $FH] \n]
   close $FH
 
