@@ -1,0 +1,869 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" -- ${1+"$@"}
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2016.07.26
+## Description:    Compare the design summary of all the project's runs
+##
+########################################################################################
+
+########################################################################################
+## 2016.07.26 - Fixed issue when both report_drc and report_methodology reports
+##              are found
+##            - Added data extraction from Vivado log file (directive, runtime, ...)
+##            - Misc enhancements
+## 2016.04.04 - Initial release
+########################################################################################
+
+# Example of report:
+
+
+namespace eval ::tb {
+#   namespace export -force report_project_summary
+}
+
+namespace eval ::tb::utils {
+  namespace export -force report_project_summary
+}
+
+namespace eval ::tb::utils::report_project_summary {
+  namespace export -force report_project_summary
+  variable version {2016.07.26}
+  variable params
+  variable output {}
+  variable reports
+  variable metrics
+  array set params [list format {table} verbose 0 debug 0]
+  array set reports [list]
+  array set metrics [list]
+}
+
+proc ::tb::utils::report_project_summary::lshift {inputlist} {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::utils::report_project_summary::report_project_summary {args} {
+  variable reports
+  variable metrics
+  variable params
+  variable output
+  catch {unset metrics}
+  catch {unset reports}
+  set params(verbose) 0
+  set params(debug) 0
+  set params(format) {table}
+  set sections {default}
+  set ofilename {}
+  set ifilenames {}
+  set filemode {w}
+  set suppress 0
+  set returnstring 0
+  set format {default}
+  set refColumn 0
+  set returnstring 0
+  set standalone 0
+  set error 0
+  set help 0
+  if {([llength $args] == 0) || ($args == {-standalone})} {
+    set help 1
+  }
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-f(i(le?)?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-csv?$} {
+        set params(format) {csv}
+      }
+      {^-su(p(p(r(e(ss?)?)?)?)?)?$} -
+      {^-suppress$} {
+        set suppress 1
+      }
+      {^-xpr$} -
+      {^-xpr?$} {
+        foreach pattern [lshift args] {
+          foreach file [glob -nocomplain $pattern] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
+              incr error
+              continue
+            }
+            lappend ifilenames [file normalize $file]
+          }
+        }
+        set ifilenames [lsort -unique $ifilenames]
+      }
+      {^-format$} -
+      {^-fo(r(m(a(t?)?)?)?)?$} {
+        set format [string tolower [lshift args]]
+      }
+      {^-reference$} -
+      {^-re(f(e(r(e(n(ce?)?)?)?)?)?)?$} {
+        set refColumn [lshift args]
+      }
+      {^-ap(p(e(nd?)?)?)?$} {
+        set filemode {a}
+      }
+      {^-r(e(t(u(r(n(_(s(t(r(i(ng?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set returnstring 1
+      }
+      {^-standalone$} {
+        # The script is run in standalone mode
+        set standalone 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-h(e(lp?)?)?$} {
+           set help 1
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          foreach file [glob -nocomplain $name] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
+              incr error
+              continue
+            }
+            lappend ifilenames [file normalize $file]
+          }
+          set ifilenames [lsort -unique $ifilenames]
+        }
+      }
+    }
+  }
+
+  if {$help} {
+    puts [format {
+  Usage: report_project_summary
+              [<pattern>][-xpr <filename>][-xpr <pattern>]
+              [-format <default|diff|percent|diffpercent>]
+              [-reference <column>]
+              [-suppress]
+              [-file <filename>]
+              [-append]
+              [-csv]
+              [-return_string]
+              [-verbose|-v]
+              [-help|-h]
+
+  Description: Compare the design summary of all the project's runs
+
+    Use -reference to select the reference column. To be used with -format
+    Use -suppress to suppress rows that have identical values accross all
+    summary files
+
+  Example:
+     tb::report_project_summary *_sum.xpr
+     tb::report_project_summary *.xpr -suppress -return_string
+     tb::report_project_summary -xpr *.xpr -format percent -reference 1 -file compare.csv -csv
+} ]
+    # HELP -->
+    return -code ok
+  }
+
+  if {($ofilename != {}) && $returnstring} {
+    puts " -E- cannot use -file & -return_string together"
+    incr error
+  }
+
+  if {[lsearch [list default diff percent diffpercent] $format] == -1} {
+    puts " -E- invalid format '$format'. Expected values: default diff percent diffpercent"
+    incr error
+  }
+
+  if {![regexp {^[0-9]+$} $refColumn]} {
+    puts " -E- invalid -column '$refColumn'"
+    incr error
+  }
+
+  if {$standalone && $returnstring} {
+    puts " -E- cannot use -return_string in standalone mode"
+    incr error
+  }
+
+  if {$error} {
+    error " -E- some error(s) happened. Cannot continue"
+  }
+
+  set startTime [clock seconds]
+  set output [list]
+
+  if {[catch {
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+    foreach ifilename $ifilenames {
+      processProject $ifilename
+    }
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+  } errorstring]} {
+    puts " -E- $errorstring"
+  }
+
+  if {$params(debug)} {
+  }
+
+  set stopTime [clock seconds]
+#   puts " -I- report_project_summary completed in [expr $stopTime - $startTime] seconds"
+
+  if {$ofilename != {}} {
+    set FH [open $ofilename $filemode]
+    puts $FH "# ---------------------------------------------------------------------------------"
+    puts $FH [format {# Created on %s with report_project_summary (%s)} [clock format [clock seconds]] $::tb::utils::report_project_summary::version ]
+    puts $FH "# ---------------------------------------------------------------------------------\n"
+    puts $FH [join $output \n]
+    close $FH
+    puts " -I- Generated file [file normalize $ofilename]"
+    return -code ok
+  }
+
+  if {$returnstring} {
+    return [join $output \n]
+  } else {
+    puts [join $output \n]
+  }
+  return -code ok
+}
+
+########################################################################################
+##
+##
+##
+########################################################################################
+proc ::tb::utils::report_project_summary::processProject {xprfile} {
+  variable params
+  dputs " -D- Processing $xprfile"
+  if {![file exists $xprfile]} {
+    puts " -E- File '$xprfile' does not exist. Cannot continue"
+    return -code ok
+  }
+  if {![regexp {\.xpr} $xprfile]} {
+    puts " -E- File '$xprfile' is not a Vivado project XPR file. Cannot continue"
+    return -code ok
+  }
+  set prjdir [file dirname $xprfile]
+  set runsdir [format {%s.runs} [file rootname $xprfile]]
+  if {![file isdirectory $runsdir]} {
+    puts " -E- Project run directory '$runsdir' does not exist. Cannot continue"
+    return -code ok
+  }
+  set checkpoints [glob -nocomplain $runsdir/*/*dcp]
+  if {$checkpoints == {}} {
+    puts " -E- No checkpoint found under project run directory '$runsdir'. Cannot continue"
+    return -code ok
+  }
+#   foreach dcp [lrange $checkpoints 0 0] {}
+  foreach dcp $checkpoints {
+    dputs " -D- Checkpoint $dcp"
+    set rundir [file dirname $dcp]
+#     set vivadolog {}
+#     if {[file exists [file join $rundir runme.log]]} {
+#       set FH [open [file join $rundir runme.log] {r}]
+#       set vivadolog [read $FH]
+#       close $FH
+#     }
+    # E.g: synth_1, impl_1, my_ip_synth_1
+    set run [lindex [file split $rundir] end]
+    set step {}
+    set synthRun [getSynthesisRun $rundir]
+    if {[regexp {synth_[0-9]+$} $run]} {
+      set step {synth_design}
+    } elseif {[regexp {impl_[0-9]+$} $run]} {
+      if {[regexp {_opt.dcp$} $dcp]} {
+        set step {opt_design}
+      }
+      if {[regexp {_placed.dcp$} $dcp]} {
+        set step {place_design}
+      }
+      if {[regexp {_postplace_pwropt.dcp$} $dcp]} {
+        set step {post_place_power_opt_design}
+      } elseif {[regexp {_pwropt.dcp$} $dcp]} {
+        set step {power_opt_design}
+      }
+      if {[regexp {_postroute_physopt.dcp$} $dcp]} {
+        set step {post_route_phys_opt_design}
+      } elseif {[regexp {_physopt.dcp$} $dcp]} {
+        set step {phys_opt_design}
+      }
+      if {[regexp {_routed.dcp$} $dcp]} {
+        set step {route_design}
+      }
+    }
+    if {$step == {}} {
+      puts " -E- Checkpoint '$dcp' could not be detected as synthesis or implementation. Skipping"
+      continue
+    }
+    puts " -I- dcp=[file tail $dcp] / run=$run / step=$step"
+    set cmdline [list]
+    # Project name
+    set project [file rootname [file tail $xprfile]]
+    set cmdline [concat $cmdline [list -project $project] ]
+    # Version name
+    set version [file tail [file dirname $dcp]]
+    switch $step {
+      synth_design {
+        set cmdline [concat $cmdline [list -version $version] ]
+        set cmdline [concat $cmdline [list -experiment $version] ]
+      }
+      default {
+        # Version under the synthesis run so that the dependency is known
+        set cmdline [concat $cmdline [list -version ${synthRun}] ]
+        set cmdline [concat $cmdline [list -experiment $version] ]
+      }
+    }
+#     if {$synthRun == {}} {
+#       set cmdline [concat $cmdline [list -version $version] ]
+#     } else {
+# #       set cmdline [concat $cmdline [list -version ${synthRun}_${version}] ]
+#       set cmdline [concat $cmdline [list -version ${synthRun}] ]
+#     }
+    set release {}
+    set directive {Default}
+    set runtime {}
+    set wns {}
+    set tns {}
+    set whs {}
+    set ths {}
+#     # E.g:
+#     #   Command: opt_design
+#     #   Command: opt_design -directive Explore
+#     # [^\n]: to match pattern on same line
+#     regexp [format {\s*Command:\s+%s[^\n]+-directive\s([^\s]+)(\s|$)} $step] $vivadolog - directive
+#     set cmdline [concat $cmdline [list -directive $directive] ]
+#     set release {}
+#     # E.g:
+#     #   ****** Vivado v2016.3.0 (64-bit)
+#     regexp {\* Vivado v([0-9]+\.[0-9]+)} $vivadolog - release
+#     set cmdline [concat $cmdline [list -add_metrics [list [list {vivado.version} $release]] ] ]
+#     set runtime {}
+#     # E.g:
+#     #   opt_design: Time (s): cpu = 00:00:19 ; elapsed = 00:00:14 . Memory (MB): peak = 2215.996 ; gain = 314.633 ; free physical = 100159 ; free virtual = 138607
+#     #   place_design: Time (s): cpu = 00:02:18 ; elapsed = 00:01:22 . Memory (MB): peak = 3672.223 ; gain = 1397.281 ; free physical = 92244 ; free virtual = 130811
+#     # [^\n]: to match pattern on same line
+#     if {[regexp [format {\s*%s\s*:\s*Time[^\n]+cpu[^\n]+elapsed\s*=\s*([0-9]+:[0-9]+:[0-9]+)} $step] $vivadolog - match]} {
+#       # E.g: 00:01:22
+#       foreach {h m s} [split $match :] { break }
+#       catch { set runtime [expr 3600 * $h + 60 * $m + $s] }
+#     }
+#     set cmdline [concat $cmdline [list -runtime $runtime] ]
+    foreach {release - directive runtime wns tns whs ths} [parseLOG [file join $rundir runme.log] $step] { break }
+#     puts "<release directive runtime wns tns whs ths><$release $directive $runtime $wns $tns $whs $ths>"
+    set cmdline [concat $cmdline [list -directive $directive] ]
+    set cmdline [concat $cmdline [list -runtime $runtime] ]
+    set cmdline [concat $cmdline [list -add_metrics [list [list {vivado.version} {Vivado Release} $release]] ] ]
+    if {$params(debug)} {
+      lappend cmdline {-debug}
+    }
+    switch $step {
+      synth_design {
+        set cmdline [concat $cmdline [list -details -csv -step synth_design] ]
+        set cmdline [concat $cmdline [list -utilization -report_utilization [glob -nocomplain $rundir/*utilization_synth.rpt]] ]
+        set cmdline [concat $cmdline [list -add_metrics [list [list {timing.wns} {WNS} $wns] [list {timing.tns} {TNS} $tns]] ] ]
+#         set cmdline [concat $cmdline [list -add_metrics [list [list {timing.whs} {WHS} $whs] [list {timing.ths} {THS} $ths]] ] ]
+        uplevel [concat tb::report_design_summary $cmdline -file ${run}_sum.csv ]
+      }
+      opt_design {
+        set cmdline [concat $cmdline [list -details -csv -step opt_design] ]
+        foreach filename [glob -nocomplain $rundir/*_drc_opted.rpt] {
+          if {[regexp {_methodology_} $filename]} {
+            set cmdline [concat $cmdline [list -methodology -report_methodology $filename ] ]
+          } else {
+            set cmdline [concat $cmdline [list -drc -report_drc $filename ] ]
+          }
+        }
+        set cmdline [concat $cmdline [list -add_metrics [list [list {timing.wns} {WNS} $wns] [list {timing.tns} {TNS} $tns]] ] ]
+#         set cmdline [concat $cmdline [list -add_metrics [list [list {timing.whs} {WHS} $whs] [list {timing.ths} {THS} $ths]] ] ]
+        uplevel [concat tb::report_design_summary $cmdline -file ${run}_opted_sum.csv ]
+      }
+      power_opt_design {
+      }
+      place_design {
+        set cmdline [concat $cmdline [list -details -csv -step place_design] ]
+        set cmdline [concat $cmdline [list -utilization -report_utilization [glob -nocomplain $rundir/*_utilization_placed.rpt]] ]
+        set cmdline [concat $cmdline [list -add_metrics [list [list {timing.wns} {WNS} $wns] [list {timing.tns} {TNS} $tns]] ] ]
+#         set cmdline [concat $cmdline [list -add_metrics [list [list {timing.whs} {WHS} $whs] [list {timing.ths} {THS} $ths]] ] ]
+        uplevel [concat tb::report_design_summary $cmdline -file ${run}_placed_sum.csv ]
+      }
+      post_place_power_opt_design {
+      }
+      phys_opt_design {
+      }
+      route_design {
+        set cmdline [concat $cmdline [list -details -csv -step route_design] ]
+        set cmdline [concat $cmdline [list -timing -report_timing_summary [glob -nocomplain $rundir/*_timing_summary_routed.rpt]] ]
+#         set cmdline [concat $cmdline [list -utilization -report_utilization [glob -nocomplain $rundir/*_utilization_routed.rpt]] ]
+        set cmdline [concat $cmdline [list -route -report_route_status [glob -nocomplain $rundir/*_route_status.rpt]] ]
+        foreach filename [glob -nocomplain $rundir/*_drc_routed.rpt] {
+          if {[regexp {_methodology_} $filename]} {
+            set cmdline [concat $cmdline [list -methodology -report_methodology $filename ] ]
+          } else {
+            set cmdline [concat $cmdline [list -drc -report_drc $filename ] ]
+          }
+        }
+        uplevel [concat tb::report_design_summary $cmdline -file ${run}_routed_sum.csv ]
+      }
+      post_route_phys_opt_design {
+        set cmdline [concat $cmdline [list -details -csv -step post_route_phys_opt_design] ]
+        set cmdline [concat $cmdline [list -timing -report_timing_summary [glob -nocomplain $rundir/*_timing_summary_postroute_physopted.rpt]] ]
+        uplevel [concat tb::report_design_summary $cmdline -file ${run}_postroute_physopted_sum.csv ]
+      }
+    }
+    puts " -I- cmdline: $cmdline"
+    # Force reset of all internal data structures
+    ::tb::utils::report_design_summary::reset 1
+  }
+  return -code ok
+}
+
+proc ::tb::utils::report_project_summary::dputs {args} {
+  variable params
+  if {$params(debug)} {
+    eval [concat puts $args]
+  }
+  return -code ok
+}
+
+# Extract synthesis run from the implementation Tcl script.
+# E.g:
+#     add_files -quiet /proj/xsjhdstaff2/dpefour/prj/project_1/project_1.runs/synth_1/wave_gen.dcp
+# => synth_1
+proc ::tb::utils::report_project_summary::getSynthesisRun {dir} {
+  set tclFiles [glob -nocomplain [file join $dir *.tcl]]
+  switch [llength $tclFiles] {
+    0 {
+      puts " -E- Missing Tcl script under '$dir'"
+      return {}
+    }
+    1 {
+    }
+    default {
+      puts " -E- Directory '$dir' has multiple Tcl scripts"
+      return {}
+    }
+  }
+  set FH [open $tclFiles {r}]
+  set content [read $FH]
+  close $FH
+  set synthesis {}
+  regexp {add_files[^\n]+\.runs/(synth_[^\n\/]+)/} $content - synthesis
+  return $synthesis
+}
+
+proc ::tb::utils::report_project_summary::parseLOG {filename step} {
+  if {![file exists $filename]} {
+    puts " -E- Vivado log file '[file normalize $filename]' does not exist"
+    return [list {} {} {} {} {} {} {} {} ]
+  }
+  if {[regexp {.gz$} $filename]} {
+    # gzip-ed file
+    set FH [open "| zcat $filename" {r}]
+  } else {
+    set FH [open $filename {r}]
+  }
+#   set FH [open $filename {r}]
+  set loop 1
+  set found 0
+  set release {}
+  set directive {Default}
+  set runtime {}
+  set wns {}
+  set tns {}
+  set whs {}
+  set ths {}
+  while {$loop && ![eof $FH]} {
+    set line [gets $FH]
+    if {!$found} {
+      # E.g:
+      #   Command: opt_design -sweep -directive Explore
+      if {[regexp [format {^\s*Command:\s+%s(\s|$)} $step] $line]} {
+        regexp [format {^\s*Command:\s+%s.+-directive\s([^\s]+)(\s|$)} $step] $line - directive
+        set found 1
+      } elseif {[regexp {\* Vivado v([0-9]+\.[0-9]+)} $line - release]} {
+        # E.g:
+        #   ****** Vivado v2016.3.0 (64-bit)
+      }
+    } else {
+      # E.g:
+      #   opt_design: Time (s): cpu = 00:00:19 ; elapsed = 00:00:14 . Memory (MB): peak = 2215.996 ; gain = 314.633 ; free physical = 100159 ; free virtual = 138607
+      #   place_design: Time (s): cpu = 00:02:18 ; elapsed = 00:01:22 . Memory (MB): peak = 3672.223 ; gain = 1397.281 ; free physical = 92244 ; free virtual = 130811
+      if {[regexp [format {^\s*%s\s*:\s*Time.+cpu.+elapsed\s*=\s*([0-9]+:[0-9]+:[0-9]+)} $step] $line - match]} {
+        # E.g: 00:01:22
+        foreach {h m s} [split $match :] { break }
+        catch { set runtime [expr 3600 * $h + 60 * $m + $s] }
+      } elseif {[regexp {^INFO.+WNS=([-+]?[0-9]*\.?[0-9]+).+TNS=([-+]?[0-9]*\.?[0-9]+).+WHS=([-+]?[0-9]*\.?[0-9]+).+THS=([-+]?[0-9]*\.?[0-9]+)} $line - wns tns whs ths]} {
+      } elseif {[regexp {^INFO.+WNS=([-+]?[0-9]*\.?[0-9]+).+TNS=([-+]?[0-9]*\.?[0-9]+)} $line - wns tns]} {
+      } elseif {[regexp {^INFO.+WNS=([-+]?[0-9]*\.?[0-9]+)} $line - wns]} {
+      } elseif {[regexp [format {^\s*Command:\s}] $line]} {
+        # The beginning of a new command has been reached
+        set found 0
+        set loop 0
+      } else {
+      }
+    }
+  }
+  catch { close $FH }
+  return [list $release $step $directive $runtime $wns $tns $whs $ths ]
+}
+
+# Generate a list of integers
+proc ::tb::utils::report_project_summary::iota {from to} {
+  set out [list]
+  if {$from <= $to} {
+    for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
+  } else {
+    for {set i $from} {$i >= $to} {incr i -1} {lappend out $i}
+  }
+  return $out
+}
+
+proc ::tb::utils::report_project_summary::sourceDependencies {} {
+  # Find the directory where the current script is (i.e trace back links)
+  set sfile [info script]
+  while {[file type $sfile] eq "link"} {
+      set sfile [file readlink $sfile]
+  }
+  set dir [file dirname $sfile]
+
+  # Source dependent files from the same directory as the current script
+  # source [file join $dir report_design_summary.tcl]
+  # source [file join $dir compare_design_summary]
+  set error 0
+  if {[file exists [file join $dir report_design_summary.tcl]]} {
+    puts " -D- Sourcing [file join $dir report_design_summary.tcl]"
+    uplevel #0 [list source [file join $dir report_design_summary.tcl] ]
+#     source [file join $dir report_design_summary.tcl]
+  } else {
+    incr error
+    puts " -E- Cannot access 'report_design_summary.tcl'"
+  }
+  if {[file exists [file join $dir compare_design_summary]]} {
+    puts " -D- Sourcing [file join $dir compare_design_summary]"
+    uplevel #0 [list source [file join $dir compare_design_summary] ]
+#     source [file join $dir compare_design_summary]
+  } else {
+    incr error
+    puts " -E- Cannot access 'compare_design_summary'"
+  }
+  if {$error} {
+    error " -E- some error(s) happened. Cannot continue"
+  }
+  return -code ok
+}
+
+namespace eval ::tb::utils {
+  namespace import -force ::tb::utils::report_project_summary::report_project_summary
+}
+
+namespace eval ::tb {
+  namespace import -force ::tb::utils::report_project_summary
+}
+
+###########################################################################
+##
+## Simple package to handle printing of tables
+##
+## %> set tbl [Table::Create {this is my title}]
+## %> $tbl header [list "name" "#Pins" "case_value" "user_case_value"]
+## %> $tbl addrow [list A/B/C/D/E/F 12 - -]
+## %> $tbl addrow [list A/B/C/D/E/F 24 1 -]
+## %> $tbl separator
+## %> $tbl addrow [list A/B/C/D/E/F 48 0 1]
+## %> $tbl indent 0
+## %> $tbl print
+## +-------------+-------+------------+-----------------+
+## | name        | #Pins | case_value | user_case_value |
+## +-------------+-------+------------+-----------------+
+## | A/B/C/D/E/F | 12    | -          | -               |
+## | A/B/C/D/E/F | 24    | 1          | -               |
+## +-------------+-------+------------+-----------------+
+## | A/B/C/D/E/F | 48    | 0          | 1               |
+## +-------------+-------+------------+-----------------+
+## %> $tbl indent 2
+## %> $tbl print
+##   +-------------+-------+------------+-----------------+
+##   | name        | #Pins | case_value | user_case_value |
+##   +-------------+-------+------------+-----------------+
+##   | A/B/C/D/E/F | 12    | -          | -               |
+##   | A/B/C/D/E/F | 24    | 1          | -               |
+##   +-------------+-------+------------+-----------------+
+##   | A/B/C/D/E/F | 48    | 0          | 1               |
+##   +-------------+-------+------------+-----------------+
+## %> $tbl sort {-index 1 -increasing} {-index 2 -dictionary}
+## %> $tbl print
+## %> $tbl destroy
+##
+###########################################################################
+
+# namespace eval Table { set n 0 }
+
+# Trick to silence the linter
+eval [list namespace eval ::Table {
+  set n 0
+} ]
+
+proc ::Table::Create { {title {}} } { #-- constructor
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable n
+  set instance [namespace current]::[incr n]
+  namespace eval $instance { variable tbl [list]; variable header [list]; variable indent 0; variable title {}; variable numrows 0 }
+  interp alias {} $instance {} ::Table::do $instance
+  # Set the title
+  $instance title $title
+  set instance
+}
+
+proc ::Table::do {self method args} { #-- Dispatcher with methods
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  upvar #0 ${self}::tbl tbl
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::numrows numrows
+  switch -- $method {
+      header {
+        set header [lindex $args 0]
+        return 0
+      }
+      addrow {
+        eval lappend tbl $args
+        incr numrows
+        return 0
+      }
+      separator {
+        eval lappend tbl {%%SEPARATOR%%}
+        return 0
+      }
+      title {
+        set ${self}::title [lindex $args 0]
+        return 0
+      }
+      indent {
+        set ${self}::indent $args
+        return 0
+      }
+      print {
+        eval ::Table::print $self
+      }
+      csv {
+        eval ::Table::printcsv $self
+      }
+      length {
+        return $numrows
+      }
+      sort {
+        # Each argument is a list of: <lsort arguments>
+        set command {}
+        while {[llength $args]} {
+          if {$command == {}} {
+            set command "lsort [[namespace parent]::lshift args] \$tbl"
+          } else {
+            set command "lsort [[namespace parent]::lshift args] \[$command\]"
+          }
+        }
+        if {[catch { set tbl [eval $command] } errorstring]} {
+          puts " -E- $errorstring"
+        } else {
+        }
+      }
+      reset {
+        set ${self}::tbl [list]
+        set ${self}::header [list]
+        set ${self}::indent 0
+        set ${self}::title {}
+        return 0
+      }
+      destroy {
+        set ${self}::tbl [list]
+        set ${self}::header [list]
+        set ${self}::indent 0
+        set ${self}::title {}
+        namespace delete $self
+        return 0
+      }
+      default {error "unknown method $method"}
+  }
+}
+
+proc ::Table::print {self} {
+   upvar #0 ${self}::tbl table
+   upvar #0 ${self}::header header
+   upvar #0 ${self}::indent indent
+   upvar #0 ${self}::title title
+   set maxs {}
+   foreach item $header {
+       lappend maxs [string length $item]
+   }
+   set numCols [llength $header]
+   foreach row $table {
+       if {$row eq {%%SEPARATOR%%}} { continue }
+       for {set j 0} {$j<$numCols} {incr j} {
+            set item [lindex $row $j]
+            set max [lindex $maxs $j]
+            if {[string length $item]>$max} {
+               lset maxs $j [string length $item]
+           }
+       }
+   }
+  set head " [string repeat " " [expr $indent * 4]]+"
+  foreach max $maxs {append head -[string repeat - $max]-+}
+
+  # Generate the title
+  if {$title ne {}} {
+    # The upper separator should something like +----...----+
+    append res " [string repeat " " [expr $indent * 4]]+[string repeat - [expr [string length [string trim $head]] -2]]+\n"
+    # Suports multi-lines title
+    foreach line [split $title \n] {
+      append res " [string repeat " " [expr $indent * 4]]| "
+      append res [format "%-[expr [string length [string trim $head]] -4]s" $line]
+      append res " |\n"
+    }
+  }
+
+  # Generate the table header
+  append res $head\n
+  # Generate the table rows
+  set first 1
+  set numsep 0
+  foreach row [concat [list $header] $table] {
+      if {$row eq {%%SEPARATOR%%}} {
+        incr numsep
+        if {$numsep == 1} { append res $head\n }
+        continue
+      } else {
+        set numsep 0
+      }
+      append res " [string repeat " " [expr $indent * 4]]|"
+      foreach item $row max $maxs {append res [format " %-${max}s |" $item]}
+      append res \n
+      if {$first} {
+        append res $head\n
+        set first 0
+        incr numsep
+      }
+  }
+  append res $head
+  set res
+}
+
+proc ::Table::printcsv {self args} {
+  upvar #0 ${self}::tbl table
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::title title
+
+  array set defaults [list \
+      -delimiter {,} \
+    ]
+  array set options [array get defaults]
+  array set options $args
+  set sepChar $options(-delimiter)
+
+  set res {}
+  # Support for multi-lines title
+  set first 1
+  foreach line [split $title \n] {
+    if {$first} {
+      set first 0
+      append res "# title${sepChar}[::Table::list2csv [list $line] $sepChar]\n"
+    } else {
+      append res "#      ${sepChar}[::Table::list2csv [list $line] $sepChar]\n"
+    }
+  }
+  append res "[::Table::list2csv $header $sepChar]\n"
+  set count 0
+  set numsep 0
+  foreach row $table {
+    incr count
+    if {$row eq {%%SEPARATOR%%}} {
+      incr numsep
+      if {$numsep == 1} {
+        append res "# [::Table::list2csv {++++++++++++++++++++++++++++++++++++++++++++++++++} $sepChar]\n"
+      } else {
+        set numsep 0
+      }
+      continue
+    }
+    append res "[::Table::list2csv $row $sepChar]\n"
+  }
+  return $res
+}
+
+proc ::Table::list2csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+########################################################################################
+##
+##
+##
+########################################################################################
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  if {[catch {::tb::utils::report_project_summary::sourceDependencies} errorstring]} {
+    catch { namespace delete ::tb::utils::report_project_summary }
+    error $errorstring
+  }
+} else {
+  if {[catch {::tb::utils::report_project_summary::sourceDependencies} errorstring]} {
+    puts $errorstring
+    exit 1
+  }
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  ::tb::utils::report_project_summary::lshift ::argv
+  if {[catch {eval [concat ::tb::utils::report_project_summary::report_project_summary -standalone $argv]} errorstring]} {
+    puts $errorstring
+    exit 1
+  }
+  exit 0
+}

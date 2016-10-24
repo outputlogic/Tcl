@@ -1,0 +1,1168 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" -- ${1+"$@"}
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2016.07.25
+## Description:    Report the design summary metrics organized by project/experiment
+##
+########################################################################################
+
+########################################################################################
+## 2016.07.25 - Fixed issue with -hide_empty
+## 2016.07.18 - Added support for congestion.estimated.* metrics
+##            - Added support for -hide_empty
+## 2016.07.06 - Fixed package dependency
+## 2016.06.30 - Initial release
+########################################################################################
+
+# Example of report:
+
+
+# Package dependency: Do not require package toolbox to prevent circular dependency: circular package dependency: attempt to provide toolbox 0.1 requires toolbox
+# if {[catch {package require toolbox}]} {
+#   lappend auto_path {/home/dpefour/git/scripts/toolbox}
+#   package require toolbox
+# }
+
+namespace eval ::tb {
+#   namespace export -force report_summary
+}
+
+namespace eval ::tb::utils {
+  namespace export -force report_summary
+}
+
+namespace eval ::tb::utils::report_summary {
+  namespace export -force report_summary
+  variable version {2016.07.25}
+  variable params
+  variable metrics
+  variable output {}
+  array set params [list format {table} writeheader 1 verbose 0 debug 0 debug_level 1 debug_channel {stdout} debug_log {} ]
+  array set metrics [list]
+  # Default metrics
+  set metrics(synth)            [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {Runtime tag.runtime} ]
+  set metrics(opt)              [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {Runtime tag.runtime} ]
+  set metrics(place)            [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {{N-S-E-W} congestion.placer} {Runtime tag.runtime} ]
+  set metrics(physopt)          [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {{N-S-E-W} congestion.placer} {Runtime tag.runtime} ]
+#   set metrics(route)            [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {Overlaps route.errors} {{N-S-E-W} congestion.router} {SLLs design.slls} {Runtime tag.runtime} ]
+  set metrics(route)            [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {Overlaps route.errors} {{Router (N-S-E-W)} congestion.router} {{Global (N-S-E-W)} congestion.estimated.global} {{Long (N-S-E-W)} congestion.estimated.long} {{Short (N-S-E-W)} congestion.estimated.short} {SLLs design.slls} {Runtime tag.runtime} ]
+  set metrics(postroutephysopt) [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {Overlaps route.errors} {{N-S-E-W} congestion.router} {SLLs design.slls} {Runtime tag.runtime} ]
+}
+
+##-----------------------------------------------------------------------
+## lshift
+##-----------------------------------------------------------------------
+##
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::lshift {inputlist} {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+##-----------------------------------------------------------------------
+## progressBar
+##-----------------------------------------------------------------------
+## Progress bar
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::progressBar {cur tot {indent {}}} {
+  # http://wiki.tcl.tk/16939
+  # if you don't want to redraw all the time, uncomment and change ferquency
+  #if {$cur % ($tot/300)} { return }
+  # set to total width of progress bar
+  set total 76
+
+  # Do not show the progress bar in GUI and Batch modes
+  if {[info var ::rdi::mode] != {}} {
+    if {$::rdi::mode != {tcl}} { return -code ok }
+  }
+
+  set half [expr {$total/2}]
+  set percent [expr {100.*$cur/$tot}]
+  set val (\ [format "%6.2f%%" $percent]\ )
+  set str "|[string repeat = [expr {round($percent*$total/100)}]][string repeat { } [expr {$total-round($percent*$total/100)}]]|"
+  set str "[string range $str 0 $half]$val[string range $str [expr {$half+[string length $val]-1}] end]"
+  puts -nonewline stderr "\r${indent}${str}"
+}
+
+##-----------------------------------------------------------------------
+## dputs debug
+##-----------------------------------------------------------------------
+## Debug functions
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::dputs {args} {
+  variable params
+  if {!$params(debug)} { return -code ok }
+  switch [llength $args] {
+    2 {
+      set level [lindex $args 0]
+    }
+    default {
+      set level 1
+    }
+  }
+  set string [lindex $args end]
+  if {$params(debug_level) >= $level} {
+    uplevel 1 [list puts $params(debug_channel) $string]
+  }
+  return -code ok
+}
+
+proc ::tb::utils::report_summary::DEBUG {args} {
+  variable params
+  if {!$params(debug)} { return -code ok }
+  switch [llength $args] {
+    2 {
+      set level [lindex $args 0]
+    }
+    default {
+      set level 1
+    }
+  }
+  set body [lindex $args end]
+  if {$params(debug_level) >= $level} {
+    uplevel 1 $body
+  }
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## createHeader
+##-----------------------------------------------------------------------
+## Create file header
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::createHeader {} {
+  variable params
+  if {!$params(writeheader)} { return {} }
+  set header {}
+  append header "# ----------------------------------------------------------------------\n"
+  append header [format "# Created on %s with report_summary (%s)\n" [clock format [clock seconds]] $::tb::utils::report_summary::version ]
+  append header "# ----------------------------------------------------------------------\n"
+  return $header
+}
+
+##-----------------------------------------------------------------------
+## formatRuntime
+##-----------------------------------------------------------------------
+## Format runtime metric
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::formatRuntime {runtime} {
+  if {$runtime == {}} { return {-} }
+  if {![regexp {^[0-9]+$} $runtime]} { return {-} }
+  if {$runtime == 0} { return {-} }
+  set duration [duration $runtime]
+  set str [regsub {\s*[0-9]+\s+secs?} $duration {}]
+  if {$str == {}} {
+    # $str is empty if $duration <= 59 seconds
+    # In this case, return $duration to prevent empty string
+    set str $duration
+  }
+  return $str
+}
+
+##-----------------------------------------------------------------------
+## mergeTables
+##-----------------------------------------------------------------------
+## Merge a list of prettyTables in a single new prettyTable.
+## Only tables that have rows are being merged.
+## Asumption: all the valid tables have the same number of rows.
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::mergeTables {tables} {
+  variable params
+  set mergedTbl [tb::prettyTable]
+  set header [list]
+  foreach tbl $tables {
+    # Do not merge tables that have no row
+    if {[$tbl numrows] == 0} {
+      continue
+    }
+    lappend header [$tbl header]
+  }
+  $mergedTbl header [join $header]
+  # Asumption: all the tables have the same number of rows
+  for {set i 0} {$i < [[lindex $tables 0] numrows]} {incr i} {
+    set row [list]
+    foreach tbl $tables {
+      if {[$tbl numrows] == 0} {
+        continue
+      }
+#       if {[$tbl numcols] == 1} {
+#         continue
+#       }
+      lappend row [$tbl getrow $i]
+    }
+    $mergedTbl addrow [join $row]
+  }
+# puts [$mergedTbl print]
+  return $mergedTbl
+}
+
+##-----------------------------------------------------------------------
+## outputTable
+##-----------------------------------------------------------------------
+## Add table content to $output variable
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::outputTable {tbl ofilename} {
+  variable params
+  variable output
+  switch $params(format) {
+    table {
+      foreach line [split [$tbl print] \n] {
+        lappend output $line
+      }
+    }
+    csv {
+      foreach line [split [$tbl export -format {csv}] \n] {
+        lappend output $line
+      }
+      # In CSV mode, add a commented out version of the table report
+      if {$ofilename != {}} {
+        # Append a comment out version of the table
+        foreach line [split [$tbl print] \n] {
+          lappend output [format {#  %s} $line]
+        }
+      }
+    }
+  }
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## duration
+##-----------------------------------------------------------------------
+## Convert a number of seconds in a human readable string.
+## Example:
+##      set startTime [clock seconds]
+##      ...
+##      set endTime [clock seconds]
+##      puts "The runtime is: [duration [expr $endTime - startTime]]"
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::duration { int_time } {
+   set timeList [list]
+   if {$int_time == 0} { return "0 sec" }
+   foreach div {86400 3600 60 1} mod {0 24 60 60} name {day hr min sec} {
+     set n [expr {$int_time / $div}]
+     if {$mod > 0} {set n [expr {$n % $mod}]}
+     if {$n > 1} {
+       lappend timeList "$n ${name}s"
+     } elseif {$n == 1} {
+       lappend timeList "$n $name"
+     }
+   }
+   return [join $timeList]
+}
+
+##-----------------------------------------------------------------------
+## iota
+##-----------------------------------------------------------------------
+## Generate a list of integers
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::iota {from to} {
+  set out [list]
+  if {$from <= $to} {
+    for {set i $from} {$i <= $to} {incr i}    {lappend out $i}
+  } else {
+    for {set i $from} {$i >= $to} {incr i -1} {lappend out $i}
+  }
+  return $out
+}
+
+##-----------------------------------------------------------------------
+## getParam
+##-----------------------------------------------------------------------
+## Extract param from a list of table(s)
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::getParam {tables param} {
+  set values [list]
+  foreach tbl $tables {
+    set row [$tbl search $param -glob -return_matching_rows]
+    # $row is a list of rows, so take the first element
+    set value [lindex [lindex $row 0] 2]
+    lappend values $value
+  }
+  if {[llength $values] == 1} {
+    # Return single value
+    return [lindex $values 0]
+  }
+  # Return list of values
+  return $values
+}
+
+##-----------------------------------------------------------------------
+## getSublist
+##-----------------------------------------------------------------------
+## $L = {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {Runtime tag.runtime}
+## % getSublist $metrics(opt) 0
+## WNS TNS # WHS THS # Runtime
+## % getSublist $metrics(opt) 1
+## timing.wns timing.tns timing.tnsFallingEp timing.whs timing.ths timing.thsFallingEp tag.runtime
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::getSublist {L idx} {
+  global metrics
+  set res [list]
+  foreach el $L {
+    lappend res [lindex $el $idx]
+  }
+  return $res
+}
+
+##-----------------------------------------------------------------------
+## pdict
+##-----------------------------------------------------------------------
+## Print dict
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::pdict {dict {pattern *}} {
+  set longest 0
+  dict for {key -} $dict {
+    if {[string match $pattern $key]} {
+      set longest [expr {max($longest, [string length $key])}]
+    }
+  }
+  dict for {key value} $dict {
+    puts [format "%-${longest}s = %s" $key $value]
+  }
+}
+
+##-----------------------------------------------------------------------
+## report_summary
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::utils::report_summary::report_summary {args} {
+  variable reports
+  variable metrics
+  variable params
+  variable output
+  set params(verbose) 0
+  set params(debug) 0
+  set params(format) {table}
+  set ofilename {}
+  set ifilenames {}
+  set filemode {w}
+  set showruntime 1
+  set showsetup 1
+  set showhold 1
+  set showcongestion 1
+  set showoverlaps 1
+  set showslls 1
+  set showempty 1
+  set returnstring 0
+  set summaryType {single} ; # single multiple
+  set expansionType {default} ; # default | full
+  set hideSteps [list]
+  set log {}
+  set standalone 0
+  set error 0
+  set help 0
+  if {([llength $args] == 0) || ($args == {-standalone})} {
+    set help 1
+  }
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-output$} -
+      {^-f(i(le?)?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-csv?$} {
+        set params(format) {csv}
+      }
+      {^-i(n(p(ut?)?)?)?$} {
+        foreach pattern [lshift args] {
+          foreach file [glob -nocomplain $pattern] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
+              incr error
+              continue
+            }
+            lappend ifilenames [file normalize $file]
+          }
+        }
+        set ifilenames [lsort -unique $ifilenames]
+      }
+      {^-no_r(u(n(t(i(me?)?)?)?)?)?$} {
+        set showruntime 0
+      }
+      {^-no_se(t(up?)?)?$} {
+        set showsetup 0
+      }
+      {^-no_h(o(ld?)?)?$} {
+        set showhold 0
+      }
+      {^-no_c(o(n(g(e(s(t(i(on?)?)?)?)?)?)?)?)?$} {
+        set showcongestion 0
+      }
+      {^-no_o(v(e(r(l(ap?)?)?)?)?)?$} {
+        set showoverlaps 0
+      }
+      {^-no_sll?$} {
+        set showslls 0
+      }
+      {^-hide_e(m(p(ty?)?)?)?$} {
+        set showempty 0
+      }
+      {^-ti(m(i(n(g(_(o(n(ly?)?)?)?)?)?)?)?)?$} {
+        set showruntime 0
+        set showcongestion 0
+        set showoverlaps 0
+        set showslls 0
+      }
+      {^-ex(p(a(n(d(_(i(t(e(r(a(t(i(o(ns?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set expansionType {full}
+      }
+      {^-sp(l(it?)?)?$} {
+        set summaryType {multiple}
+      }
+      {^-ap(p(e(nd?)?)?)?$} {
+        set filemode {a}
+      }
+      {^-r(e(t(u(r(n(_(s(t(r(i(ng?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set returnstring 1
+      }
+      {^-im(p(o(r(t(_(m(e(t(r(i(cs?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set file [lshift args]
+        if {![file exists $file]} {
+          incr error
+          puts " -E- Metric file '[file normalize $file]' does not exist"
+        } else {
+          if {$params(verbose)} {
+            puts " -I- Import metric file '[file normalize $file]'"
+          }
+          source $file
+        }
+      }
+      {^-ex(p(o(r(t(_(m(e(t(r(i(cs?)?)?)?)?)?)?)?)?)?)?)?$} {
+        set file [lshift args]
+        set FH [open $file {w}]
+        puts $FH "# List of metrics per implementation step:"
+        puts $FH [format "set metrics(synth)            \[list $metrics(synth) \] "]
+        puts $FH [format "set metrics(opt)              \[list $metrics(opt) \] "]
+        puts $FH [format "set metrics(place)            \[list $metrics(place) \] "]
+        puts $FH [format "set metrics(physopt)          \[list $metrics(physopt) \] "]
+        puts $FH [format "set metrics(route)            \[list $metrics(route) \] "]
+        puts $FH [format "set metrics(postroutephysopt) \[list $metrics(postroutephysopt) \] "]
+        close $FH
+        puts " -I- Exported metrics to [file normalize $file]"
+        return -code ok
+      }
+      {^-hide_s(t(e(ps?)?)?)?$} {
+        set hideSteps [concat $hideSteps [lshift args]]
+      }
+      {^-no_h(e(a(d(er?)?)?)?)?$} {
+        set params(writeheader) 0
+      }
+      {^-standalone$} {
+        # The script is run in standalone mode
+        set standalone 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-debug_level$} {
+        set params(debug_level) [lshift args]
+      }
+      {^-debug_log$} {
+#         set params(debug_log) [lshift args]
+        set log [lshift args]
+      }
+      {^-h(e(lp?)?)?$} {
+           set help 1
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          foreach file [glob -nocomplain $name] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
+              incr error
+              continue
+            }
+            lappend ifilenames [file normalize $file]
+          }
+          set ifilenames [lsort -unique $ifilenames]
+        }
+      }
+    }
+  }
+
+  if {$help} {
+    set help [format {
+  Usage: tb::report_summary
+              [<pattern>][-input <filename>][-input <pattern>]
+              [-output <filename>][-file <filename>]
+              [-expand_iterations]
+              [-append]
+              [-csv]
+              [-return_string]
+              [-split]
+              [-no_runtime][-no_congestion][-no_overlap][-no_sll]
+              [-no_setup][-no_hold]
+              [-no_header]
+              [-timing_only]
+              [-hide_empty]
+              [-hide_steps <synth|opt|place|physopt|route|postroutephysopt>]
+              [-import_metrics <file>]
+              [-export_metrics <file>]
+              [-verbose|-v]
+              [-help|-h]
+
+  Description: Report the design summary metrics organized by project/experiment
+
+    -expand_iterations: expand all the flow step iterations
+    -split: one table per flow step vs. one tables for all the flow steps
+    -timing_only: suppress all non-timing information
+    -no_runtime: suppress runtime information
+    -no_setup: suppress Setup timing information
+    -no_hold: suppress Hold timing information
+    -no_congestion: suppress congestion information
+    -no_overlap: suppress routing overlaps information
+    -no_sll: suppress SLLs information
+    -no_header: suppress file header
+    -hide_empty: suppress empty columns
+    -hide_steps: suppress specified list of flow step(s)
+
+  Example:
+     tb::report_summary *_sum.csv
+     tb::report_summary *_sum.csv -file metrics.rpt
+     tb::report_summary *_sum.csv -expand_iterations -return_string
+     tb::report_summary *_sum.csv -hide_steps {synth opt}
+} ]
+    # HELP -->
+    if {$standalone} {
+      regsub -all {tb::} $help {} help
+      regsub -all {\{} $help {'} help
+      regsub -all {\}} $help {'} help
+    }
+    puts $help
+    return -code ok
+  }
+
+  if {($ofilename != {}) && $returnstring} {
+    puts " -E- cannot use -file & -return_string together"
+    incr error
+  }
+
+  if {$standalone && $returnstring} {
+    puts " -E- cannot use -return_string in standalone mode"
+    incr error
+  }
+
+  foreach step $hideSteps {
+    if {[lsearch [list {synth} {opt} {place} {physopt} {route} {postroutephysopt}] $step] == -1} {
+      puts " -E- Unsupported step '$step'. The supported values are: synth opt place physopt route postroutephysopt"
+      incr error
+    }
+  }
+
+  if {$error} {
+    error " -E- some error(s) happened. Cannot continue"
+  }
+  if {$log != {}} {
+    if {($params(debug_channel) != {stdout}) && ($params(debug_channel) != {})} {
+      close $params(debug_channel)
+      set params(debug_channel) {}
+    }
+    set params(debug_channel) [open $log {w}]
+    set params(debug_log) $log
+    dputs [createHeader]
+    puts " -I- Debug file [file normalize $params(debug_log)]"
+  }
+
+  set startTime [clock seconds]
+  set output [list]
+
+  if {[catch {
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+    dputs " -D- Number of input files: [llength $ifilenames]"
+
+    set data [dict create]
+
+    set projects [list] ; set versions [list] ; set releases [list]; set experiments [list] ; set steps [list] ; set directives [list]
+    set count 0
+    foreach filename $ifilenames {
+      incr count
+      dputs " -D- Processing $filename"
+      if {[llength $ifilenames] > 1} {
+        if {$params(verbose)} {
+          progressBar $count [llength $ifilenames] [format { Processing [%s/%s] (%s)} $count [llength $ifilenames] [file normalize $filename] ]
+        } else {
+          progressBar $count [llength $ifilenames] [format { Processing [%s/%s] } $count [llength $ifilenames]]
+        }
+      } else {
+        progressBar $count [llength $ifilenames]
+      }
+
+      # Variable initialization
+      foreach var {project version release experiment step directive runtime time} { set $var {} }
+      # Import CSV file
+      if {[catch { set tbl [tb::csv2tbl -i $filename] } errorstring]} {
+        # Failed to read, go to next file
+        # Extra \n for proper formatting with the progress bar
+        puts "\n -E- skipping file '$filename': $errorstring"
+        continue
+      }
+      # Read metrics from table
+      foreach var {project version release experiment step directive} {
+        if {$var == {release}} {
+          set value [getParam $tbl {vivado.version}]
+        } else {
+          set value [getParam $tbl tag.${var}]
+        }
+        if {$value == {}} { set value {-} }
+        set $var $value
+        lappend ${var}s [subst $$var]
+      }
+#       dict set data $project $version $release $experiment $step $directive $tbl
+      dict set data $project $version $release $experiment $step $tbl
+    }
+    # Uniquify list of projects / versions / releases / experiments / steps / directives
+    foreach var {projects versions releases experiments steps directives} { set $var [lsort -unique [subst $$var]] }
+    DEBUG { foreach var {projects versions releases experiments steps directives} { dputs " -D- $var := [subst $$var]" } }
+
+    set snapshots [list]
+    catch {unset maxIter}
+    # Initialize array that contains the number of iteration(s) per flow step.
+    # This array is used to build the header of each table.
+    foreach key {synth opt place physopt route postroutephysopt} { set maxIter($key) 0 }
+
+    # Organize data per project/version/release/experiment
+    foreach project $projects {
+      foreach version $versions {
+        foreach release $releases {
+          foreach experiment $experiments {
+
+            set synth [list]
+            set opt [list]
+            set place [list]
+            set physopt [list]
+            set route [list]
+            set postroutephysopt [list]
+            set totalruntime 0
+
+            if {![dict exists $data $project $version $release $experiment]} {
+#               puts "ERROR - dict exists $data $project $version $release $experiment"
+              continue
+            }
+            set d [dict get $data $project $version $release $experiment]
+            # Keys of dictionary $d represent the list of steps. The steps
+            # need to be ordered by the time of creation
+            set keys [dict keys $d]
+            set L [list]
+            foreach step $keys {
+              set tbl [dict get $data $project $version $release $experiment $step]
+              set runtime [getParam $tbl {tag.runtime}]
+              if {![regexp {^[0-9]+$} $runtime]} { set runtime 0 }
+              set totalruntime [expr $totalruntime + $runtime]
+              set time [getParam $tbl {tag.time}]
+              if {$time == {}} { set time 0 }
+              lappend L [list $time $step ]
+            }
+            # Order the steps based on the time each summary CSV was captured
+            set L [lsort -integer -index 0 -increasing $L]
+            set steps [list]
+            foreach el $L {
+              foreach {time step} $el { break }
+              lappend steps $step
+            }
+
+            # iterate through all the flow steps
+            foreach step $steps {
+              if {![dict exists $data $project $version $release $experiment $step]} {
+                continue
+              }
+              # The object $tbl includes all the metrics for that particular project/version/release/experiment/step
+              set tbl [dict get $data $project $version $release $experiment $step]
+              DEBUG {
+                set tmp {}
+                foreach var {project version release experiment step directive} {
+                  append tmp "$var := [subst $$var] / "
+                }
+                dputs " -D- $tmp"
+              }
+
+              switch -regexp -- $step {
+                {^.*synth_design.*$} {
+                  lappend synth $tbl
+                }
+                {^.*place_design.*$} {
+                  lappend place $tbl
+                }
+                {^.*phys_opt_design.*$} {
+                  if {[llength $route] == 0} {
+                    # Pre-route phys_opt_design
+                    lappend physopt $tbl
+                  } else {
+                    # Post-route phys_opt_design
+                    lappend postroutephysopt $tbl
+                  }
+                }
+                {^.*opt_design.*$} {
+                  # Moved after {^.*phys_opt_design.*$} so that the string matching is done after
+                  lappend opt $tbl
+                }
+                {^.*route_design.*$} {
+                  lappend route $tbl
+                }
+                default {
+                }
+              }
+
+            }
+
+            lappend snapshots [list $project $version $release $experiment $totalruntime $synth $opt $place $physopt $route $postroutephysopt ]
+            foreach var {synth opt place physopt route postroutephysopt} {
+              if {[llength [subst $$var]] > $maxIter($var)} {
+                # Update the array that keeps the max number of iteration(s) per flow step
+                set maxIter($var) [llength [subst $$var]]
+              }
+            }
+
+          }
+        }
+      }
+    }
+#     parray maxIter
+
+    #
+    # Create prettyTable objects for each flow step
+    # Set the tables headers
+    #
+
+    catch {unset arTbl}
+    foreach key {info synth opt place physopt route postroutephysopt} {
+    #   set arTbl($key) [tb::prettyTable create $key]
+      set arTbl($key) [tb::prettyTable]
+      $arTbl($key) title [format {%s (%s)} $key $arTbl($key)]
+    }
+
+    $arTbl(info) header {Project Version Release Experiment {Total Runtime}}
+    foreach key {synth opt place physopt route postroutephysopt} {
+      set iter $maxIter($key)
+      set header [list Step]
+      if {$iter >= 2} {
+        # More than 1 iteration => add 'Iter' column
+        lappend header {Iter}
+      }
+      if {$expansionType == {full}} {
+        for {set i 1} {$i <= $iter} {incr i} {
+          switch $key {
+            route -
+            postroutephysopt {
+#               lappend header [list Directive WNS TNS # WHS THS # Overlaps {N-S-E-W} Runtime ]
+              lappend header {Directive}
+              lappend header [getSublist $metrics($key) 0]
+            }
+            place -
+            physopt {
+#               lappend header [list Directive WNS TNS # WHS THS # {N-S-E-W} Runtime ]
+              lappend header {Directive}
+              lappend header [getSublist $metrics($key) 0]
+            }
+            default {
+#               lappend header [list Directive WNS TNS # WHS THS # Runtime ]
+              lappend header {Directive}
+              lappend header [getSublist $metrics($key) 0]
+            }
+          }
+          dputs " -D- Header: $key / $header"
+        }
+      } else {
+        switch $key {
+          route -
+          postroutephysopt {
+#             lappend header [list Directive WNS TNS # WHS THS # Overlaps {N-S-E-W} Runtime ]
+            lappend header {Directive}
+            lappend header [getSublist $metrics($key) 0]
+          }
+          place -
+          physopt {
+#             lappend header [list Directive WNS TNS # WHS THS # {N-S-E-W} Runtime ]
+            lappend header {Directive}
+            lappend header [getSublist $metrics($key) 0]
+          }
+          default {
+#             lappend header [list Directive WNS TNS # WHS THS # Runtime ]
+            lappend header {Directive}
+            lappend header [getSublist $metrics($key) 0]
+          }
+        }
+        dputs " -D- Header: $key / $header"
+      }
+      # Flatten first level of $header
+      set header [join $header]
+      $arTbl($key) header $header
+    }
+
+    #
+    # Fill tables content for each flow step
+    #
+
+    foreach snapshot $snapshots {
+      foreach {project version release experiment totalruntime synth opt place physopt route postroutephysopt} $snapshot { break }
+        DEBUG {
+          set tmp {}
+          foreach var {totalruntime synth opt place physopt route postroutephysopt} {
+            append tmp "$var := [subst $$var] / "
+          }
+          dputs -nonewline " -D- $tmp"
+        }
+      $arTbl(info) addrow [list $project $version $release $experiment [formatRuntime $totalruntime] ]
+
+      foreach step {synth opt place physopt route postroutephysopt} {
+        set row [list]
+#         lappend row $step
+        switch $step {
+          synth {
+            lappend row {synth_design}
+          }
+          opt {
+            lappend row {opt_design}
+          }
+          place {
+            lappend row {place_design}
+          }
+          physopt {
+            lappend row {phys_opt_design}
+          }
+          route {
+            lappend row {route_design}
+          }
+          postroutephysopt {
+#             lappend row {post_route_phys_opt_design}
+            lappend row {phys_opt_design}
+          }
+          default {
+            lappend row {#UNKNOWN}
+          }
+        }
+
+        set iter $maxIter($step)
+        if {$iter == 0} {
+          continue
+        }
+        if {$iter >= 2} {
+          # More than 1 iteration => add 'Iter' column
+          lappend row [llength [subst $$step] ]
+        }
+
+        if {$expansionType == {full}} {
+          # All the iteration(s) are reported
+          set tables [subst $$step]
+        } else {
+          # A single iteration is reported => it needs to be the last iteration
+          set tables [lindex [subst $$step] end]
+        }
+
+        foreach tbl $tables {
+          switch $step {
+            route -
+            postroutephysopt {
+              if {$expansionType == {full}} {
+                lappend row [getParam $tbl tag.directive]
+              } else {
+                # A single iteration is reported => the Directive column shows
+                # all the directives that have been run
+                lappend row [getParam [subst $$step] tag.directive]
+              }
+              foreach m [getSublist $metrics($step) 1] {
+                if {$m == {tag.runtime}} {
+                  lappend row [formatRuntime [getParam $tbl $m]]
+                } else {
+                  lappend row [getParam $tbl $m]
+                }
+              }
+            }
+            place -
+            physopt {
+              if {$expansionType == {full}} {
+                lappend row [getParam $tbl tag.directive]
+              } else {
+                # A single iteration is reported => the Directive column shows
+                # all the directives that have been run
+                lappend row [getParam [subst $$step] tag.directive]
+              }
+              foreach m [getSublist $metrics($step) 1] {
+                if {$m == {tag.runtime}} {
+                  lappend row [formatRuntime [getParam $tbl $m]]
+                } else {
+                  lappend row [getParam $tbl $m]
+                }
+              }
+            }
+            default {
+              if {$expansionType == {full}} {
+                lappend row [getParam $tbl tag.directive]
+              } else {
+                # A single iteration is reported => the Directive column shows
+                # all the directives that have been run
+                lappend row [getParam [subst $$step] tag.directive]
+              }
+              foreach m [getSublist $metrics($step) 1] {
+                if {$m == {tag.runtime}} {
+                  lappend row [formatRuntime [getParam $tbl $m]]
+                } else {
+                  lappend row [getParam $tbl $m]
+                }
+              }
+            }
+          }
+
+        }
+
+        # Add padding at the end of to the row to make sure it has the correct length (if applicable)
+        if {[llength $row] < [llength [$arTbl($step) header]]} {
+          for {set i [llength $row]} {$i < [llength [$arTbl($step) header]]} {incr i} {
+            lappend row [list]
+          }
+        }
+
+        dputs " -D- Step=$step / length=[llength $row] / $row"
+        $arTbl($step) addrow $row
+      }
+
+    }
+    DEBUG { foreach key {info synth opt place physopt route postroutephysopt} { dputs [$arTbl($key) print] } }
+
+    # Sanity check ...
+    set error 0
+    set numrows [$arTbl(info) numrows]
+    foreach key {synth opt place physopt route postroutephysopt} {
+      if {[$arTbl($key) numrows] == 0} { continue }
+      if {[$arTbl($key) numrows] != $numrows} {
+        incr error
+        puts " -E- table '$key' has incorrect number of rows ([$arTbl($key) numrows] versus $numrows)"
+      }
+    }
+    if {$error} {
+      error " Some error(s) occured. Cannot merge the tables"
+    }
+
+    #
+    # Some filtering
+    #
+
+    foreach step $hideSteps {
+      # Reset the table of hidden flow steps
+      $arTbl($step) reset
+    }
+
+    if {!$showruntime} {
+      foreach key {info synth opt place physopt route postroutephysopt} {
+        set cols [lsearch -all -glob [$arTbl($key) header] {*Runtime*} ]
+        $arTbl($key) delcolumns $cols
+      }
+    }
+
+    if {!$showsetup} {
+      foreach key {info synth opt place physopt route postroutephysopt} {
+        set cols [lsearch -all [$arTbl($key) header] {TNS} ]
+        set L [list]
+        foreach el $cols {
+          # Asumption, WNS is the column before TNS and # is the column after TNS
+          set L [concat $L [list [expr $el -1] $el [expr $el +1] ]]
+        }
+        $arTbl($key) delcolumns $L
+      }
+    }
+
+    if {!$showhold} {
+      foreach key {info synth opt place physopt route postroutephysopt} {
+        set cols [lsearch -all [$arTbl($key) header] {THS} ]
+        set L [list]
+        foreach el $cols {
+          # Asumption, WHS is the column before THS and # is the column after THS
+          set L [concat $L [list [expr $el -1] $el [expr $el +1] ]]
+        }
+        $arTbl($key) delcolumns $L
+      }
+    }
+
+    if {!$showcongestion} {
+      foreach key {info synth opt place physopt route postroutephysopt} {
+        set cols [lsearch -all -glob [$arTbl($key) header] {*N-S-E-W*} ]
+        $arTbl($key) delcolumns $cols
+      }
+    }
+
+    if {!$showoverlaps} {
+      foreach key {info synth opt place physopt route postroutephysopt} {
+        set cols [lsearch -all -glob [$arTbl($key) header] {Overlaps} ]
+        $arTbl($key) delcolumns $cols
+      }
+    }
+
+    if {!$showslls} {
+      foreach key {info synth opt place physopt route postroutephysopt} {
+        set cols [lsearch -all -glob [$arTbl($key) header] {SLLs} ]
+        $arTbl($key) delcolumns $cols
+      }
+    } else {
+      # Only show the last 'SSLs' column since those are wide columns
+      # and they should have all the same values
+      foreach key {info synth opt place physopt route postroutephysopt} {
+        set cols [lsort -integer [lsearch -all -glob [$arTbl($key) header] {SLLs} ]]
+        if {[llength $cols] >= 2} {
+          $arTbl($key) delcolumns [lrange $cols 1 end]
+        }
+      }
+    }
+
+    # Remove empty columns (apart from tag columns)
+    if {!$showempty} {
+      foreach key {info synth opt place physopt route postroutephysopt} {
+        if {[$arTbl($key) numrows] == 0} {
+          continue
+        }
+        # Scaning columns from last column to the first ones. Do not check
+        # the first 2 columns (Step, Directive)
+        for {set idx [expr [$arTbl($key) numcols] -1]} {$idx > 1} {incr idx -1} {
+          set column [$arTbl($key) getcolumns $idx]
+          if {([lsort -unique $column] == {}) || ([lsort -unique $column] == [list {}])} {
+            if {$params(verbose)} {
+              puts " -I- deleting empty column '[lindex [$arTbl($key) header] $idx]' (index $idx) from $key"
+            }
+            $arTbl($key) delcolumns $idx
+          }
+        }
+      }
+    }
+
+    #
+    # Build the merged table (merge all tables from the flow steps)
+    #
+
+    if {$summaryType == {single}} {
+      # One table for all flow steps
+      set mergedTbl [mergeTables [list $arTbl(info) $arTbl(synth) $arTbl(opt) $arTbl(place) $arTbl(physopt) $arTbl(route) $arTbl(postroutephysopt) ] ]
+      # One more filtering:
+      #   Only show the last 'SSLs' column since those are wide columns
+      #   and they should have all the same values
+      set cols [lsort -integer -increasing [lsearch -all -glob [$mergedTbl header] {SLLs} ]]
+      if {[llength $cols] >= 2} {
+        $mergedTbl delcolumns [lrange $cols 0 end-1]
+      }
+      outputTable $mergedTbl $ofilename
+    } else {
+      # One table per flow step
+      foreach key {synth opt place physopt route postroutephysopt} {
+        if {[$arTbl($key) numrows] == 0} {
+          continue
+        }
+#         if {[$arTbl($key) numcols] == 1} {
+#           continue
+#         }
+        set mergedTbl [mergeTables [list $arTbl(info) $arTbl($key) ] ]
+        $mergedTbl title $key
+        outputTable $mergedTbl $ofilename
+        lappend output {}
+      }
+    }
+
+    ########################################################################################
+    ##
+    ##
+    ##
+    ########################################################################################
+
+  } errorstring]} {
+    puts " -E- $errorstring"
+  }
+
+  # Clear progress bar
+  if {$params(verbose)} {
+    puts "\r[string repeat { } 220]"
+  } else {
+    puts "\r[string repeat { } 100]"
+  }
+
+  puts ""
+
+  if {$params(debug)} {
+  }
+
+  set stopTime [clock seconds]
+#   puts " -I- report_summary completed in [expr $stopTime - $startTime] seconds"
+
+  if {$ofilename != {}} {
+    set header [createHeader]
+    set FH [open $ofilename $filemode]
+    if {$header != {}} { puts $FH $header }
+    puts $FH [join $output \n]
+    close $FH
+    puts " -I- Generated file [file normalize $ofilename]"
+    return -code ok
+  }
+
+  if {$returnstring} {
+    return [join $output \n]
+  } else {
+    puts [join $output \n]
+  }
+  return -code ok
+}
+
+namespace eval ::tb::utils {
+  namespace import -force ::tb::utils::report_summary::report_summary
+}
+
+namespace eval ::tb {
+  namespace import -force ::tb::utils::report_summary
+}
+
+########################################################################################
+##
+##
+##
+########################################################################################
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  # Package dependency: do not require package toolbox to prevent circular dependency: circular package dependency: attempt to provide toolbox 0.1 requires toolbox
+  # The asumption is that this script is being sourced through 'package require tollbox'
+#   if {[catch {package present toolbox}]} { package require toolbox }
+} else {
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  ::tb::utils::report_summary::lshift ::argv
+  # Package dependency
+  if {[catch {package present toolbox}]} { package require toolbox }
+  set exitCode 0
+#   if {[catch {eval [concat ::tb::utils::report_summary::report_summary -standalone -input {*}$files $argv]} errorstring]} {}
+  if {[catch {eval [concat ::tb::utils::report_summary::report_summary -standalone $argv]} errorstring]} {
+    puts $errorstring
+    set exitCode 1
+  }
+  # Closing debug file
+  if {($::tb::utils::report_summary::params(debug_channel) != {stdout}) && ($::tb::utils::report_summary::params(debug_channel) != {})} {
+    close $::tb::utils::report_summary::params(debug_channel)
+  }
+  exit $exitCode
+}
