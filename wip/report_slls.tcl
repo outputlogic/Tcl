@@ -14,7 +14,7 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.05.28
+## Version:        2016.09.27
 ## Description:    Generate a report for SLL nets
 ##
 ## Based on code from Frank Mueller and Frederic Revenu
@@ -22,6 +22,8 @@
 ########################################################################################
 
 ########################################################################################
+## 2016.09.27 - Added support for UltraScale Plus
+## 2016.07.27 - Fixed typo in loading xilinx::designutils
 ## 2016.05.28 - Added support for -return_summary
 ## 2016.01.20 - Changed the method to load xilinx::designutils to prevent warning
 ## 2015.12.10 - Minor change when loading xilinx::designutils to prevent Error message
@@ -86,7 +88,7 @@
 catch {
   if {[lsearch [tclapp::list_apps] {xilinx::designutils}] == -1} {
 #     tclapp::install designutils
-    tclapp::load xilinx::designutils
+    tclapp::load_apps xilinx::designutils
   }
 }
 
@@ -100,7 +102,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_slls {
   namespace export -force report_slls get_sll_nets get_sll_nodes
-  variable version {2016.05.28}
+  variable version {2016.09.27}
   variable params
   variable output {}
   array set params [list format {table} verbose 0 debug 0]
@@ -202,7 +204,7 @@ proc ::tb::utils::report_slls::report_slls {args} {
               [-verbose|-v]
               [-help|-h]
 
-  Description: Generate report for SLL nets (UltraScale only)
+  Description: Generate report for SLL nets (UltraScale & UltraScale Plus only)
 
     Version: %s
 
@@ -239,6 +241,12 @@ proc ::tb::utils::report_slls::report_slls {args} {
     kintexum -
     virtexu -
     virtexum {
+      set lagunaPrefix {LAGUNA_TILE}
+    }
+    zynquplus -
+    kintexuplus -
+    virtexuplus {
+      set lagunaPrefix {LAG_LAG}
     }
     default {
       puts " -E- architecture $architecture is not supported."
@@ -307,17 +315,17 @@ proc ::tb::utils::report_slls::report_slls {args} {
         # that should be analyzed
         continue
       }
-      set all_SLLs($clock_region) [get_nodes -quiet -of [get_tiles -quiet LAGUNA_TILE_X*Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]
+      set all_SLLs($clock_region) [get_nodes -quiet -of [get_tiles -quiet ${lagunaPrefix}_X*Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]
       set baseClockRegion [get_property -quiet BASE_CLOCK_REGION [lindex $all_SLLs($clock_region) 0]]
       set tiles [lsort [get_tiles -of $all_SLLs($clock_region)]]
-#       regexp {LAGUNA_TILE_X(\d*)Y(\d*)} [lindex $tiles 0] - CLB_col_min LagunaY
-#       regexp {LAGUNA_TILE_X(\d*)Y(\d*)} [lindex $tiles end] - CLB_col_max LagunaY
-      regexp {LAGUNA_TILE_X(\d*)Y(\d*)} [lindex $tiles 0] - Xmin LagunaY
-      regexp {LAGUNA_TILE_X(\d*)Y(\d*)} [lindex $tiles end] - Xmax LagunaY
+#       regexp {${lagunaPrefix}_X(\d*)Y(\d*)} [lindex $tiles 0] - CLB_col_min LagunaY
+#       regexp {${lagunaPrefix}_X(\d*)Y(\d*)} [lindex $tiles end] - CLB_col_max LagunaY
+      regexp [format {%s_X(\d*)Y(\d*)} ${lagunaPrefix}] [lindex $tiles 0] - Xmin LagunaY
+      regexp [format {%s_X(\d*)Y(\d*)} ${lagunaPrefix}] [lindex $tiles end] - Xmax LagunaY
       set CLB_col_min [min $Xmin $Xmax]
       set CLB_col_max [max $Xmin $Xmax]
-      set used_SLLs($SLR:$clock_region:$CLB_col_min) [get_nodes -quiet -of [get_nets -quiet -of [get_nodes -of [get_tiles -quiet LAGUNA_TILE_X${CLB_col_min}Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]] -filter BASE_CLOCK_REGION=~$baseClockRegion&&NAME=~LAGUNA_TILE_X${CLB_col_min}Y*UBUMP*]
-      set used_SLLs($SLR:$clock_region:$CLB_col_max) [get_nodes -quiet -of [get_nets -quiet -of [get_nodes -of [get_tiles -quiet LAGUNA_TILE_X${CLB_col_max}Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]] -filter BASE_CLOCK_REGION=~$baseClockRegion&&NAME=~LAGUNA_TILE_X${CLB_col_max}Y*UBUMP*]
+      set used_SLLs($SLR:$clock_region:$CLB_col_min) [get_nodes -quiet -of [get_nets -quiet -of [get_nodes -of [get_tiles -quiet ${lagunaPrefix}_X${CLB_col_min}Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]] -filter BASE_CLOCK_REGION=~$baseClockRegion&&NAME=~${lagunaPrefix}_X${CLB_col_min}Y*UBUMP*]
+      set used_SLLs($SLR:$clock_region:$CLB_col_max) [get_nodes -quiet -of [get_nets -quiet -of [get_nodes -of [get_tiles -quiet ${lagunaPrefix}_X${CLB_col_max}Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]] -filter BASE_CLOCK_REGION=~$baseClockRegion&&NAME=~${lagunaPrefix}_X${CLB_col_max}Y*UBUMP*]
 
       set sllNets($SLR:$clock_region:$CLB_col_min) [get_nets -quiet -of $used_SLLs($SLR:$clock_region:$CLB_col_min)]
       set sllNets($SLR:$clock_region:$CLB_col_max) [get_nets -quiet -of $used_SLLs($SLR:$clock_region:$CLB_col_max)]
@@ -502,6 +510,12 @@ proc ::tb::utils::report_slls::get_sll_nodes { {regions {}} } {
     kintexum -
     virtexu -
     virtexum {
+      set lagunaPrefix {LAGUNA_TILE}
+    }
+    zynquplus -
+    kintexuplus -
+    virtexuplus {
+      set lagunaPrefix {LAG_LAG}
     }
     default {
       puts " -E- architecture $architecture is not supported."
@@ -542,17 +556,17 @@ proc ::tb::utils::report_slls::get_sll_nodes { {regions {}} } {
         # that should be analyzed
         continue
       }
-      set all_SLLs($clock_region) [get_nodes -quiet -of [get_tiles -quiet LAGUNA_TILE_X*Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]
+      set all_SLLs($clock_region) [get_nodes -quiet -of [get_tiles -quiet ${lagunaPrefix}_X*Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]
       set baseClockRegion [get_property -quiet BASE_CLOCK_REGION [lindex $all_SLLs($clock_region) 0]]
       set tiles [lsort [get_tiles -of $all_SLLs($clock_region)]]
-#       regexp {LAGUNA_TILE_X(\d*)Y(\d*)} [lindex $tiles 0] all CLB_col_min LagunaY
-#       regexp {LAGUNA_TILE_X(\d*)Y(\d*)} [lindex $tiles end] all CLB_col_max LagunaY
-      regexp {LAGUNA_TILE_X(\d*)Y(\d*)} [lindex $tiles 0] - Xmin LagunaY
-      regexp {LAGUNA_TILE_X(\d*)Y(\d*)} [lindex $tiles end] - Xmax LagunaY
+#       regexp {${lagunaPrefix}_X(\d*)Y(\d*)} [lindex $tiles 0] all CLB_col_min LagunaY
+#       regexp {${lagunaPrefix}_X(\d*)Y(\d*)} [lindex $tiles end] all CLB_col_max LagunaY
+      regexp [format {%s_X(\d*)Y(\d*)} ${lagunaPrefix}] [lindex $tiles 0] - Xmin LagunaY
+      regexp [format {%s_X(\d*)Y(\d*)} ${lagunaPrefix}] [lindex $tiles end] - Xmax LagunaY
       set CLB_col_min [min $Xmin $Xmax]
       set CLB_col_max [max $Xmin $Xmax]
-      set used_SLLs($SLR:$clock_region:$CLB_col_min) [get_nodes -quiet -of [get_nets -quiet -of [get_nodes -of [get_tiles -quiet LAGUNA_TILE_X${CLB_col_min}Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]] -filter BASE_CLOCK_REGION=~$baseClockRegion&&NAME=~LAGUNA_TILE_X${CLB_col_min}Y*UBUMP*]
-      set used_SLLs($SLR:$clock_region:$CLB_col_max) [get_nodes -quiet -of [get_nets -quiet -of [get_nodes -of [get_tiles -quiet LAGUNA_TILE_X${CLB_col_max}Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]] -filter BASE_CLOCK_REGION=~$baseClockRegion&&NAME=~LAGUNA_TILE_X${CLB_col_max}Y*UBUMP*]
+      set used_SLLs($SLR:$clock_region:$CLB_col_min) [get_nodes -quiet -of [get_nets -quiet -of [get_nodes -of [get_tiles -quiet ${lagunaPrefix}_X${CLB_col_min}Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]] -filter BASE_CLOCK_REGION=~$baseClockRegion&&NAME=~${lagunaPrefix}_X${CLB_col_min}Y*UBUMP*]
+      set used_SLLs($SLR:$clock_region:$CLB_col_max) [get_nodes -quiet -of [get_nets -quiet -of [get_nodes -of [get_tiles -quiet ${lagunaPrefix}_X${CLB_col_max}Y* -of [get_clock_regions -quiet $clock_region]] -regexp -filter {NAME =~ .*UBUMP\d.*}]] -filter BASE_CLOCK_REGION=~$baseClockRegion&&NAME=~${lagunaPrefix}_X${CLB_col_max}Y*UBUMP*]
 #       set sllNets($SLR:$clock_region:$CLB_col_min) [get_nets -quiet -of $used_SLLs($SLR:$clock_region:$CLB_col_min)]
 #       set sllNets($SLR:$clock_region:$CLB_col_max) [get_nets -quiet -of $used_SLLs($SLR:$clock_region:$CLB_col_max)]
       foreach el $used_SLLs($SLR:$clock_region:$CLB_col_min) { lappend sll_nodes $el }
