@@ -6,8 +6,8 @@
 # HEADER_END
 ####################################################################################################
 
-proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
-proc reload {} " source [info script]; puts \" [info script] reloaded\" "
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " source [info script]; puts \" [info script] reloaded\" "
 
 ########################################################################################
 ##
@@ -163,7 +163,7 @@ proc ::tb::utils::report_slr_utilization::report_slr_utilization {args} {
            set help 1
       }
       default {
-            if {[string match "-*" $name]} {
+            if {[string match "-*" [lindex $name 0]]} {
               puts " -E- option '$name' is not a valid option."
               incr error
             } else {
