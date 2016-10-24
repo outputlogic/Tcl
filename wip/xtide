@@ -243,7 +243,8 @@ proc ::tb::xtide::getData {} {
 #   # Last line: The use of this system is restricted to authorized persons only.  All others will be prosecuted to the full extent of the law.
 #   set report [join [lrange [split $returnstring \n] 1 end-1] \n]
 
-  catch { exec ssh git-dev ypcat -k passwd } returnstring
+  catch { exec ssh xsjdpefour41 ypcat -k passwd } returnstring
+#   catch { exec ssh git-dev ypcat -k passwd } returnstring
   # When ssh to git-dev, remove the lines that are not coming from ypcat command:
   # First line: >>> Start of .cshrc ...
   # Last line: The use of this system is restricted to authorized persons only.  All others will be prosecuted to the full extent of the law.
