@@ -11,13 +11,19 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.02.26
+## Version:        2016.08.22
 ## Tool Version:   Vivado 2014.1
 ## Description:    This package provides commands for timing correlation
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.08.22 - Added support for disableglobals for methods get_p2p_info/get_p2p_delay
+##            - Added method compare_p2p_est
+##            - Updated all methods' command line options to support regexp
+## 2016.08.10 - Added support for crunch delay/system/both delay extraction (UltraScale Plus)
+##            - Added support for -p2p/-system/-delay/-removelutpindelay for method get_p2p_info
+##            - Added support for -p2p/-system/-delay/-removelutpindelay for method get_p2p_delay
 ## 2016.02.26 - Improved support when multiple site pins are connected to a pin
 ## 2016.02.24 - Removed limit to the number of expansions (internal::route_dbg_p2p_route)
 ##              (runtime impact)
@@ -148,7 +154,7 @@ proc ::tb::p2pdelay::get_p2p_info {args} {
 
 # Trick to silence the linter
 eval [list namespace eval ::tb::p2pdelay {
-  variable version {2016.02.26}
+  variable version {2016.08.22}
   variable params
   variable tcpstate {}
   variable socket {}
@@ -156,7 +162,9 @@ eval [list namespace eval ::tb::p2pdelay {
   variable result {}
   variable report {}
   catch {unset params}
-  array set params [list host {} port {12345} mode {client} log {} verbose 0 part {} timeout 0 debug 0 echo 0 options {}]
+  # delay: p2p | crunch | system | both
+  # (p2p == crunch)
+  array set params [list delay {p2p} host {} port {12345} mode {client} log {} verbose 0 part {} timeout 0 debug 0 echo 0 options {}]
 } ]
 
 #------------------------------------------------------------------------
@@ -243,6 +251,66 @@ proc ::tb::p2pdelay::lshift {inputlist} {
   set arg  [lindex $argv 0]
   set argv [lrange $argv 1 end]
   return $arg
+}
+
+##-----------------------------------------------------------------------
+## split-csv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc ::tb::p2pdelay::split-csv { str {sepChar ,} {trim 0} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  if {$trim} {
+    # Some CSV are formated with space/tab added as padding between
+    # delimiters. This remove those padding at the start/end of the
+    # cell value
+    set L [list]
+    foreach el [split $str \0] {
+      lappend L [string trim $el]
+    }
+    return $L
+  }
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## join-csv
+##-----------------------------------------------------------------------
+## Convert a Tcl list based into a CSV string
+##-----------------------------------------------------------------------
+proc ::tb::p2pdelay::join-csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
 }
 
 #------------------------------------------------------------------------
@@ -585,12 +653,28 @@ proc ::tb::p2pdelay::log {msg} {
 #------------------------------------------------------------------------
 # Usage: ::tb::p2pdelay::getP2pDelay [<options>]
 #------------------------------------------------------------------------
-# Get p2p delay from either the remote Vivado session or current Vivado
+# Get P2P delay from either the remote Vivado session or current Vivado
 # session
 #------------------------------------------------------------------------
 proc ::tb::p2pdelay::getP2pDelay { args } {
-  set res [eval [concat getP2pInfo $args]]
+  set res [eval [concat getP2pInfo $args -delay {p2p}]]
+  # Return max delay
   set delay [lindex $res 0]
+  return $delay
+}
+
+#------------------------------------------------------------------------
+# ::tb::p2pdelay::getSystemDelay
+#------------------------------------------------------------------------
+# Usage: ::tb::p2pdelay::getSystemDelay [<options>]
+#------------------------------------------------------------------------
+# Get System delay from either the remote Vivado session or current Vivado
+# session
+#------------------------------------------------------------------------
+proc ::tb::p2pdelay::getSystemDelay { args } {
+  set res [eval [concat getP2pInfo $args -delay {system}]]
+  # Return max delay
+  set delay [lindex $res 1]
   return $delay
 }
 
@@ -610,9 +694,10 @@ proc ::tb::p2pdelay::getP2pInfo { args } {
   # Add Vivado command(s) to the p2pdelay (-help)
   variable params
   variable report
-  set defaults [list -from {} -to {} -port $params(port) -host $params(host) -options $params(options)]
+  set defaults [list -delay $params(delay) -from {} -to {} -port $params(port) -host $params(host) -options $params(options)]
   array set options $defaults
   array set options $args
+  set delay $options(-delay)
   set port $options(-port)
   set host $options(-host)
   set from $options(-from)
@@ -660,6 +745,16 @@ proc ::tb::p2pdelay::getP2pInfo { args } {
       error " -E- wrong format for -to"
     }
   }
+  switch $delay {
+    both -
+    p2p -
+    crunch -
+    system {
+    }
+    default {
+      error " -E- wrong delay type '$delay'. Valid types are: p2p | crunch | system"
+    }
+  }
 # puts "<from:$from><to:$to>"
 # if {$params(debug)} { puts "<from:$from><to:$to>" }
   if {($from =={}) || ($to == {})} {
@@ -680,7 +775,20 @@ proc ::tb::p2pdelay::getP2pInfo { args } {
 # puts "report:<$report>"
 #   if {$params(echo)} { puts stderr $::tb::p2pdelay::result }
   if {$params(echo)} { puts stderr $::tb::p2pdelay::report }
-  set res [getP2pRouteInfo $report]
+  switch $delay {
+    p2p -
+    crunch {
+      # Crunch delay = delay seen by router
+      set res [getP2pRouteInfo $report]
+    }
+    system {
+      # System delay = delay seen by STA
+      set res [getSystemDlyRouteInfo $report]
+    }
+    both {
+      set res [list [getP2pRouteInfo $report] [getSystemDlyRouteInfo $report] ]
+    }
+  }
   return $res
 }
 
@@ -703,13 +811,44 @@ proc ::tb::p2pdelay::getP2pInfo { args } {
 #     (79 310 92 CLBLM_L_DQ : OUTPUT) 0
 # PATH (dly = 704, wl = 6, res = 45, FastMinDly = 282) Num Expansions: 323851
 # Path Delay: 704
+# System Delay (min, max): (51, 84)
 #------------------------------------------------------------------------
 proc ::tb::p2pdelay::getP2pRouteInfo {report} {
   # PATH (dly = 704, instDly = 0, wl = 6, res = 45)
   if {[regexp -nocase -- {PATH\s*\(\s*dly\s*\=\s*([^\s]+)\s*\,\s*instDly\s*\=\s*([^\s]+)\s*\,\s*wl\s*\=\s*([^\s]+)\s*\,\s*res\s*\=\s*([^\s]+)\s*\)} $report - dly instDly wl res ]} {
     return [list $dly $instDly $wl $res]
   } else {
-    error " error - could not extract delay from \n $report"
+    error " error - could not extract P2P delay from \n $report"
+  }
+}
+
+#------------------------------------------------------------------------
+# ::tb::p2pdelay::getSystemDlyRouteInfo
+#------------------------------------------------------------------------
+# Usage: ::tb::p2pdelay::getSystemDlyRouteInfo [<options>]
+#------------------------------------------------------------------------
+# Return a list of information from System Delay route report (min max)
+#------------------------------------------------------------------------
+# Routing from SLICE_X47Y51 DQ->SLICE_X47Y51 B1
+# routing from (79 310 92) to (79 310 38)
+# PATH (dly = 704, instDly = 0, wl = 6, res = 45) Num Expansions: 323851
+#     (79 310 38 CLBLM_L_B1 : LUTINPUT) 704
+#     (78 310 58 IMUX14 : PINFEED) 257
+#     (78 310 4 BYP_BOUNCE4 : BOUNCEIN) 114
+#     (78 310 25 BYP_ALT4 : PINBOUNCE) 114
+#     (78 310 216 SR1BEG_S0 : SINGLE) 11
+#     (79 310 91 CLBLM_LOGIC_OUTS3 : OUTBOUND) 0
+#     (79 310 92 CLBLM_L_DQ : OUTPUT) 0
+# PATH (dly = 704, wl = 6, res = 45, FastMinDly = 282) Num Expansions: 323851
+# Path Delay: 704
+# System Delay (min, max): (51, 84)
+#------------------------------------------------------------------------
+proc ::tb::p2pdelay::getSystemDlyRouteInfo {report} {
+  # System Delay (min, max): (51, 84)
+  if {[regexp -nocase -- {System Delay\s*\(\s*min\s*,\s*max\s*\)\s*:\s*\(\s*([^\s]+)\s*\,\s*([^\s]+)\s*\)} $report - min max ]} {
+    return [list $min $max]
+  } else {
+    error " error - could not extract system delay from \n $report"
   }
 }
 
@@ -1113,7 +1252,7 @@ proc ::tb::p2pdelay::accept {chan addr port} {
 #------------------------------------------------------------------------
 # Usage: p2pdelay configure [<options>]
 #------------------------------------------------------------------------
-# Configure some of the p2pdelay parameters
+# Configure some of the  p2pdelay parameters
 #------------------------------------------------------------------------
 proc ::tb::p2pdelay::method:configure {args} {
   # Summary :
@@ -1130,66 +1269,61 @@ proc ::tb::p2pdelay::method:configure {args} {
   }
   while {[llength $args]} {
     set name [lshift args]
-    switch -exact -- $name {
-      -host -
-      -host {
-           set params(host) [lshift args]
+    switch -regexp -- $name {
+      {^-ho(st?)?$} {
+        set params(host) [lshift args]
       }
-      -port -
-      -port {
-           set params(port) [lshift args]
+      {^-po(rt?)?$} {
+        set params(port) [lshift args]
       }
-      -part -
-      -part {
-           set params(part) [lshift args]
+      {^-pa(rt?)?$} {
+        set params(part) [lshift args]
       }
-      -timeout -
-      -timeout {
-           set params(timeout) [lshift args]
+      {^-ti(m(e(o(ut?)?)?)?)?$} {
+        set params(timeout) [lshift args]
       }
-      -option -
-      -options {
-           set params(options) [lshift args]
+      {^-op(t(i(o(ns?)?)?)?)?$} {
+        set params(options) [lshift args]
       }
-      -log {
-           set params(log) [lshift args]
-           set FH [open $params(log) {a}]
-           puts " -I- Opening log file: [file normalize $params(log)] on [clock format [clock seconds]]"
-           puts $FH "#####################################"
-           puts $FH "## [clock format [clock seconds]]"
-           puts $FH "#####################################"
-           close $FH
+      {^-log?$} {
+        set params(log) [lshift args]
+        set FH [open $params(log) {a}]
+        puts " -I- Opening log file: [file normalize $params(log)] on [clock format [clock seconds]]"
+        puts $FH "#####################################"
+        puts $FH "## [clock format [clock seconds]]"
+        puts $FH "#####################################"
+        close $FH
       }
-      -verbose {
-           set params(verbose) 1
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
       }
-      -quiet {
-           set params(verbose) 0
+      {^-qu(i(et?)?)?$} -
+      {^-nov(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 0
       }
-      -debug {
-           set params(debug) 1
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
       }
-      -nodebug {
-           set params(debug) 0
+      {^-nod(e(b(ug?)?)?)?$} {
+        set params(debug) 0
       }
-      -echo {
-           set params(echo) 1
+      {^-ec(ho?)?$} {
+        set params(echo) 1
       }
-      -noecho {
-           set params(echo) 0
+      {^-noe(c(ho?)?)?$} {
+        set params(echo) 0
       }
-      -h -
-      -help {
-           set help 1
+      {^-h(e(lp?)?)?$} {
+        set help 1
       }
       default {
-            if {[string match "-*" $name]} {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            } else {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            }
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        }
       }
     }
   }
@@ -1226,6 +1360,222 @@ proc ::tb::p2pdelay::method:configure {args} {
 }
 
 #------------------------------------------------------------------------
+# ::tb::p2pdelay::method:compare_p2p_est
+#------------------------------------------------------------------------
+# Usage: p2pdelay compare_p2p_est [<options>]
+#------------------------------------------------------------------------
+# Configure P2P vs Estimates delays inside a file
+#------------------------------------------------------------------------
+proc ::tb::p2pdelay::method:compare_p2p_est {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Compare P2p vs. Estimated delays from file (-help)
+  variable params
+  set ifilename {}
+  set ofilename {}
+  set csvDelimiter {,}
+  set opt $params(options)
+  set fanout {}
+  set error 0
+  set help 0
+  if {[llength $args] == 0} {
+    set help 1
+  }
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-i(n(p(ut?)?)?)?$} {
+        set ifilename [lshift args]
+      }
+      {^-o(u(t(p(ut?)?)?)?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-re(m(o(v(e(l(u(t(p(i(n(d(e(l(ay?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+        lappend opt {-removeLUTPinDelay}
+      }
+      {^-di(s(a(b(l(e(g(l(o(b(a(ls?)?)?)?)?)?)?)?)?)?)?)?$} {
+        lappend opt {-disableGlobals}
+      }
+      {^-op(t(i(o(ns?)?)?)?)?$} {
+        set opt [concat $opt [lshift args]]
+      }
+      {^-fa(n(o(ut?)?)?)?$} {
+        set fanout [lshift args]
+      }
+      {^-de(l(i(m(i(t(er?)?)?)?)?)?)?$} {
+        set csvDelimiter [lshift args]
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^-qu(i(et?)?)?$} -
+      {^-nov(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 0
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-nod(e(b(ug?)?)?)?$} {
+        set params(debug) 0
+      }
+      {^-h(e(lp?)?)?$} {
+        set help 1
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        }
+      }
+    }
+  }
+
+  if {$help} {
+    puts stdout [format {
+  Usage: p2pdelay compare_p2p_est
+              -input <filename>
+              -output <filename>
+              [-removelutpindelay]
+              [-disableglobals]
+              [-fanout <net_fanout>]
+              [-options <list_of_options>]
+              [-delimiter <csv-delimiter>]
+              [-verbose|-quiet]
+              [-help|-h]
+
+  Description: Compare P2p vs. Estimated delays from file
+
+    The input file format is: <fromPin>,<toPin>
+    For example:
+        int12_inv_i_1/O,int12_reg_inv/D
+        SLICE_X1Y16 AQ,IOB_X0Y16 O
+
+    Use -options to provide additional command line option to ::internal::route_dbg_p2p_route
+    Use -removelutpindelay as replacement for '-options {-removeLUTPinDelay}'
+    Use -disableglobals as replacement for '-options {-disableGlobals}'
+    Use -fanout to adjust the estimated delay based on net fanout
+
+  Example:
+     p2pdelay compare_p2p_est -input pairs.csv -output compare.csv
+     p2pdelay compare_p2p_est -input pairs.csv -output compare.csv -options {-removeLUTPinDelay -disableGlobals}
+     p2pdelay compare_p2p_est -input pairs.csv -output compare.csv -removeLUTPinDelay -disableGlobals -fanout 100
+} ]
+    # HELP -->
+    return -code ok
+  }
+
+  if {![file exists $ifilename]} {
+    incr error
+    puts " -E- file '$ifilename' does not exist"
+  }
+
+  if {$ofilename == {}} {
+    incr error
+    puts " -E- output file not provided (-output)"
+  }
+
+  if {$error} {
+    error " -E- some error(s) happened. Cannot continue"
+  }
+
+  set FHin [open $ifilename {r}]
+  set FHout [open $ofilename {w}]
+
+  puts $FHout "# input file: [file normalize $ifilename]"
+  if {$fanout == {}} {
+    puts $FHout "# estDly: Estimated delay (Placer)"
+  } else {
+    puts $FHout "# estDly: Estimated delay (Placer) (fanout = $fanout)"
+  }
+  puts $FHout "# p2pDly: Best route delay (Router) (=crunch delay)"
+  puts $FHout "# sysDly: Best route delay (STA) (=system delay)"
+  set options $opt
+  if {$fanout != {}} { set options [concat $options -fanout $fanout] }
+  if {$options == {}} {
+    puts $FHout "# Options: <none>"
+  } else {
+    puts $FHout "# Options: $options"
+  }
+  puts $FHout "from,to,estDly,p2pDly,sysDly,ratio (est/p2p),absErr (est-p2p),ratio (est/sys),absErr (est-sys)"
+
+  while {![eof $FHin]} {
+    gets $FHin line
+    if {[regexp {^\s*$} $line] || [regexp {^\s*#} $line]} {
+      continue
+    }
+    set pins [split-csv $line $csvDelimiter]
+    switch [llength $pins] {
+      2 {
+        set from [string trim [lindex $pins 0]]
+        set to [string trim [lindex $pins 1]]
+      }
+      default {
+        puts " -W- Invalid format. Skipping line '$line'"
+        continue
+      }
+    }
+    if {[catch {
+      # P2p delay + system delay
+      foreach {p2pdly sysdly} [get_p2p_delay -from $from -to $to -delay both -options [list {*}$opt] ] { break }
+      # Estimated delay
+      set estdly [get_est_wire_delay -from $from -to $to -fanout $fanout]
+    } errorstring]} {
+      puts " -W- Error during P2P/Estimated delay extraction: from=$from / to=$to"
+      set row [list $from $to - - - - - - -]
+      puts $FHout [join-csv $row $csvDelimiter]
+      continue
+    }
+    set row [list]
+    lappend row $from
+    lappend row $to
+    lappend row $estdly
+    lappend row $p2pdly
+    lappend row $sysdly
+    if {$p2pdly == 0} {
+      lappend row {#DIV0}
+    } else {
+      if {[catch {set ratio [expr double($estdly)/double($p2pdly)]}]} {
+        lappend row {N/A}
+      } else {
+        lappend row [format {%.2f} $ratio]
+      }
+    }
+    if {[catch {set err [expr abs(double($estdly) - double($p2pdly))]}]} {
+      lappend row {N/A}
+    } else {
+      lappend row [format {%.2f} $err]
+    }
+    if {$sysdly == 0} {
+      lappend row {#DIV0}
+    } else {
+      if {[catch {set ratio [expr double($estdly)/double($sysdly)]}]} {
+        lappend row {N/A}
+      } else {
+        lappend row [format {%.2f} $ratio]
+      }
+    }
+    if {[catch {set err [expr abs(double($estdly) - double($sysdly))]}]} {
+      lappend row {N/A}
+    } else {
+      lappend row [format {%.2f} $err]
+    }
+    puts $FHout [join-csv $row $csvDelimiter]
+  }
+
+  close $FHout
+  close $FHin
+
+  puts " -I- Generated file [file normalize $ofilename]"
+
+  return -code ok
+}
+
+#------------------------------------------------------------------------
 # ::tb::p2pdelay::method:get_p2p_info
 #------------------------------------------------------------------------
 # Usage: p2pdelay get_p2p_info [<options>]
@@ -1239,6 +1589,7 @@ proc ::tb::p2pdelay::method:get_p2p_info {args} {
 
   # Get the P2P route info (-help)
   variable params
+  set delay $params(delay)
   set port $params(port)
   set host $params(host)
   set opt $params(options)
@@ -1256,39 +1607,48 @@ proc ::tb::p2pdelay::method:get_p2p_info {args} {
   }
   while {[llength $args]} {
     set name [lshift args]
-    switch -exact -- $name {
-      -host -
-      -host {
-           set host [lshift args]
+    switch -regexp -- $name {
+      {^-de(l(ay?)?)?$} {
+        set delay [lshift args]
       }
-      -port -
-      -port {
-           set port [lshift args]
+      {^-p2p?$} {
+        set delay {p2p}
       }
-      -from -
-      -from {
-           set from [lshift args]
+      {^-sy(s(t(em?)?)?)?$} {
+        set delay {system}
       }
-      -to -
-      -to {
-           set to [lshift args]
+      {^-ho(st?)?$} {
+        set host [lshift args]
       }
-      -option -
-      -options {
-           set opt [lshift args]
+      {^-po(rt?)?$} {
+        set port [lshift args]
       }
-      -h -
-      -help {
-           set help 1
+      {^-f(r(om?)?)?$} {
+        set from [lshift args]
+      }
+      {^-to?$} {
+        set to [lshift args]
+      }
+      {^-re(m(o(v(e(l(u(t(p(i(n(d(e(l(ay?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+        lappend opt {-removeLUTPinDelay}
+      }
+      {^-di(s(a(b(l(e(g(l(o(b(a(ls?)?)?)?)?)?)?)?)?)?)?)?$} {
+        lappend opt {-disableGlobals}
+      }
+      {^-op(t(i(o(ns?)?)?)?)?$} {
+        set opt [concat $opt [lshift args]]
+      }
+      {^-h(e(lp?)?)?$} {
+        set help 1
       }
       default {
-            if {[string match "-*" $name]} {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            } else {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            }
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        }
       }
     }
   }
@@ -1298,6 +1658,9 @@ proc ::tb::p2pdelay::method:get_p2p_info {args} {
   Usage: p2pdelay get_p2p_info
               -from <pin>|-from {<site> <pin>}
               -to <pin>|-to {<site> <pin>}
+              [-p2p][-system][-delay <p2p|crunch|system|both>]
+              [-removelutpindelay]
+              [-disableglobals]
               [-options <list_options>]
               [-host <IP Address>]
               [-port <number>]
@@ -1306,10 +1669,21 @@ proc ::tb::p2pdelay::method:get_p2p_info {args} {
   Description: Get the P2P route info
 
     Use -options to provide additional command line option to ::internal::route_dbg_p2p_route
+    Use -delay to select the delay type:
+      p2p|crunch: delay seen by router
+      system: system delay seen by STA (UltraScale Plus and beyond)
+      both: return a list of both p2p and system delays
+      Default: p2p
+    Use -removelutpindelay as replacement for '-options {-removeLUTPinDelay}'
+    Use -disableglobals as replacement for '-options {-disableGlobals}'
+    Use -p2p as replacement for '-delay p2p'
+    Use -system as replacement for '-delay system'
 
   Example:
      p2pdelay get_p2p_info -from {SLICE_X47Y51 AQ} -to {SLICE_X47Y51 A1}
      p2pdelay get_p2p_info -from int1_reg/Q -to {SLICE_X47Y51 A1} -options {-removeLUTPinDelay}
+     p2pdelay get_p2p_info -from int1_reg/Q -to {SLICE_X47Y51 A1} -options {-removeLUTPinDelay} -delay system
+     p2pdelay get_p2p_info -from int1_reg/Q -to {SLICE_X47Y51 A1} -removelutpindelay -p2p
 } ]
     # HELP -->
     return -code ok
@@ -1367,12 +1741,23 @@ proc ::tb::p2pdelay::method:get_p2p_info {args} {
     puts " -E- error with -from/-to"
     incr error
   }
+  switch $delay {
+    both -
+    p2p -
+    crunch -
+    system {
+    }
+    default {
+      puts " -E- wrong delay type '$delay'. Valid types are: p2p | crunch | system"
+      incr error
+    }
+  }
 
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
 
-  return [getP2pInfo -from $from -to $to -host $host -port $port -options $opt]
+  return [getP2pInfo -delay $delay -from $from -to $to -host $host -port $port -options $opt]
 }
 
 #------------------------------------------------------------------------
@@ -1389,6 +1774,7 @@ proc ::tb::p2pdelay::method:get_p2p_delay {args} {
 
   # Get the P2P route delay (-help)
   variable params
+  set delay $params(delay)
   set port $params(port)
   set host $params(host)
   set opt $params(options)
@@ -1406,39 +1792,48 @@ proc ::tb::p2pdelay::method:get_p2p_delay {args} {
   }
   while {[llength $args]} {
     set name [lshift args]
-    switch -exact -- $name {
-      -host -
-      -host {
-           set host [lshift args]
+    switch -regexp -- $name {
+      {^-de(l(ay?)?)?$} {
+        set delay [lshift args]
       }
-      -port -
-      -port {
-           set port [lshift args]
+      {^-p2p?$} {
+        set delay {p2p}
       }
-      -from -
-      -from {
-           set from [lshift args]
+      {^-sy(s(t(em?)?)?)?$} {
+        set delay {system}
       }
-      -to -
-      -to {
-           set to [lshift args]
+      {^-ho(st?)?$} {
+        set host [lshift args]
       }
-      -option -
-      -options {
-           set opt [lshift args]
+      {^-po(rt?)?$} {
+        set port [lshift args]
       }
-      -h -
-      -help {
-           set help 1
+      {^-f(r(om?)?)?$} {
+        set from [lshift args]
+      }
+      {^-to?$} {
+        set to [lshift args]
+      }
+      {^-re(m(o(v(e(l(u(t(p(i(n(d(e(l(ay?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
+        lappend opt {-removeLUTPinDelay}
+      }
+      {^-di(s(a(b(l(e(g(l(o(b(a(ls?)?)?)?)?)?)?)?)?)?)?)?$} {
+        lappend opt {-disableGlobals}
+      }
+      {^-op(t(i(o(ns?)?)?)?)?$} {
+        set opt [concat $opt [lshift args]]
+      }
+      {^-h(e(lp?)?)?$} {
+        set help 1
       }
       default {
-            if {[string match "-*" $name]} {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            } else {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            }
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        }
       }
     }
   }
@@ -1448,19 +1843,33 @@ proc ::tb::p2pdelay::method:get_p2p_delay {args} {
   Usage: p2pdelay get_p2p_delay
               -from <pin>|-from {<site> <pin>}
               -to <pin>|-to {<site> <pin>}
+              [-p2p][-system][-delay <p2p|crunch|system|both>]
+              [-removelutpindelay]
+              [-disableglobals]
               [-options <list_options>]
               [-host <IP Address>]
               [-port <number>]
               [-help|-h]
 
-  Description: Get the P2P route delay
+  Description: Get the P2P route delay or System delay
 
     Use -options to provide additional command line option to ::internal::route_dbg_p2p_route
+    Use -delay to select the delay type:
+      p2p|crunch: delay seen by router
+      system: system delay seen by STA (UltraScale Plus and beyond)
+      both: return a list of both p2p and system delays
+      Default: p2p
+    Use -removelutpindelay as replacement for '-options {-removeLUTPinDelay}'
+    Use -disableglobals as replacement for '-options {-disableGlobals}'
+    Use -p2p as replacement for '-delay p2p'
+    Use -system as replacement for '-delay system'
 
   Example:
      p2pdelay get_p2p_delay -from {SLICE_X47Y51 AQ} -to {SLICE_X47Y51 A1}
      p2pdelay get_p2p_delay -from int1_reg/Q -to {SLICE_X47Y51 A1} -options {-removeLUTPinDelay}
      p2pdelay get_p2p_delay -from int1_reg/Q -to {SLICE_X47Y51 A1} -options {-removeLUTPinDelay -disableGlobals}
+     p2pdelay get_p2p_delay -from int1_reg/Q -to {SLICE_X47Y51 A1} -delay system
+     p2pdelay get_p2p_delay -from int1_reg/Q -to {SLICE_X47Y51 A1} -removelutpindelay -p2p
 } ]
     # HELP -->
     return -code ok
@@ -1518,12 +1927,37 @@ proc ::tb::p2pdelay::method:get_p2p_delay {args} {
     puts " -E- error with -from/-to"
     incr error
   }
+  switch $delay {
+    both -
+    p2p -
+    crunch -
+    system {
+    }
+    default {
+      puts " -E- wrong delay type '$delay'. Valid types are: p2p | crunch | system"
+      incr error
+    }
+  }
 
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
 
-  return [lindex [getP2pInfo -from $from -to $to -host $host -port $port -options $opt] 0]
+  switch $delay {
+    p2p -
+    crunch {
+      return [lindex [getP2pInfo -delay $delay -from $from -to $to -host $host -port $port -options $opt] 0]
+    }
+    system {
+      return [lindex [getP2pInfo -delay $delay -from $from -to $to -host $host -port $port -options $opt] 1]
+    }
+    both {
+      set res [getP2pInfo -delay $delay -from $from -to $to -host $host -port $port -options $opt]
+      set p2p [lindex $res 0]
+      set system [lindex $res 1]
+      return [list [lindex $p2p 0] [lindex $system 1] ]
+    }
+  }
 }
 
 #------------------------------------------------------------------------
@@ -1557,39 +1991,33 @@ proc ::tb::p2pdelay::method:get_est_wire_delay {args} {
   }
   while {[llength $args]} {
     set name [lshift args]
-    switch -exact -- $name {
-      -host -
-      -host {
-           set host [lshift args]
+    switch -regexp -- $name {
+      {^-ho(st?)?$} {
+        set host [lshift args]
       }
-      -port -
-      -port {
-           set port [lshift args]
+      {^-po(rt?)?$} {
+        set port [lshift args]
       }
-      -from -
-      -from {
-           set from [lshift args]
+      {^-f(r(om?)?)?$} {
+        set from [lshift args]
       }
-      -to -
-      -to {
-           set to [lshift args]
+      {^-to?$} {
+        set to [lshift args]
       }
-      -fanout -
-      -fanout {
-           set fanout [lshift args]
+      {^-fa(n(o(ut?)?)?)?$} {
+        set fanout [lshift args]
       }
-      -h -
-      -help {
-           set help 1
+      {^-h(e(lp?)?)?$} {
+        set help 1
       }
       default {
-            if {[string match "-*" $name]} {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            } else {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            }
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        }
       }
     }
   }
@@ -1724,25 +2152,22 @@ proc ::tb::p2pdelay::method:pin_info {args} {
   }
   while {[llength $args]} {
     set name [lshift args]
-    switch -exact -- $name {
-      -p -
-      -pi -
-      -pin {
-           set pinname [lshift args]
+    switch -regexp -- $name {
+      {^-p(in?)?$} {
+        set pinname [lshift args]
       }
-      -h -
-      -help {
-           set help 1
+      {^-h(e(lp?)?)?$} {
+        set help 1
       }
       default {
-            if {[string match "-*" $name]} {
-              puts " -E- option '$name' is not a valid option."
-              incr error
-            } else {
-              set pinname $name
-#               puts " -E- option '$name' is not a valid option."
-#               incr error
-            }
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          set pinname $name
+#           puts " -E- option '$name' is not a valid option."
+#           incr error
+        }
       }
     }
   }
