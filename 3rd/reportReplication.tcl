@@ -1,4 +1,6 @@
-# % source reportReplication.tcl –notrace
+# Original script location: /home/frederi/patcl/apps/reportReplication.tcl
+# 
+# % source reportReplication.tcl -notrace
 # % reportReplication replication.csv
 # 
 # Several options:
@@ -9,7 +11,7 @@
 # % undoReplication 1 replication.csv
 # 
 # 3)	Undo replication of selected cells only (cell names are based on what reportReplication prints in the log file or csv)
-# % set listOfRepCells {cellA cellB…}
+# % set listOfRepCells {cellA cellB}
 # % foreach cell $listOfRepCells {
 #       lappend removeCells [combineReplicatedCells $cell 1]
 # }
