@@ -18,6 +18,7 @@ proc init {} {
   set FLOORPLAN [pwd]/pblocks.xdc
 
   set LSF_MEMORY 20000
+  set LSF_MEMORY_LIMIT 40000000
   set RUN_SCRIPT_INCLUDE {}
 
   # Default list of all directives
@@ -65,10 +66,12 @@ proc main { {scriptname run.st} } {
   # set WDIR [pwd]
   set WDIR [file dirname [file normalize [info script]]]
 
-  # Override the 'set' command to save defined Tcl variables inside the
+  # Override the 'set' and 'lappend' commands to save defined Tcl variables inside the
   # array 'CONFIG_VARS'
   rename set setTCL
+  rename lappend lappendTCL
   proc set { var value } { global CONFIG_VARS ; setTCL CONFIG_VARS($var) $value ; uplevel 1 [list setTCL $var $value ] }
+  proc lappend { var value } { global CONFIG_VARS ; lappendTCL CONFIG_VARS($var) $value ; uplevel 1 [list lappendTCL $var $value ] }
   proc iterator  {name value } { global CONFIG_VARS ; setTCL CONFIG_VARS(_) [list $name $value] }
 
   # Define the default variables
@@ -85,9 +88,11 @@ proc main { {scriptname run.st} } {
     source [file rootname $scriptname].cfg
   }
 
-  # Restore the original 'set' command
+  # Restore the original 'set' and 'lappend' commands
   rename set {}
   rename setTCL set
+  rename lappend {}
+  rename lappendTCL lappend
 
   if {$::DEBUG} { parray CONFIG_VARS }
 

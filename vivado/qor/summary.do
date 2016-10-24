@@ -10,17 +10,21 @@ CWTIMESTAMP=$(date -d @${CWTS} +'%d %b %Y %R')
 help() {
   message=`cat <<EOF
   usage: summary.do [-f|-tmp|-db <database(s)>][-h]
-    
+
   -db      - List of database(s). Must be the last argument
              on the command line
   -tmp     - Generate the summary on a copy of the database
              Recommended when LSF jobs are still running
-  -f       - Generate the summary on the database 
+  -f       - Generate the summary on the database
 EOF
 `
   echo ""
   echo "$message"
 }
+
+# # Merged databases
+# ln -fs merged.db metrics.db
+# snapshot merge -o merged.db */*.db
 
 #----------------------------------------
 # parse command line arguments
@@ -28,7 +32,8 @@ EOF
 error=0
 mode=0
 # Default database name
-databases="${CWD}/metrics.db"
+# databases="${CWD}/metrics.db"
+databases="${CWD}/*/summary*csv*"
 
 if [ $# -eq 0 ];
 then
@@ -38,7 +43,7 @@ then
   exit 0
 fi
 
-while [ $# -ne 0 ]; 
+while [ $# -ne 0 ];
 do
   arg="$1"
   case "$arg" in
@@ -74,9 +79,14 @@ then
   echo ""
   exit 1
 fi
+               
+report_summary -input $databases -csv -hide_step opt -output metrics.csv
+report_summary -input $databases      -hide_step opt -output metrics.rpt
+
+exit 0
 
 # Iterate through all the databases
-for file in $databases; do 
+for file in $databases; do
   if [ ! -e $file ];
   then
     echo " File $file does not exist. Skipping."
@@ -91,7 +101,7 @@ for file in $databases; do
     0 )
        # Generate the summary of the database
        # ~/git/scripts/wip/snapshot/snapshot_summary -db ${DIR}/metrics.db -sort -save -runtime -show_all_hold -show_congestion
-       ~/git/scripts/wip/snapshot/snapshot_summary -db $file -save -show_all_hold -show_directive -show_congestion
+       ~/git/scripts/wip/snapshot/snapshot_summary -db $file -save -show_all_hold -show_directive -show_congestion -runtime
        echo ""
        # Restore directory timestamp
        touch -d "$TIMESTAMP" "$DIR"

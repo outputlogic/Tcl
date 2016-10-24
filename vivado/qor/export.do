@@ -7,12 +7,12 @@ TIMESTAMP=$(date -d @${TS} +'%d %b %Y %R')
 help() {
   message=`cat <<EOF
   usage: export.do [-f|-tmp|-db <database(s)>][-h]
-    
+
   -db      - List of database(s). Must be the last argument
              on the command line
   -tmp     - Export the metrics on a copy of the database
              Recommended when LSF jobs are still running
-  -f       - Export the metrics on the database 
+  -f       - Export the metrics on the database
 EOF
 `
   echo ""
@@ -35,7 +35,7 @@ then
   exit 0
 fi
 
-while [ $# -ne 0 ]; 
+while [ $# -ne 0 ];
 do
   arg="$1"
   case "$arg" in
@@ -73,7 +73,7 @@ then
 fi
 
 # Iterate through all the databases
-for file in $databases; do 
+for file in $databases; do
   if [ ! -e $file ];
   then
     echo " File $file does not exist. Skipping."

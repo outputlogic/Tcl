@@ -97,8 +97,8 @@ catch { set_param place.ignoreUnroutedInstTermsWithNoPhysicalMapping true }
 # SLL spreading
 # catch { set_param place.swapSuperLong true }
 # catch { set_param place.swapSuperLong false }
-# catch { set_param place.sllUtilThreshold 0 }; # sll utilization threshold to turn on super long spreading (default: 1.2)
-# catch { set_param place.sllUtilTarget 18 }; # sll utilization target during area swap optimization (default: 24)
+catch { set_param place.sllUtilThreshold 0 }; # sll utilization threshold to turn on super long spreading (default: 1.2)
+catch { set_param place.sllUtilTarget 18 }; # sll utilization target during area swap optimization (default: 24)
 
 ######################################################################
 #
@@ -131,12 +131,17 @@ if {[catch {open_checkpoint $checkpoint}]} {
   open_checkpoint $checkpoint
 }
 
-# if {[get_pblocks] != {}} { delete_pblock [get_pblocks] }
-# if {[file exists $floorplan]} {
-#   if {[catch { read_xdc $floorplan } errorstring]} {
-#     puts $errorstring
-#   }
-# }
+if {[get_pblocks] != {}} { delete_pblock [get_pblocks] }
+if {[file exists $rootDir/SLR_Laguna_pblocks.xdc]} {
+  if {[catch { read_xdc $rootDir/SLR_Laguna_pblocks.xdc } errorstring]} {
+    puts $errorstring
+  }
+}
+if {[file exists $floorplan]} {
+  if {[catch { read_xdc $floorplan } errorstring]} {
+    puts $errorstring
+  }
+}
 
 # Change I/O Standard to prevent following error during I/O placer (2016.2):
 #   ERROR: [DRC 23-20] Rule violation (BIVC-1) Bank IO standard Vcc - Conflicting Vcc voltages in bank 46. For example, the following two ports in this bank have conflicting VCCOs:
@@ -145,7 +150,7 @@ if {[catch {open_checkpoint $checkpoint}]} {
 # # set_property IOSTANDARD DIFF_SSTL15_DCI [get_ports SD*_RefClkn]
 # set_param constr.disable.DiffTermMigration 1
 # set_property -quiet DIFF_TERM_ADV "" [get_ports SD*_RefClkp]
-# reset_property DIFF_TERM_ADV [get_ports *clk*ddr* -filter {DIRECTION==IN}]
+reset_property DIFF_TERM_ADV [get_ports *clk*ddr* -filter {DIRECTION==IN}]
 
 # Clear SOFT_HLUTNM attributes                                                                                                             
 # set cells [get_cells -hier -filter {SOFT_HLUTNM != "" || HLUTNM != ""}] ; llength $cells                                                 

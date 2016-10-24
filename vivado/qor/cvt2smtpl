@@ -154,8 +154,8 @@ proc main {args} {
 #   # replace the '\' character at the end of the line by '\\'
 #   set newcontent [list]
 #   foreach line [split $content "\n"] {
-#   	regsub -all {\\$} $line {\\\\} line
-#   	lappend newcontent $line
+#     regsub -all {\\$} $line {\\\\} line
+#     lappend newcontent $line
 #   }
 #   set content [join $newcontent "\n"]
 
@@ -186,7 +186,7 @@ proc main {args} {
 #     puts $FH [format {#!/bin/sh
 # # Run the smtpl from the users PATH %s
 # exec smtpl -i "$0" ${1+"$@"}
-# 
+#
 # # Template generated on %s from file %s
 # # Command line: %s
 # } "\\" [exec date] [file normalize $ifilename] $cmdLine ]

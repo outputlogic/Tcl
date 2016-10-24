@@ -2,6 +2,30 @@
 # use -*-TCL-*- \
 exec tclsh "$0" -- ${1+"$@"}
 
+# Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+set ::argv [lrange $::argv 1 end]
+
+set force 0
+foreach name $::argv {
+  if {[regexp {^-(f|force)$} $name]} {
+    set force 1
+  } elseif {[regexp {^-(h|help)$} $name]} {
+    puts [format {  usage: lsf.kill [-force][-h]
+
+  -force   - Kill running jobs
+}]
+    exit 0
+  } else {
+    puts " -E- $name is not a valid argument."
+  exit 0
+  }
+}
+
+if {!$force} {
+  puts " -I- Use -force to kill the running jobs"
+  exit 0
+}
+
 if {![file exists ./lsf.pid]} {
   puts " -I- file ./lsf.pid does not exists"
   exit 0

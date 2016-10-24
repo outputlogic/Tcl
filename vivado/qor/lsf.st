@@ -18,8 +18,8 @@ foreach dir [list %{DIRECTIVES}] {
   cd $dir
 #   puts "bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long -R \"rusage\[mem=%{LSF_MEMORY}\]\" vivado -mode batch -source %{ROOTDIR}/$dir/run.tcl -log %{ROOTDIR}/$dir/run.log -jou %{ROOTDIR}/$dir/run.jou"
 #   set res [exec bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long -R {rusage[mem=%{LSF_MEMORY}]} ${VIVADODIR}/vivado -mode batch -source %{ROOTDIR}/$dir/run.tcl -log %{ROOTDIR}/$dir/run.log -jou %{ROOTDIR}/$dir/run.jou ]
-  puts "bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long -R \"rusage\[mem=%{LSF_MEMORY}\]\" ${VIVADODIR}/vivado -mode batch -source %{ROOTDIR}/$dir/run.tcl -log %{ROOTDIR}/$dir/run.log -jou %{ROOTDIR}/$dir/run.jou"
-  set res [exec bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long -R {rusage[mem=%{LSF_MEMORY}]} vivado -mode batch -source %{ROOTDIR}/$dir/run.tcl -log %{ROOTDIR}/$dir/run.log -jou %{ROOTDIR}/$dir/run.jou ]
+  puts "bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long -M %{LSF_MEMORY_LIMIT} -R \"rusage\[mem=%{LSF_MEMORY}\]\" ${VIVADODIR}/vivado -mode batch -source %{ROOTDIR}/$dir/run.tcl -log %{ROOTDIR}/$dir/run.log -jou %{ROOTDIR}/$dir/run.jou"
+  set res [exec bsub -P swapps_2013.x -app sil_rhel5 -o /dev/null -q long -M %{LSF_MEMORY_LIMIT} -R {rusage[mem=%{LSF_MEMORY}]} vivado -mode batch -source %{ROOTDIR}/$dir/run.tcl -log %{ROOTDIR}/$dir/run.log -jou %{ROOTDIR}/$dir/run.jou ]
   if {[regexp {\<([0-9]+)\>} $res -- job]} {
     puts " => LSF Job: $job"
     lappend lsfjobs $job

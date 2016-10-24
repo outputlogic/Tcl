@@ -61,7 +61,7 @@ proc snapit {args} {}
 
 ######################################################################
 #
-# Params
+# Implementation script
 #
 ######################################################################
 
@@ -78,33 +78,6 @@ set_param route.flowDbg 1
 
 # Outbox delay multiplier
 # set_param dlyest.outboxMultFactor 1.05
-
-# Param to lock BRAM/DSP and run GP twice: should work with placer directives.
-# set_param place.GPBramDSPFix yes
-
-# Disable Router Hold Fix
-# set_param route.enableHoldRouter 0
-
-# Increase Number of Reported Pins That Failed Hold Fix (default = 10)
-# set_param route.holdMesg.maxPins 10000
-
-# Run router in single thread to prevent issues found with previous drop
-# set_param route.maxThreads 1
-
-# CR 953898 (2016.3) - Physopt errors on "Failed to do final clock routing and deposit routes into route database"
-catch { set_param place.ignoreUnroutedInstTermsWithNoPhysicalMapping true }
-
-# SLL spreading
-# catch { set_param place.swapSuperLong true }
-# catch { set_param place.swapSuperLong false }
-# catch { set_param place.sllUtilThreshold 0 }; # sll utilization threshold to turn on super long spreading (default: 1.2)
-# catch { set_param place.sllUtilTarget 18 }; # sll utilization target during area swap optimization (default: 24)
-
-######################################################################
-#
-# Implementation script
-#
-######################################################################
 
 catch {
   catch {
@@ -146,10 +119,6 @@ if {[catch {open_checkpoint $checkpoint}]} {
 # set_param constr.disable.DiffTermMigration 1
 # set_property -quiet DIFF_TERM_ADV "" [get_ports SD*_RefClkp]
 # reset_property DIFF_TERM_ADV [get_ports *clk*ddr* -filter {DIRECTION==IN}]
-
-# Clear SOFT_HLUTNM attributes                                                                                                             
-# set cells [get_cells -hier -filter {SOFT_HLUTNM != "" || HLUTNM != ""}] ; llength $cells                                                 
-# set_property SOFT_HLUTNM {} $cells                                                                                                       
 
 # Remove FIXED RAMB/FIFO placement
 # set fixed [get_cells -hier -filter {(REF_NAME =~ FIFO* || REF_NAME =~ RAMB*) && IS_FIXED}]
@@ -239,17 +208,6 @@ catch { export_timing_paths $spaths postplaceopt $runDir }
 # Force replication on some of the HFN
 force_replication_on_nets [get_nets -quiet $netsReplication]
 
-# # Force replication w/ phys_opt_design
-# set start [clock seconds]
-# phys_opt_design -fanout_opt -placement_opt
-# set stop [clock seconds]
-# write_checkpoint -force $runDir/postreplication.dcp
-# uplevel 0 [concat report_timing_summary $reportTimingCmdLine -file $runDir/postreplication.rpt ]
-# <? if ($SNAPSHOT_IS_ENABLED != 0): ?>
-# snapshot set duration [::tb::snapshot::duration [expr $stop - $start]]
-# snapit $db $runDir $project $version $experiment [incr step].phys_opt_design {replication} [expr $stop - $start]
-# <? endif; ?>
-
 # Over-constraint the design for phys_opt_design with set_clock_uncertainty
 # set_clock_uncertainty 0.150 [get_clocks clk_out1_System_Clock]
 
@@ -297,8 +255,6 @@ while {$loop} {
     set stop [clock seconds]
     write_checkpoint -force $runDir/postphysopt.dcp
 #     write_checkpoint -force $runDir/postphysopt.${directive}_iter${iter}.dcp
-    # Write iPhysOpt script
-    catch { write_iphys_opt_tcl $runDir/postphysopt.${directive}_iter${iter}.tcl }
     uplevel 0 [concat report_timing_summary $reportTimingCmdLine -file $runDir/postphysopt.${directive}_iter${iter}.rpt ]
 <? if ($SNAPSHOT_IS_ENABLED != 0): ?>
     snapshot set duration [::tb::snapshot::duration [expr $stop - $start]]

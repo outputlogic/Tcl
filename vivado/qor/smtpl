@@ -65,7 +65,7 @@ proc main {args} {
 
   set ifilename {}
   set ofilename {}
-  # File to save template after variables replacement and before 
+  # File to save template after variables replacement and before
   # PHP post-processing
   set oppfilename {}
   set mode {default} ; # default | string

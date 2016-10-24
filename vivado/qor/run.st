@@ -52,9 +52,9 @@ set_param route.flowDbg 1
 
 catch {
   catch {
-  	if {[lsearch [tclapp::list_apps] {xilinx::designutils}] == -1} {
-  		tclapp::install designutils
-  	}
+    if {[lsearch [tclapp::list_apps] {xilinx::designutils}] == -1} {
+      tclapp::install designutils
+    }
   }
   package require toolbox
   snapshot reset
