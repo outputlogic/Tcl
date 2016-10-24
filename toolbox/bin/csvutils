@@ -17,12 +17,13 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.29
+## Version:        2016.06.30
 ## Description:    Utility to manipulate CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.06.30 - Added support for gzip-ed input files
 ## 2016.06.29 - Do not create new table when separator is detected (CSV reader)
 ## 2016.06.03 - Added proc csv2tbl
 ## 2016.04.19 - Minor code clean-up
@@ -710,7 +711,13 @@ proc ::tb::utils::csvutils::csv2tbl {args} {
   if {$params(verbose)} {
     puts " -I- Processing file $ifilename"
   }
-  set FHin [open $ifilename]
+  if {[regexp {.gz$} $ifilename]} {
+    # gzip-ed file
+    set FHin [open "| zcat $ifilename"]
+  } else {
+    set FHin [open $ifilename]
+  }
+#   set FHin [open $ifilename]
   while {![eof $FHin]} {
     set tbl [::tb::prettyTable]
     $tbl title "CSV: [file normalize $ifilename]"
@@ -1097,7 +1104,13 @@ proc ::tb::utils::csvutils::csvutils {args} {
       }
     }
 
-    set FHin [open $filename]
+    if {[regexp {.gz$} $filename]} {
+      # gzip-ed file
+      set FHin [open "| zcat $filename"]
+    } else {
+      set FHin [open $filename]
+    }
+#     set FHin [open $filename]
     while {![eof $FHin]} {
       if {$merge} {
         if {!$first} {
