@@ -22,7 +22,7 @@ namespace eval ::tb {
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.30
+## Version:        2016.10.04
 ## Tool Version:   Vivado 2013.1
 ## Description:    This package provides a simple way to handle formatted tables
 ##
@@ -265,6 +265,8 @@ namespace eval ::tb {
 ########################################################################################
 
 ########################################################################################
+## 2016.10.04 - Added support for -inline (import)
+## 2016.08.23 - Updated default alignment for template 'deviceview'
 ## 2016.06.30 - Fixed issue with 'delcolumns', 'delrows' methods
 ## 2016.06.24 - Added 'search', 'filter', 'prependcell' methods
 ##            - Fixed issue with 'set_param' method
@@ -351,7 +353,7 @@ eval [list namespace eval ::tb::prettyTable {
   variable n 0
 #   set params [list indent 0 maxNumRows 10000 maxNumRowsToDisplay 50 title {} ]
   variable params [list indent 0 title {} tableFormat {classic} cellAlignment {left} maxNumRows -1 maxNumRowsToDisplay -1 columnsToDisplay {} origin {topleft} offsetx 0 offsety 0 template {} methods {method}]
-  variable version {2016.06.30}
+  variable version {2016.10.04}
 } ]
 
 #------------------------------------------------------------------------
@@ -539,7 +541,7 @@ proc ::tb::prettyTable::Template { {name {}} } {
       }
       set tbl [tb::prettyTable]
       $tbl creatematrix [expr $maxX +2] [expr $maxY +1]
-      $tbl configure -origin bottomleft -offsetx 1 -offsety 0
+      $tbl configure -align_right -origin bottomleft -offsetx 1 -offsety 0
       $tbl header $header
       $tbl setcolumn 0 $column0
       # Start from the highest number SLR. The lowest (SLR0)
@@ -2754,6 +2756,7 @@ proc ::tb::prettyTable::method:import {self args} {
   set help 0
   set filename {}
   set csvDelimiter {,}
+  set inlineContent {}
   if {[llength $args] == 0} { incr help }
   while {[llength $args]} {
     set name [lshift args]
@@ -2765,6 +2768,10 @@ proc ::tb::prettyTable::method:import {self args} {
       -f -
       -file {
            set filename [lshift args]
+      }
+      -i -
+      -inline {
+           set inlineContent [lshift args]
       }
       -h -
       -help {
@@ -2785,7 +2792,8 @@ proc ::tb::prettyTable::method:import {self args} {
   if {$help} {
     puts [format {
   Usage: <prettyTableObject> import
-              -file <filename>
+              [-file <filename>]
+              [-inline <inline_CSV_content>]
               [-delimiter <csv_delimiter>]
               [-help|-h]
 
@@ -2794,6 +2802,13 @@ proc ::tb::prettyTable::method:import {self args} {
   Example:
      <prettyTableObject> import -file table.csv
      <prettyTableObject> import -file table.csv -delimiter ,
+     <prettyTableObject> import -inline {
+"Pin","Slow Max","Slow Min","Fast Max","Fast Min"
+"CLKDIV->CLK","0.418","0.345"
+"CLK->CLKDIV","0.481","0.391"
+"CLKOUT0","0.403","0.345","0.208","0.166"
+"CLKOUT2","0.403","0.345","0.208","0.166"
+    }
 } ]
     # HELP -->
     return {}
@@ -2803,36 +2818,62 @@ proc ::tb::prettyTable::method:import {self args} {
     error " -E- some error(s) happened. Cannot continue"
   }
 
-  if {![file exists $filename]} {
+  if {![file exists $filename] && ($filename != {})} {
     error " -E- file '$filename' does not exist"
   }
 
-  # Reset object but preserve some of the parameters
-  set limit $params(maxNumRows)
-#   set displayLimit $params(maxNumRowsToDisplay)
-  eval $self reset
-  set params(maxNumRows) $limit
-#   set params(maxNumRowsToDisplay) $displayLimit
+  if {$filename != {}} {
+    # Reset object but preserve some of the parameters
+    set limit $params(maxNumRows)
+#     set displayLimit $params(maxNumRowsToDisplay)
+    eval $self reset
+    set params(maxNumRows) $limit
+#     set params(maxNumRowsToDisplay) $displayLimit
 
-  set FH [open $filename]
-  set first 1
-  set count 0
-  while {![eof $FH]} {
-    gets $FH line
-    # Skip comments and empty lines
-    if {[regexp {^\s*#} $line]} { continue }
-    if {[regexp {^\s*$} $line]} { continue }
-    if {$first} {
-      set header [::tb::prettyTable::csv2list $line $csvDelimiter]
-      set first 0
-    } else {
-      $self addrow [::tb::prettyTable::csv2list $line $csvDelimiter]
-      incr count
+    set FH [open $filename]
+    set first 1
+    set count 0
+    while {![eof $FH]} {
+      gets $FH line
+      # Skip comments and empty lines
+      if {[regexp {^\s*#} $line]} { continue }
+      if {[regexp {^\s*$} $line]} { continue }
+      if {$first} {
+        set header [::tb::prettyTable::csv2list $line $csvDelimiter]
+        set first 0
+      } else {
+        $self addrow [::tb::prettyTable::csv2list $line $csvDelimiter]
+        incr count
+      }
     }
+    close $FH
+    puts " -I- Header: $header"
+    puts " -I- Number of imported row(s): $count"
+  } elseif {$inlineContent != {}} {
+    # Reset object but preserve some of the parameters
+    set limit $params(maxNumRows)
+#     set displayLimit $params(maxNumRowsToDisplay)
+    eval $self reset
+    set params(maxNumRows) $limit
+#     set params(maxNumRowsToDisplay) $displayLimit
+
+    set first 1
+    set count 0
+    foreach line [split $inlineContent \n] {
+      # Skip comments and empty lines
+      if {[regexp {^\s*#} $line]} { continue }
+      if {[regexp {^\s*$} $line]} { continue }
+      if {$first} {
+        set header [::tb::prettyTable::csv2list $line $csvDelimiter]
+        set first 0
+      } else {
+        $self addrow [::tb::prettyTable::csv2list $line $csvDelimiter]
+        incr count
+      }
+    }
+    puts " -I- Header: $header"
+    puts " -I- Number of imported row(s): $count"
   }
-  close $FH
-  puts " -I- Header: $header"
-  puts " -I- Number of imported row(s): $count"
   return 0
 }
 
@@ -3574,47 +3615,98 @@ if 0 {
 }
 
 if {0} {
-  set tbl [::tb::prettyTable template deviceview]
 
-  set net [get_nets u0_cbus_map_f7/ocbus_addr_die[1]]
-  set driver [get_pins -of $net -leaf -filter {DIRECTION == OUT}] ; llength $driver
-  set loads [get_pins -of $net -leaf -filter {DIRECTION == IN}] ; llength $loads
+  proc plot {cells args} {
+    set defaults [list -marker 0 -file {}]
+    array set options $defaults
+    array set options $args
 
-  foreach load [get_cells -of $loads] {
-    set region [get_clock_regions -of $load]
-    regexp {^X([0-9]+)Y([0-9]+)$} $region - X Y
-    $tbl incrcell $X $Y
+    set channel {stdout}
+    if {$options(-file) != {}} {
+      set channel [open $options(-file) {w}]
+    }
+
+    set tbl [tb::prettyTable template deviceview]
+
+    foreach cell [get_cells -quiet [lsort -unique $cells]] {
+
+      set net [get_nets -of [get_pins -of $cell -filter {DIRECTION == OUT}]]
+      set driver [get_pins -of $net -leaf -filter {DIRECTION == OUT}] ; llength $driver
+      set loads [get_pins -of $net -leaf -filter {DIRECTION == IN}] ; llength $loads
+
+      $tbl cleartable
+      $tbl configure -align_right
+
+      foreach load [get_cells -quiet -of $loads] {
+        set region [get_clock_regions -quiet -of $load]
+        regexp {^X([0-9]+)Y([0-9]+)$} $region - X Y
+        $tbl incrcell $X $Y
+      }
+
+      foreach c [get_cells -quiet -of $driver] {
+        set region [get_clock_regions -quiet -of $c]
+        regexp {^X([0-9]+)Y([0-9]+)$} $region - X Y
+      #   $tbl appendcell $X $Y " (D)"
+        $tbl prependcell $X $Y "(D) "
+      }
+
+      set clockRoot [get_property -quiet CLOCK_ROOT $net]
+      set userClockRoot [get_property -quiet USER_CLOCK_ROOT $net]
+
+      if {$clockRoot != {}} {
+        regexp {^X([0-9]+)Y([0-9]+)$} clockRoot - X Y
+        $tbl prependcell $X $Y "(R) "
+      }
+
+      if {$userClockRoot != {}} {
+        regexp {^X([0-9]+)Y([0-9]+)$} userClockRoot - X Y
+        $tbl prependcell $X $Y "(U) "
+      }
+
+      if {$clockRoot != {}} {
+        set clockRoot [format { (CLOCK_ROOT: %s)} $clockRoot]
+      }
+      $tbl title "$cell\n[get_property -quiet REF_NAME $cell]${clockRoot}\nFanout: [expr [get_property FLAT_PIN_COUNT $net] -1]"
+      puts $channel [$tbl print]
+
+      # +------------------------------------------------------------------+
+      # | PTM_RESERVED_FOR_ENMAPPING_mapped_SCG_SST_logic_4_0/PTM_RESERVED_FOR_ENMAPPING_mapped_SCG_slrn_buf_out[0]_BUFGCE |
+      # | BUFGCE (CLOCK_ROOT: X7Y7)                                        |
+      # | Fanout: 16549                                                    |
+      # +-----+----+-----+-----+-----+------+------+-----+-----------+-----+
+      # |     | X0 | X1  | X2  | X3  | X4   | X5   | X6  | X7        | X8  |
+      # +-----+----+-----+-----+-----+------+------+-----+-----------+-----+
+      # | Y14 | 14 |  42 |  58 |  33 |  146 |   12 |     |           |     |
+      # | Y13 | 29 | 117 |  96 |  91 |  133 |  106 |   1 |         1 |     |
+      # | Y12 |  8 |  77 |  67 | 267 |  406 |  214 |  72 |         1 |     |
+      # | Y11 | 22 |  99 | 126 |  58 |  108 |  329 |  28 |           |     |
+      # | Y10 | 16 |  41 | 102 |  78 |  186 |  200 |  45 |           |     |
+      # +-----+----+-----+-----+-----+------+------+-----+-----------+-----+
+      # |  Y9 |    |  93 |  36 |     |      |      | 106 |       176 | 190 |
+      # |  Y8 |    | 325 | 408 | 278 |  556 |   76 |  11 |        19 |  18 |
+      # |  Y7 |    | 177 |   8 |     |  286 | 1161 | 435 | (R) (D) 1 |     |
+      # |  Y6 | 10 | 143 |  51 | 153 | 1040 | 1244 | 256 |         2 |     |
+      # |  Y5 |    |     | 263 | 236 |  524 |  426 |   3 |           |     |
+      # +-----+----+-----+-----+-----+------+------+-----+-----------+-----+
+      # |  Y4 |    |   5 | 118 | 454 |  468 |    5 |  50 |        37 |     |
+      # |  Y3 |    |     |  17 | 561 |  254 |    1 |  40 |         3 |   1 |
+      # |  Y2 |    |     |   8 | 271 |  214 |  107 |  78 |        66 |     |
+      # |  Y1 |    |     |     |     |   13 |    3 | 134 |       350 |     |
+      # |  Y0 |    |     |  50 | 244 |  409 |  257 |     |       104 |  87 |
+      # +-----+----+-----+-----+-----+------+------+-----+-----------+-----+
+
+      if {$options(-marker)} {
+        mark_objects -color red $driver
+        mark_objects -color green $loads
+      }
+    }
+    if {$channel != {stdout}} {
+      close $channel
+      puts " -I- Generated file '[file normalize $options(-file)]'"
+    }
+    catch {$tbl destroy}
+    return -code ok
   }
-
-  foreach cell [get_cells -of $driver] {
-    set region [get_clock_regions -of $cell]
-    regexp {^X([0-9]+)Y([0-9]+)$} $region - X Y
-    $tbl appendcell $X $Y " (D)"
-  }
-
-  $tbl print
-
-  # +-----+-----+-----+-----+---------+-----+------+
-  # |     | X0  | X1  | X2  | X3      | X4  | X5   |
-  # +-----+-----+-----+-----+---------+-----+------+
-  # | Y14 |     |     |     |         |     |      |
-  # | Y13 |     |     |     |         |     |      |
-  # | Y12 |     |     |     |         |     |      |
-  # | Y11 |     |     |     |         |     |      |
-  # | Y10 |     |     |     |         |     |      |
-  # +-----+-----+-----+-----+---------+-----+------+
-  # | Y9  |     |     |     |         |     |      |
-  # | Y8  |     |     |     |         |     |      |
-  # | Y7  |     |     |     |         |     |      |
-  # | Y6  |     |     |     |         |     |      |
-  # | Y5  |     |     |     | 1       |     |      |
-  # +-----+-----+-----+-----+---------+-----+------+
-  # | Y4  | 300 | 199 | 643 | 192     | 169 | 902  |
-  # | Y3  | 301 | 113 | 343 | 312 (D) | 164 | 384  |
-  # | Y2  | 87  | 551 | 483 | 517     | 116 | 1057 |
-  # | Y1  | 725 | 682 | 436 | 163     | 155 | 1021 |
-  # | Y0  | 634 | 62  | 2   | 19      | 158 | 1188 |
-  # +-----+-----+-----+-----+---------+-----+------+
 
 }
 
