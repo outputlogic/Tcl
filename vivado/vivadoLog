@@ -5,7 +5,7 @@ exec tclsh "$0" ${1+"$@"}
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -15,16 +15,18 @@ exec tclsh "$0" ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2014.12.08
-## Description:    This script removed timestamp and other info (cpu, ...) from Vivado 
+## Version:        2016.08.10
+## Description:    This script removed timestamp and other info (cpu, ...) from Vivado
 ##                 log files so that log files can be more easily compared
 ##
 ########################################################################################
 
 # Usage:
-# linux% vivadoLog vivado.log > vivado.tmppwd
+# linux% vivadoLog vivado.log > vivado.tmp
 
 ########################################################################################
+## 2016.08.10 - Added few patterns for memory removal
+##            - Added misc other patterns
 ## 12.08.2014 - Added few patterns for memory removal
 ## 07.31.2014 - Added help message
 ## 07.11.2014 - Initial release
@@ -119,6 +121,9 @@ proc remove_mem { input { replace_with {<mem>} } } {
   # Matches: heap: 0bytes, malloc: 92.1511MB, virtual: 0bytes
   # Matches: heap: 0bytes, malloc: 92.1511kB, virtual: 0bytes
   set output [ regsub -all {((heap|malloc|virtual)\s*:\s*)([0-9]+(\.[0-9]+)?)(\s*(bytes|MB|kB|GB))} $output "\\1$replace_with\\5" ]
+  # Matches: Memory Report: used = 1023.55 heap = 1351.01
+  set output [ regsub -all {((heap|used)\s*=\s*)([0-9]+(\.[0-9]+)?)(\s|$)} $output "\\1$replace_with\\5" ]
+
   return $output
 }
 
@@ -140,7 +145,7 @@ proc remove_checksum { input { replace_with {<checksum>} } } {
   # Matches: Checksum: 2efc0919
   set output [ regsub -all {((c|C)hecksum\s*:\s*)([0-9a-z]{8,9})} $output "\\1$replace_with" ]
   # Matches: ----- Checksum: PlaceDB: 98b4c2f0 PlaceInfo: d8c21771 ConstDB: c8a55756 ShapeSum: b5a45fdb Netlist: 7f663eaf RouteDB: 40437ab7
-  # Matches: ----- Checksum: NetGraph: 5bd3b916 NumContArr: db9dd73d Constraints: 00000000 
+  # Matches: ----- Checksum: NetGraph: 5bd3b916 NumContArr: db9dd73d Constraints: 00000000
   set output [ regsub -all {((NetGraph|NumContArr|Constraints|PlaceDB|PlaceInfo|ConstDB|ShapeSum|Netlist|RouteDB)\s*:\s*)([0-9a-z]{8,9})} $output "\\1$replace_with" ]
   # Matches: Infrastructure netlist checksum at beginning of placer: 1f8a76b9
   # Matches: Infrastructure netlist checksum after mandatory logic opt: 1f8a76b9
@@ -176,10 +181,18 @@ proc remove_others { input { replace_with {<DEL>} } } {
   set output [ regsub -all {((staObj|tables|changes)\s*:\s*)(\-?[0-9]+\.[0-9]+)(\s*MB)} $output "\\1$replace_with\\4" ]
   # Matches:  ... | CPU:  23.16 | WALL: 23.31 | Mem:      0.0 | Called  1 times
   set output [ regsub -all {(Called\s*)([0-9]+)(\s*times)} $output "\\1$replace_with\\3" ]
-  # Matches: termId 1273162 drvTermId 1273161 blockId 283277 drvBlockId 283245 
+  # Matches: termId 1273162 drvTermId 1273161 blockId 283277 drvBlockId 283245
   set output [ regsub -all {((termId|drvTermId|blockId|drvBlockId)\s*)([0-9]+)(\s*)} $output "\\1$replace_with\\4" ]
   # Matches: ((0, 30000), (6899, 45000))
   set output [ regsub -all {\(\s*[0-9]+\s*,\s*[0-9]+\)} $output "($replace_with , $replace_with)" ]
+  # Matches:  IC: 2.150E+04
+  # Matches:  IC = 2.150E+04
+  set output [ regsub -all {(\sIC\s*:\s*)([0-9]+[^\s]*)(\s|\,|$)} $output "\\1$replace_with\\3" ]
+  set output [ regsub -all {(\sIC\s*=\s*)([0-9]+[^\s]*)(\s|\,|$)} $output "\\1$replace_with\\3" ]
+  # Matches:  CMR: 0.003
+  # Matches:  CMR = 0.003
+  set output [ regsub -all {(\sCMR\s*:\s*)([0-9]+[^\s]*)(\s|\,|$)} $output "\\1$replace_with\\3" ]
+  set output [ regsub -all {(\sCMR\s*=\s*)([0-9]+[^\s]*)(\s|\,|$)} $output "\\1$replace_with\\3" ]
   return $output
 }
 
@@ -187,7 +200,7 @@ if {[llength $argv] == 0} {
     puts [format {
   Usage: vivadoLog <vivado_log_file> > <output_file>
 
-  Description: 
+  Description:
 
      This command removes some information from Vivado log file such as timestamp,
      cpu time, wall time, mem, ...
