@@ -1,7 +1,7 @@
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2015 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -14,18 +14,20 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
+## Version:        2016.07.31
 ## Description:    Generate a report for a list of primitive cells
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.07.31 - Updated the list of supported architectures
 ## 2015.09.25 - Initial release
 ########################################################################################
 
 # Example of report:
 #
 #  vivado% tb::report_cells -sites {SLICE_X132Y625:SLICE_X136Y272} -file cells.rpt -expand 3 -details -fanout -max_cell_fanout
-#   
+#
 #    -I- Skipping cell 'irdr_tops/rdr_top_i0/rdr_eng0_i/GEN_ARB_DOWN.rdr_arb_top_down_i/csm_dat_last[0][1023]_i_1' (LUT2) from max fanout limit (1025)
 #    -I- Skipping cell 'irdr_tops/rdr_top_i0/rdr_eng0_i/GEN_ARB_DOWN.rdr_arb_top_down_i/csm_dat_last[1][1023]_i_1' (LUT2) from max fanout limit (1025)
 #     +-----------------------------------------------------------------------------------------------------------------+
@@ -98,7 +100,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_cells {
   namespace export -force report_cells
-  variable version {2015.09.25}
+  variable version {2016.07.31}
   variable params
   variable output {}
   variable db
@@ -257,7 +259,7 @@ proc ::tb::utils::report_cells::report_cells {args} {
     Use -details to provide additional information.
     Use -regions to provide a range of region(s).
     Use -sites to provide a range of site(s)/slice(s).
-    Use -maxrow to reduce the number of reported rows in the 
+    Use -maxrow to reduce the number of reported rows in the
     cells ditribution table.
 
     Use -fanout to report average fanout (RUNTIME INTENSIVE).
@@ -285,9 +287,12 @@ proc ::tb::utils::report_cells::report_cells {args} {
     kintex7 -
     virtex7 -
     zynq -
+    zynquplus -
     kintexu -
+    kintexuplus -
     kintexum -
     virtexu -
+    virtexuplus -
     virtexum {
     }
     default {
