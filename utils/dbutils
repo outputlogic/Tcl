@@ -18,12 +18,15 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.10
+## Version:        2016.06.30
 ## Description:    This script provides various utilities for SQLite databases
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.06.30 - Added support for gzip-ed input files
+##            - Added support for -table/-list (dbquery)
+##            - Various fixes and enhancements
 ## 2016.06.10 - Added support for -output_type (db2csv)
 ##            - Added support for -strict (tbl2db)
 ##            - Added support for -strict (csv2db)
@@ -59,7 +62,7 @@ namespace eval ::tb::utils::dbutils {
   namespace export dbinfo
   namespace export dbquery
 
-  variable version {2016.06.10}
+  variable version {2016.06.30}
   array set params [list timeout 600 safe 1 verbose 0 debug 0 debug_level 1 debug_channel {stdout} debug_log {} ]
 
   variable SCRIPT_VERSION {xx-xx-2016}
@@ -122,9 +125,9 @@ proc ::tb::utils::dbutils::unlshift { ls data } {
 }
 
 ##-----------------------------------------------------------------------
-## K lequal
+## dputs debug
 ##-----------------------------------------------------------------------
-## List functions
+## Debug functions
 ##-----------------------------------------------------------------------
 
 proc ::tb::utils::dbutils::dputs {args} {
@@ -265,7 +268,14 @@ proc ::tb::utils::dbutils::read-csv {&header &rows filename {csvDelimiter ,}} {
   }
   upvar 1 ${&header} header
   upvar 1 ${&rows} rows
-  set FH [open $filename]
+
+  if {[regexp {.gz$} $filename]} {
+    # gzip-ed file
+    set FH [open "| zcat $filename"]
+  } else {
+    set FH [open $filename]
+  }
+#   set FH [open $filename]
   set first 1
   set count 0
   set header [list]
@@ -341,10 +351,15 @@ proc ::tb::utils::dbutils::execSQL {&SQL {cmd {pragma integrity_check} } } {
 #------------------------------------------------------------------------
 # Create SQL table
 #------------------------------------------------------------------------
-proc ::tb::utils::dbutils::dbCreateDB {{db {}} {inmemory 0}} {
+proc ::tb::utils::dbutils::dbCreateDB {{db {:memory:}}} {
 #   variable SQL
   variable params
   set verbose $params(verbose)
+  if {$db == {:memory:}} {
+    set inmemory 1
+  } else {
+    set inmemory 0
+  }
   set id [pid]
   while {[info command SQL${id}] != {}} { incr id }
   if {$inmemory} {
@@ -535,14 +550,14 @@ proc ::tb::utils::dbutils::dbTbl2DB {SQL tbl args} {
   set debug $params(debug)
 
   # First assign default values...
-  array set options [list -tableName {csv} -merge 0 -safe 0 -strict 0 -add_extra_columns 1 -primary_key 1 -tag {} -project {} -version {} -experiment {} -step {} -directive {}]
+  array set options [list -tableName {csv} -merge 0 -safe 0 -strict 0 -add_tag_columns 1 -primary_key 1 -tag {} -project {} -version {} -experiment {} -step {} -directive {}]
   # ...then possibly override them with user choices
   array set options $args
   set tableName $options(-tableName)
   set merge $options(-merge)
   set safe $options(-safe)
   set strict $options(-strict)
-  set addExtraColumns $options(-add_extra_columns)
+  set addTagColumns $options(-add_tag_columns)
   set primaryKey $options(-primary_key)
   set tag $options(-tag)
   set project $options(-project)
@@ -615,17 +630,25 @@ proc ::tb::utils::dbutils::dbTbl2DB {SQL tbl args} {
     if {$strict} {
       # In strict mode, data type for created tables should match the type of the first
       # table row
-      if {$addExtraColumns} {
-        dbCreateTable $SQL $table [concat _tag_ _project_ _version_ _experiment_ _step_ _directive_ $sqlheader] [concat [list {} {} {} {} {} {}] [lindex $rows 0] ] $primaryKey
+      if {$addTagColumns} {
+        dbCreateTable $SQL $table [concat _tag_ _project_ _version_ _experiment_ _step_ _directive_ $sqlheader] \
+                      -reference_row [concat [list {} {} {} {} {} {}] [lindex $rows 0] ] \
+                      -primary_key $primaryKey
       } else {
-        dbCreateTable $SQL $table $sqlheader [lindex $rows 0] $primaryKey
+        dbCreateTable $SQL $table $sqlheader \
+                      -reference_row [lindex $rows 0] \
+                      -primary_key $primaryKey
       }
     } else {
       # When NOT in strict mode, all data type will use the type TEXT
-      if {$addExtraColumns} {
-        dbCreateTable $SQL $table [concat _tag_ _project_ _version_ _experiment_ _step_ _directive_ $sqlheader] {} $primaryKey
+      if {$addTagColumns} {
+        dbCreateTable $SQL $table [concat _tag_ _project_ _version_ _experiment_ _step_ _directive_ $sqlheader] \
+                      -reference_row [lindex $rows 0] \
+                      -primary_key $primaryKey
       } else {
-        dbCreateTable $SQL $table $sqlheader {} $primaryKey
+        dbCreateTable $SQL $table $sqlheader \
+                      -reference_row [lindex $rows 0] \
+                      -primary_key $primaryKey
       }
     }
 #     dbCreateTable $SQL $table [concat _tag_ $sqlheader] [concat {} {*}[lindex $rows 0] ]
@@ -750,7 +773,7 @@ proc ::tb::utils::dbutils::dbCopyTable {SQL table newtable {cols *}} {
   if {$cols != {*}} {
     set L [list]
     foreach col $cols {
-      if {[lsearch $columns $col] == -1} { lappend L $col }
+      if {[lsearch -nocase $columns $col] == -1} { lappend L [string toupper $col] }
     }
     if {[llength $L]} {
       puts " -E- invalid column(s) '[join $L ,]' for table '$table'"
@@ -871,8 +894,17 @@ proc ::tb::utils::dbutils::dbTableExist {&SQL table} {
 #------------------------------------------------------------------------
 # Create SQL table
 #------------------------------------------------------------------------
-proc ::tb::utils::dbutils::dbCreateTable {&SQL table sqlheader {row {}} {primaryKey 1}} {
+proc ::tb::utils::dbutils::dbCreateTable {&SQL table sqlheader args} {
   variable params
+  set verbose $params(verbose)
+  set debug $params(debug)
+
+  # First assign default values...
+  array set options {-reference_row {} -primary_key 1}
+  # ...then possibly override them with user choices
+  array set options $args
+  set row $options(-reference_row)
+  set primaryKey $options(-primary_key)
 
   set tables [dbGetTables ${&SQL}]
   if {[lsearch -exact $tables $table] != -1} {
@@ -904,7 +936,7 @@ proc ::tb::utils::dbutils::dbCreateTable {&SQL table sqlheader {row {}} {primary
 
       set SQLTable [format {
     CREATE TABLE IF NOT EXISTS %s (
-    _id_ INTEGER PRIMARY KEY AUTOINCREMENT,
+    '_id_' INTEGER PRIMARY KEY AUTOINCREMENT,
     %s
     );
     } $table $string ]
@@ -927,6 +959,7 @@ proc ::tb::utils::dbutils::dbCreateTable {&SQL table sqlheader {row {}} {primary
     puts " -D- dbCreateTable: table : $table"
     puts " -D- dbCreateTable: header: $sqlheader"
     puts " -D- dbCreateTable: row   : $row"
+    puts " -D- dbCreateTable: key   : $primaryKey"
   }
   return -code ok
 }
@@ -1015,7 +1048,7 @@ proc ::tb::utils::dbutils::dbGetColumns {&SQL table cols {where 1}} {
   set columns [dbGetSQLTableColumns ${&SQL} $table]
   set L [list]
   foreach col $cols {
-    if {[lsearch $columns $col] == -1} { lappend L $col }
+    if {[lsearch -nocase $columns $col] == -1} { lappend L [string toupper $col] }
   }
   if {[llength $L]} {
     puts " -E- invalid column(s) '[join $L ,]' for table '$table'"
@@ -1379,6 +1412,7 @@ proc ::tb::utils::dbutils::dbquery {args} {
   set standalone 0
   set ifilename {}
   set inmemory 0
+  set returnformat {list} ; # list | table
   if {([llength $args] == 0) || ($args == {-standalone})} {
     incr show_help
   }
@@ -1403,6 +1437,12 @@ proc ::tb::utils::dbutils::dbquery {args} {
       }
       {^-p(r(i(nt?)?)?)?$} {
         set print 1
+      }
+      {^-li(st?)?$} {
+        set returnformat {list}
+      }
+      {^-ta(b(le?)?)?$} {
+        set returnformat {table}
       }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set verbose 1
@@ -1449,7 +1489,7 @@ proc ::tb::utils::dbutils::dbquery {args} {
                   [-db <filename>|-db <SQL>]
                   [-in <filename>|-in <SQL>]
                   [-sql <string>]|[-query <string>]
-                  [-print]
+                  [-print][-table][-list]
                   [-verbose]
                   [-help]
 
@@ -1461,7 +1501,7 @@ proc ::tb::utils::dbutils::dbquery {args} {
          tb::dbquery -db file1.db -sql {SELECT * FROM table}
          tb::dbquery -db $SQL -sql {SELECT * FROM table} -print
          tb::dbquery -db $SQL -sql {SELECT * FROM csv0 WHERE (CAST(MAXFO AS INT) >= 5000)} -print
-         tb::dbquery -db $SQL -sql {SELECT * FROM csv0 WHERE (CAST(SKEW AS REAL) <= -0.500)} -print
+         tb::dbquery -db $SQL -sql {SELECT * FROM csv0 WHERE (CAST(SKEW AS REAL) <= -0.500)} -table
     } $SCRIPT_VERSION ]
     # HELP -->
 
@@ -1505,7 +1545,7 @@ proc ::tb::utils::dbutils::dbquery {args} {
   }
 
   set result [list]
-  if {$print} {
+  if {$print || ($returnformat == {table})} {
     # Dump the query result
     set tbl [::tb::prettyTable]
     $tbl configure -title "$query"
@@ -1529,10 +1569,16 @@ proc ::tb::utils::dbutils::dbquery {args} {
       error " -E- $errorstring"
     }
     $tbl header $header
-    puts [$tbl print]
-    catch {$tbl destroy}
-    # In table mode, do not return anything
-    set result [list]
+    if {$print} {
+      puts [$tbl print]
+    }
+    if {$returnformat == {table}} {
+      set result $tbl
+    } else {
+      catch {$tbl destroy}
+      # Do not return anything
+      set result [list]
+    }
   } else {
     if {[catch {set result [execSQL $SQL $query]} errorstring]} {
       if {!$inmemory} {
@@ -2226,6 +2272,8 @@ proc ::tb::utils::dbutils::tbl2db {args} {
   set inmemory 0
   set force 0
   set append 0
+  set addTagColumns 1
+  set primaryKey 1
   set project {}
   set version {}
   set experiment {}
@@ -2271,6 +2319,12 @@ proc ::tb::utils::dbutils::tbl2db {args} {
       }
       {^-ap(p(e(nd?)?)?)?$} {
         set append 1
+      }
+      {^-no_primary_key$} {
+        set primaryKey 0
+      }
+      {^-no_tag$} {
+        set addTagColumns 0
       }
       {^-pr(o(j(e(ct?)?)?)?)?$} {
         set project [lshift args]
@@ -2329,6 +2383,8 @@ proc ::tb::utils::dbutils::tbl2db {args} {
                   [-strict]
                   [-force]
                   [-append]
+                  [-no_tag]
+                  [-no_primary_key]
                 +----------------------+
                   [-project <string>]
                   [-version <string>]
@@ -2439,6 +2495,8 @@ proc ::tb::utils::dbutils::tbl2db {args} {
                        -merge $merge \
                        -safe $safe \
                        -strict $strict \
+                       -add_tag_columns $addTagColumns \
+                       -primary_key $primaryKey \
                        -tag $_tag \
                        -project $project \
                        -version $version \
@@ -2496,6 +2554,8 @@ proc ::tb::utils::dbutils::csv2db {args} {
   set inmemory 0
   set force 0
   set append 0
+  set addTagColumns 1
+  set primaryKey 1
   set project {}
   set version {}
   set experiment {}
@@ -2551,6 +2611,12 @@ proc ::tb::utils::dbutils::csv2db {args} {
       }
       {^-ap(p(e(nd?)?)?)?$} {
         set append 1
+      }
+      {^-no_primary_key$} {
+        set primaryKey 0
+      }
+      {^-no_tag$} {
+        set addTagColumns 0
       }
       {^-pr(o(j(e(ct?)?)?)?)?$} {
         set project [lshift args]
@@ -2621,6 +2687,8 @@ proc ::tb::utils::dbutils::csv2db {args} {
                   [-strict]
                   [-force]
                   [-append]
+                  [-no_tag]
+                  [-no_primary_key]
                 +----------------------+
                   [-project <string>]
                   [-version <string>]
@@ -2761,6 +2829,8 @@ proc ::tb::utils::dbutils::csv2db {args} {
                        -merge $merge \
                        -safe $safe \
                        -strict $strict \
+                       -add_tag_columns $addTagColumns \
+                       -primary_key $primaryKey \
                        -tag $_tag \
                        -project $project \
                        -version $version \
@@ -2799,16 +2869,17 @@ namespace eval ::tb::prettyTable {}
 
 proc ::tb::prettyTable::method:getsql {self args} {
   # Return a SQL database
+  variable params
 
   # Create in-memory SQL database
-  set SQL [::tb::utils::dbutils::dbCreateDB {:memory:} 1]
+  set SQL [::tb::utils::dbutils::dbCreateDB {:memory:}]
 
   # Save table object inside SQL database
   ::tb::utils::dbutils::dbTbl2DB $SQL $self -tableName {tbl} \
                                             -merge 0 \
                                             -safe 0 \
                                             -strict 1 \
-                                            -add_extra_columns 0 \
+                                            -add_tag_columns 0 \
                                             -primary_key 0
 #   ::tb::utils::dbutils::dbDumpTable $SQL tbl0
 #   ::tb::utils::dbutils::dbGetSchema $SQL tbl0
@@ -2821,7 +2892,7 @@ proc ::tb::prettyTable::method:getsql {self args} {
 #   ::tb::utils::dbutils::dbDropTable $SQL {tbl0}
 
 #   ::tb::utils::dbutils::dbDumpTable $SQL tbl
-  puts " -I- Header for SQL Table '$SQL': [tb::utils::dbutils::dbGetSQLTableColumns $SQL tbl0]"
+  puts " -I- Header for SQL Table 'tbl0' ($SQL): [tb::utils::dbutils::dbGetSQLTableColumns $SQL tbl0]"
 
   # Return SQL database
   return $SQL
