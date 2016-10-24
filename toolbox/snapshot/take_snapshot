@@ -3,6 +3,7 @@
 exec tclsh "$0" -- ${1+"$@"}
 
 ########################################################################################
+## 2016.06.17 - Added support for -lsf-limit
 ## 2016.04.04 - Modified sh exec command to execute script
 ## 2015.12.17 - Added support for -rci/-ru
 ## 2015.12.15 - Minor fix to enable on-file timing reports to be used with a DCP
@@ -23,13 +24,13 @@ set help_message [format {
 ##
 ## Description:
 ##   Use take_snapshot to capture a snapshot.
-##   
+##
 ## Options:
-##   
+##
 ##   --project                Project name
 ##
 ##   --remove-def             Remove the DEF file(s)
-##   
+##
 ##
 ##   Other command line arguments:
 ##
@@ -68,7 +69,7 @@ catch {unset data}
 ## Various stack processing functions.
 ##-----------------------------------------------------------------------
 
-interp alias {} push {} lappend  
+interp alias {} push {} lappend
 
 proc pop { name } {
   upvar 1 $name stack
@@ -97,12 +98,12 @@ proc backup_file { filename } {
     print info "File '$filename' does not exist"
     return 0
   }
-  
+
   set rootname [file rootname $filename]
   set extension [file extension $filename]
-  
+
   set index 1
-  
+
   while {1} {
     if {![file exists ${rootname}.${index}${extension}]} {
       break
@@ -112,7 +113,7 @@ proc backup_file { filename } {
 
   print info "Backing up log file $filename to ${rootname}.${index}${extension}"
   set exitCode [file rename -force -- $filename ${rootname}.${index}${extension}]
-  
+
   return $exitCode
 }
 
@@ -262,7 +263,7 @@ proc system {COMMAND} {
  return "$STRIPPED_STRING"
 
 }
- 
+
 #########################################################################
 #########################################################################
 ##
@@ -295,7 +296,8 @@ set id {}
 set scripts [list]
 set LSFQueue {medium}
 set LSFMemory {8000}
-set LSFCmd [format {bsub -app sil_rhel5 -q %%queue -R {rusage[mem=%%mem]} }]
+set LSFMemoryLimit {20000000} ; # 20GB in KB
+set LSFCmd [format {bsub -app sil_rhel5 -q %%queue -M %%limit -R {rusage[mem=%%mem]} }]
 set mode {localhost}
 set unplaceDesign 0
 set unrouteDesign 0
@@ -388,8 +390,8 @@ while {[llength $::argv]} {
     -report_timing_summary {
          set reportTimingSummary [lshift ::argv]
          if {![file exists $reportTimingSummary]} {
-         	 print error "file '$reportTimingSummary' does not exist"
-         	 incr error
+           print error "file '$reportTimingSummary' does not exist"
+           incr error
         }
     }
     -rda -
@@ -397,8 +399,8 @@ while {[llength $::argv]} {
     -report_design_analysis {
          set reportDesignAnalysis [lshift ::argv]
          if {![file exists $reportDesignAnalysis]} {
-         	 print error "file '$reportDesignAnalysis' does not exist"
-         	 incr error
+           print error "file '$reportDesignAnalysis' does not exist"
+           incr error
         }
     }
     -rci -
@@ -406,8 +408,8 @@ while {[llength $::argv]} {
     -report_clock_interaction {
          set reportClockInteraction [lshift ::argv]
          if {![file exists $reportClockInteraction]} {
-         	 print error "file '$reportClockInteraction' does not exist"
-         	 incr error
+           print error "file '$reportClockInteraction' does not exist"
+           incr error
         }
     }
     -ru -
@@ -415,8 +417,8 @@ while {[llength $::argv]} {
     -report_utilization {
          set reportUtilization [lshift ::argv]
          if {![file exists $reportUtilization]} {
-         	 print error "file '$reportUtilization' does not exist"
-         	 incr error
+           print error "file '$reportUtilization' does not exist"
+           incr error
         }
     }
     -rrs -
@@ -424,8 +426,8 @@ while {[llength $::argv]} {
     -report_route_status {
          set reportRouteStatus [lshift ::argv]
          if {![file exists $reportRouteStatus]} {
-         	 print error "file '$reportRouteStatus' does not exist"
-         	 incr error
+           print error "file '$reportRouteStatus' does not exist"
+           incr error
         }
     }
     -time {
@@ -439,6 +441,11 @@ while {[llength $::argv]} {
     }
     -lsf-mem {
          set LSFMemory [lshift ::argv]
+         # By default, the memory limit is twice the requested memory
+         set LSFMemoryLimit [expr $LSFMemory * 2000]
+    }
+    -lsf-limit {
+         set LSFMemoryLimit [lshift ::argv]
     }
     -lsf-cmd {
          set LSFCmd [lshift ::argv]
@@ -505,7 +512,8 @@ Usage: take_snapshot
             [-time <time_in_seconds>]
             [-timeout <seconds>]
             [-lsf]
-            [-lsf-mem <number>]
+            [-lsf-mem <number(MB)>]
+            [-lsf-limit <number(KB)>]
             [-lsf-queue <string>]
             [-lsf-cmd <string>]
             [-dry-run|-dry]
@@ -514,11 +522,15 @@ Usage: take_snapshot
 
 Description: Extract metrics from checkpoint and save snapshot
 
+  -lsf-mem: LSF memory requirement in MB
+  -lsf-limit: LSF max memory in KB. If not specified, the max memory is
+    twice the memory requirement
+
 Example:
    take_snapshot -dcp post_route.dcp -createdb -step route_design
    take_snapshot -dcp post_route.dcp -script extract.tcl -step route_design
    take_snapshot -dcp post_route.dcp -script extract.tcl -step opt_design -unroute -unplace
-   take_snapshot -dcp post_route.dcp -script extract.tcl -step route_design -lsf -lsf-mem 12000 -lsf-queue long
+   take_snapshot -dcp post_route.dcp -script extract.tcl -step route_design -lsf -lsf-mem 12000 -lsf-limit 20000000 -lsf-queue long
    take_snapshot -nodcp -step route_design -rts report_ts.rpt -rda report_da.rpt -rrs report_rs.rpt
 } ]
   # HELP -->
@@ -530,15 +542,20 @@ Example:
 }
 
 if {$checkpoint == {}} {
-	if {!$standalone} {
+  if {!$standalone} {
     print error "no checkpoint provided (-dcp)"
     incr error
   }
 } else {
-	if {$standalone} {
+  if {$standalone} {
     print error "options -dcp and -nodcp are mutually exclusive"
     incr error
   }
+}
+
+if {$LSFMemoryLimit < [expr $LSFMemory * 1000]} {
+  print error "LSF memory limit ($LSFMemoryLimit in KB) is smaller than the LSF memory requirement ($LSFMemory in MB)"
+  incr error
 }
 
 if {$error} {
@@ -606,29 +623,29 @@ if {$standalone} {
     package require snapshot
     eval [concat snapshot configure $cmdLine]
     if {$reportTimingSummary != {}} {
-    	snapshot addfile report.timing_summary $reportTimingSummary
+      snapshot addfile report.timing_summary $reportTimingSummary
     }
     if {$reportDesignAnalysis != {}} {
-    	snapshot addfile report.design_analysis $reportDesignAnalysis
+      snapshot addfile report.design_analysis $reportDesignAnalysis
     }
     if {$reportClockInteraction != {}} {
-    	snapshot addfile report.clock_interaction $reportClockInteraction
+      snapshot addfile report.clock_interaction $reportClockInteraction
     }
     if {$reportUtilization != {}} {
-    	snapshot addfile report.utilization $reportUtilization
+      snapshot addfile report.utilization $reportUtilization
     }
     if {$reportRouteStatus != {}} {
-    	snapshot addfile report.route_status $reportRouteStatus
+      snapshot addfile report.route_status $reportRouteStatus
     }
     snapshot extract
     snapshot save
   } errorstring]} {
-  	puts " -E- Extraction failed with the following error:"
-  	foreach line [split $errorstring \n] { puts [format {     %s} $line] }
-  	exit 1
+    puts " -E- Extraction failed with the following error:"
+    foreach line [split $errorstring \n] { puts [format {     %s} $line] }
+    exit 1
   }
-	puts " -I- Extraction completed on [clock format [clock seconds]]"
-	exit 0
+  puts " -I- Extraction completed on [clock format [clock seconds]]"
+  exit 0
 }
 
 #-------------------------------------------------------
@@ -694,7 +711,7 @@ puts $FH [format {if {[file exists $checkpoint]} {
 
   # Open checkpoint
   open_checkpoint %s
-  
+
   # Unroute design?
   if {%d} {
     catch {route_design -unroute}
@@ -704,22 +721,22 @@ puts $FH [format {if {[file exists $checkpoint]} {
   if {%d} {
     catch {place_design -unplace}
   }
-  
+
   # Import reports if specified on the command line
   if {[file exists $rts]} {
-  	snapshot addfile report.timing_summary $rts
+    snapshot addfile report.timing_summary $rts
   }
   if {[file exists $rda]} {
-  	snapshot addfile report.design_analysis $rda
+    snapshot addfile report.design_analysis $rda
   }
   if {[file exists $rci]} {
-  	snapshot addfile report.clock_interaction $rci
+    snapshot addfile report.clock_interaction $rci
   }
   if {[file exists $ru]} {
-  	snapshot addfile report.utilization $ru
+    snapshot addfile report.utilization $ru
   }
   if {[file exists $rrs]} {
-  	snapshot addfile report.route_status $rrs
+    snapshot addfile report.route_status $rrs
   }
 
   # Extract metrics and save snapshot into database
@@ -732,12 +749,12 @@ puts $FH [format {if {[file exists $checkpoint]} {
     puts -nonewline $FH [snapshot lastid]
     close $FH
   }
-  
+
   # Close current design
   close_design
 }
 } [list $checkpoint] $unrouteDesign $unplaceDesign $cmdLine ]
-  
+
 close $FH
 
 if {!$dryrun} {
@@ -751,6 +768,7 @@ if {!$dryrun} {
     lsf {
       set LSFCmd [regsub -all {%queue} $LSFCmd $LSFQueue]
       set LSFCmd [regsub -all {%mem} $LSFCmd $LSFMemory]
+      set LSFCmd [regsub -all {%limit} $LSFCmd $LSFMemoryLimit]
       print info "Running Vivado on LSF"
       print info "Job: $LSFCmd $vivadoCmdLine"
       system [concat $LSFCmd $vivadoCmdLine]
@@ -760,12 +778,12 @@ if {!$dryrun} {
     }
   }
   set clock_stop [clock seconds]
-  
+
   if {$::errorCode != {NONE}} {
     print error "Some error(s) occured during the execution of the take_snapshot ($::errorCode)"
     incr error
   }
-  
+
   print info "Duration: [duration [expr $clock_stop - $clock_start]]"
 }
 
