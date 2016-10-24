@@ -1,7 +1,7 @@
 ####################################################################################################
 # HEADER_BEGIN
 # COPYRIGHT NOTICE
-# Copyright 2001-2014 Xilinx Inc. All Rights Reserved.
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
 # http://www.xilinx.com/support
 # HEADER_END
 ####################################################################################################
@@ -10,29 +10,32 @@
 ##
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
-## 
-## Version:        2014.07.03
+##
+## Version:        2016.07.29
 ## Tool Version:   Vivado 2014.1
 ## Description:    This package provides a simple profiler for Vivado commands
 ##
 ########################################################################################
 
 ########################################################################################
-## 2014.07.03 - fixed issue with clock formating that prevented the script from running 
+## 2016.07.29 - Added method 'configure'
+##            - Added tuncation of long command lines inside log file
+##              (improved performance and better support for very large XDC)
+## 2014.07.03 - Fixed issue with clock formating that prevented the script from running
 ##              under Windows
-## 2014.05.13 - updated package requirement to Vivado 2014.1
-## 2013.10.03 - changed version format to 2013.10.03 to be compatible with 'package' command
-##            - added version number to namespace
-## 09/16/2013 - updated 'docstring' to support meta-comment 'Categories' for linter
-## 03/29/2013 - minor fix
-## 03/26/2013 - reformated the log file and added the top 50 worst runtimes
-##            - renamed subcommand 'exec' to 'time'
-##            - removed 'read_xdc' from the list of commands that contribute to the 
+## 2014.05.13 - Updated package requirement to Vivado 2014.1
+## 2013.10.03 - Changed version format to 2013.10.03 to be compatible with 'package' command
+##            - Added version number to namespace
+## 09/16/2013 - Updated 'docstring' to support meta-comment 'Categories' for linter
+## 03/29/2013 - Minor fix
+## 03/26/2013 - Reformated the log file and added the top 50 worst runtimes
+##            - Renamed subcommand 'exec' to 'time'
+##            - Removed 'read_xdc' from the list of commands that contribute to the
 ##              total runtime
-##            - added subcommand 'version'
-##            - added subcommand 'configure'
-##            - added options -collection_display_limit & -src_info to subcommand 'start' 
-##            - modified the subcommand 'time' to accept the same command line arguments
+##            - Added subcommand 'version'
+##            - Added subcommand 'configure'
+##            - Added options -collection_display_limit & -src_info to subcommand 'start'
+##            - Modified the subcommand 'time' to accept the same command line arguments
 ##              as the subcommand 'start'
 ## 03/21/2013 - Initial release
 ########################################################################################
@@ -47,7 +50,7 @@
 # OR
 #
 #    profiler add *    (-help for additional help)
-#    profiler time { ... } 
+#    profiler time { ... }
 
 if {[package provide Vivado] == {}} {return}
 
@@ -60,10 +63,10 @@ namespace eval ::tb {
 
 proc ::tb::profiler { args } {
   # Summary : Tcl profiler
-  
+
   # Argument Usage:
   # args : sub-command. The supported sub-commands are: start | stop | summary | add | remove | reset | status
-  
+
   # Return Value:
   # returns the status or an error code
 
@@ -85,8 +88,8 @@ proc ::tb::profiler { args } {
 #------------------------------------------------------------------------
 
 # Trick to silence the linter
-eval [list namespace eval ::tb::profiler { 
-  variable version {2014.07.03}
+eval [list namespace eval ::tb::profiler {
+  variable version {2016.07.29}
   variable cmdlist [list]
   variable tmstart [list]
   variable tmend [list]
@@ -94,7 +97,7 @@ eval [list namespace eval ::tb::profiler {
   variable db [list]
   variable summary
   catch {unset params}
-  array set params [list mode {stopped} collectionResultDisplayLimit -1 ]
+  array set params [list mode {stopped} expandObjects 0 collectionResultDisplayLimit -1 ]
 } ]
 
 #------------------------------------------------------------------------
@@ -133,7 +136,7 @@ proc ::tb::profiler::profiler { args } {
     ::tb::profiler::method:?
     puts [format {
    Description: Utility to profile Vivado commands
-   
+
    Example1:
       profiler add *
       profiler start -incr
@@ -141,13 +144,13 @@ proc ::tb::profiler::profiler { args } {
       profiler stop
       profiler summary
       profiler reset
-   
+
    Example2:
       profiler add *
       profiler time { <execute some Tcl code with Vivado commands> }
       profiler summary
       profiler reset
-   
+
     } ]
     # HELP -->
     return
@@ -331,7 +334,14 @@ proc ::tb::profiler::leave1 {cmd code result op} {
   # Argument Usage:
   # Return Value:
   variable db
-  lappend db [list [clock microseconds] 0 $cmd $code $result]
+  variable params
+  if {$params(expandObjects)} {
+    # Save the list of return objects
+    lappend db [list [clock microseconds] 0 $cmd $code $result]
+  } else {
+    # Only save the number of return objects
+    lappend db [list [clock microseconds] 0 $cmd $code [list [format {%d objects} [llength $result]]] ]
+  }
   return -code ok
 }
 
@@ -348,10 +358,17 @@ proc ::tb::profiler::leave2 {cmd code result op} {
   # Argument Usage:
   # Return Value:
   variable db
+  variable params
   # Create temp variable in case [current_design] does not exist
   set src_info {}
   catch { set src_info [get_property -quiet src_info [current_design -quiet]] }
-  lappend db [list [clock microseconds] 0 $cmd $code $result $src_info ]
+  if {$params(expandObjects)} {
+    # Save the list of return objects
+    lappend db [list [clock microseconds] 0 $cmd $code $result $src_info ]
+  } else {
+    # Only save the number of return objects
+    lappend db [list [clock microseconds] 0 $cmd $code [list [format {%d objects} [llength $result]]] $src_info]
+  }
 #   lappend db [list [clock microseconds] 0 $cmd $code $result [get_property src_info [current_design]] ]
   return -code ok
 }
@@ -445,7 +462,7 @@ proc ::tb::profiler::trace_info {args} {
   variable cmdlist
   foreach cmd $cmdlist {
     if {[catch { puts "   $cmd:[trace info execution $cmd]" } errorstring]} {
-       puts "   $cmd: <ERROR: $errorstring>" 
+       puts "   $cmd: <ERROR: $errorstring>"
     }
   }
   return -code ok
@@ -517,11 +534,11 @@ proc ::tb::profiler::method:add {args} {
       }
     }
   }
-  
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   if {$help} {
     puts [format {
   Usage: profiler add
@@ -529,9 +546,9 @@ proc ::tb::profiler::method:add {args} {
               [<pattern_of_commands>]
               [-f|-force]
               [-help|-h]
-              
+
   Description: Add commands to the profiler
-  
+
   Example:
      profiler add *
      profiler add get_*
@@ -540,10 +557,10 @@ proc ::tb::profiler::method:add {args} {
     # HELP -->
     return {}
   }
-  
+
   # Restore 'args'
-  set args $tmp_args 
-  
+  set args $tmp_args
+
   foreach pattern [::tb::profiler::lflatten $args] {
     if {[string first {*} $pattern] != -1} {
       # If the pattern contains an asterix '*' then the next 'foreach' loop
@@ -571,9 +588,9 @@ proc ::tb::profiler::method:add {args} {
       }
 #       if {[regexp -nocase -- {^(help|source|add|undo|redo|rename_ref|start_gui|stop_gui|show_objects|show_schematic|startgroup|end|endgroup)$} $cmd]} { }
 #       if {[regexp -nocase -- {^(help|source|read_checkpoint|open_run|add|undo|redo|rename_ref|start_gui|stop_gui|show_objects|show_schematic|startgroup|end|endgroup)$} $cmd]} { }
-      if {[regexp -nocase -- {^(help|source|add|undo|redo|rename_ref|start_gui|stop_gui|show_objects|show_schematic|startgroup|end|endgroup)$} $cmd]} { 
+      if {[regexp -nocase -- {^(help|source|add|undo|redo|rename_ref|start_gui|stop_gui|show_objects|show_schematic|startgroup|end|endgroup)$} $cmd]} {
         if {$verbose} { puts " -W- the Vivado command '$cmd' cannot be profiled. Skipped" }
-        continue 
+        continue
       }
       lappend commands $cmd
     }
@@ -742,11 +759,11 @@ proc ::tb::profiler::method:start {args} {
       }
     }
   }
-  
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   if {$help} {
     puts [format {
   Usage: profiler start
@@ -754,9 +771,9 @@ proc ::tb::profiler::method:start {args} {
               [-src_info]
               [-collection_display_limit|-limit <num>]
               [-help|-h]
-              
+
   Description: Start the profiler
-  
+
   Example:
      profiler start
      profiler start -incr -src_info -collection_display_limit 500
@@ -764,7 +781,7 @@ proc ::tb::profiler::method:start {args} {
     # HELP -->
     return {}
   }
-  
+
   if {[llength $cmdlist] == 0} {
     error " -E- no command has been added to the profiler. Use 'profiler add' to add Vivado commands"
   }
@@ -899,20 +916,20 @@ proc ::tb::profiler::method:summary {args} {
       }
     }
   }
-  
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   if {$help} {
     puts [format {
   Usage: profiler summary
               [-return_string]
               [-log <filename>]
               [-help|-h]
-              
+
   Description: Return the profiler summary
-  
+
   Example:
      profiler summary
      profiler summary -return_string
@@ -921,7 +938,7 @@ proc ::tb::profiler::method:summary {args} {
     # HELP -->
     return {}
   }
-  
+
   # Just in case: destroy previous matrix if it was not done before
   catch {summary destroy}
   struct::matrix summary
@@ -967,7 +984,7 @@ proc ::tb::profiler::method:summary {args} {
       incr cnt($cmd) 1
       incr sum($cmd) $delta
       # Some commands should not contribute to the total runtime
-      if {![regexp {^(read_checkpoint|read_xdc|open_run|open_project)$} $cmd]} {
+      if {![regexp {^(open_checkpoint|read_checkpoint|read_xdc|open_run|open_project)$} $cmd]} {
         incr totaltime $delta
       }
       if {$min($cmd) == 0 || $delta < $min($cmd)} {set min($cmd) $delta}
@@ -992,7 +1009,7 @@ proc ::tb::profiler::method:summary {args} {
     set percent [expr {$sum($cmd)*100.0/($totaltime)}]
 
     # The commands that do not contribute to the total runtime are formatted differently
-    if {![regexp {^(read_checkpoint|read_xdc|open_run|open_project)$} $cmd]} {
+    if {![regexp {^(open_checkpoint|read_checkpoint|read_xdc|open_run|open_project)$} $cmd]} {
       summary add row [list $cmd \
                          [format {%.3fms} [expr $min($cmd) / 1000.0]] \
                          [format {%.3fms} [expr $max($cmd) / 1000.0]] \
@@ -1038,6 +1055,11 @@ proc ::tb::profiler::method:summary {args} {
       summary add row [list {--} {-------} {-------}]
       foreach i $offenders {
         lassign $i ID delta cmdline code result src_info
+        if {[string length $cmdline] > 200} {
+          # Cut the command line at first space after the first 200 characters
+          set idx [string first " " [string range $cmdline 200 end]]
+          set cmdline [format {%s ... <%s more characters>} [string range $cmdline 0 [expr 200 + $idx]] [expr [string length $cmdline] -200 -$idx] ]
+        }
         summary add row [list $ID "[expr $delta / 1000.0]ms" $cmdline]
       }
       foreach i [split [summary format 2string] \n] {
@@ -1052,6 +1074,11 @@ proc ::tb::profiler::method:summary {args} {
           puts $FH "\n# ID:$ID time:[format {%.3fms} [expr $delta / 1000.0]] $src_info"
         } else {
           puts $FH "\n# ID:$ID time:[format {%.3fms} [expr $delta / 1000.0]] "
+        }
+        if {[string length $cmdline] > 1000} {
+          # Cut the command line at first space after the first 1000 characters
+          set idx [string first " " [string range $cmdline 1000 end]]
+          set cmdline [format {%s ... <%s more characters>} [string range $cmdline 0 [expr 1000 + $idx]] [expr [string length $cmdline] -1000 -$idx] ]
         }
         puts $FH $cmdline
         if {$code != 0} {
@@ -1081,7 +1108,7 @@ proc ::tb::profiler::method:summary {args} {
         }
       }
     } errorstring]} {
-        puts " -I- failed to generate log file '$logfile': $errorstring" 
+        puts " -I- failed to generate log file '$logfile': $errorstring"
     } else {
         puts " -I- log file '$logfile' has been created"
     }
@@ -1153,11 +1180,11 @@ proc ::tb::profiler::method:time {args} {
       }
     }
   }
-  
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
-  
+
   if {$help} {
     puts [format {
   Usage: profiler time <SectionOfTclCode>
@@ -1166,9 +1193,9 @@ proc ::tb::profiler::method:time {args} {
               [-collection_display_limit|-limit <num>]
               [-log <filename>]
               [-help|-h]
-              
+
   Description: Run the profiler on an inline Tcl code
-  
+
   Example:
      profiler time { read_xdc ./constraints.xdc } -collection_display_limit 500
      profiler time -incr -src_info { read_xdc ./constraints.xdc } -log profiler.log
@@ -1176,7 +1203,7 @@ proc ::tb::profiler::method:time {args} {
     # HELP -->
     return {}
   }
-  
+
   if {[llength $cmdlist] == 0} {
     error " -E- no command has been added to the profiler. Use 'profiler add' to add Vivado commands"
   }
@@ -1195,7 +1222,7 @@ proc ::tb::profiler::method:time {args} {
       ::tb::profiler::method:stop
       error " -E- the profiler failed with the following error: $errorstring"
     }
-  } 
+  }
 
   # Stop the profiler
   ::tb::profiler::method:stop
@@ -1208,63 +1235,78 @@ proc ::tb::profiler::method:time {args} {
   return -code ok
 }
 
-# #------------------------------------------------------------------------
-# # ::tb::profiler::method:configure
-# #------------------------------------------------------------------------
-# # Usage: profiler configure [<options>]
-# #------------------------------------------------------------------------
-# # Configure some of the profiler parameters
-# #------------------------------------------------------------------------
-# proc ::tb::profiler::method:configure {args} {
-#   # Summary :
-#   # Argument Usage:
-#   # Return Value:
-# 
-#   # Configure the profiler
-#   variable params
-#   set error 0
-#   set help 0
-#   if {[llength $args] == 0} {
-#     set help 1
-#   }
-#   while {[llength $args]} {
-#     set name [lshift args]
-#     switch -exact -- $name {
-#       -mode {
-#            set params(mode) [lshift args]
-#       }
-#       -h -
-#       -help {
-#            set help 1
-#       }
-#       default {
-#             if {[string match "-*" $name]} {
-#               puts " -E- option '$name' is not a valid option."
-#               incr error
-#             } else {
-#               puts " -E- option '$name' is not a valid option."
-#               incr error
-#             }
-#       }
-#     }
-#   }
-#   
-#   if {$help} {
-#     puts [format {
-#   Usage: profiler configure
-#               [-mode <mode>]
-#               [-help|-h]
-#               
-#   Description: Configure the profiler
-#   
-#   Example:
-#      profiler Configure
-# } ]
-#     # HELP -->
-#     return -code ok
-#   }
-#   return -code ok
-# }
+#------------------------------------------------------------------------
+# ::tb::profiler::method:configure
+#------------------------------------------------------------------------
+# Usage: profiler configure [<options>]
+#------------------------------------------------------------------------
+# Configure some of the profiler parameters
+#------------------------------------------------------------------------
+proc ::tb::profiler::method:configure {args} {
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  # Configure the profiler (-help)
+  variable params
+  set error 0
+  set help 0
+  if {[llength $args] == 0} {
+    set help 1
+  }
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -exact -- $name {
+      -limit -
+      -collection_display_limit {
+          set params(collectionResultDisplayLimit) [lshift args]
+      }
+      -detail -
+      -details {
+          set params(expandObjects) 1
+      }
+      -summary -
+      -summary {
+          set params(expandObjects) 0
+      }
+      -h -
+      -help {
+           set help 1
+      }
+      default {
+            if {[string match "-*" $name]} {
+              puts " -E- option '$name' is not a valid option."
+              incr error
+            } else {
+              puts " -E- option '$name' is not a valid option."
+              incr error
+            }
+      }
+    }
+  }
+
+  if {$help} {
+    puts [format {
+  Usage: profiler configure
+              [-collection_display_limit|-limit <num>]
+              [-summary][-details]
+              [-help|-h]
+
+  Description: Configure the profiler
+
+    -details: expand inside the log file the list of objects returned by each command
+    -summary: summarize inside the log file the number of objects returned by by each command
+
+    Default behavior is -summary
+
+  Example:
+     profiler configure -collection_display_limit 500 -details
+} ]
+    # HELP -->
+    return -code ok
+  }
+  return -code ok
+}
 
 
 
