@@ -86,7 +86,7 @@ array set cellNameRemap {
   USR_ACCESSE2       USR_ACCESS
   PCIE_3_0           PCIE3
   PCIE_3_1           PCIE3
-  PCIE40E4           PCIE4
+  PCIE40E4           PCIE3
 }
 
 #  PCIE_2_1           PCIE
