@@ -18,6 +18,7 @@ exec tclsh "$0" "$@"
 #        }
 
 ########################################################################################
+## 10-24-2016 - Added support for intrinsic_rise/intrinsic_fall
 ## 05-01-2015 - Changed command line option from -output to -output-dir
 ## 10-03-2014 - Initial release
 ########################################################################################
@@ -167,7 +168,7 @@ proc pin {name body} {
 }
 
 proc timing {body} {
-  reset TIMING_TYPE TIMING_SENSE RELATED_PIN RELATED_BUS_PINS FPGA_ARC_CONDITION
+  reset TIMING_TYPE TIMING_SENSE INTRINSIC RELATED_PIN RELATED_BUS_PINS FPGA_ARC_CONDITION
   uplevel 1 $body
   if {![info exists ::pininfo(timing)]} { set ::pininfo(timing) [list] }
   # The MODE_VALUE overrides the FPGA_ARC_CONDITION. That's ok because MODE_VALUE and FPGA_ARC_CONDITION
@@ -177,7 +178,7 @@ proc timing {body} {
       set ::FPGA_ARC_CONDITION $::MODE_VALUE 
     }
   }
-  lappend ::pininfo(timing) [list timing_type $::TIMING_TYPE timing_sense $::TIMING_SENSE related_pin $::RELATED_PIN related_bus_pins $::RELATED_BUS_PINS fpga_arc_condition $::FPGA_ARC_CONDITION ]
+  lappend ::pininfo(timing) [list timing_type $::TIMING_TYPE timing_sense $::TIMING_SENSE intrinsic $::INTRINSIC related_pin $::RELATED_PIN related_bus_pins $::RELATED_BUS_PINS fpga_arc_condition $::FPGA_ARC_CONDITION ]
 }
 
 proc bus_type {name} {
@@ -201,6 +202,14 @@ proc timing_type {name} {
 
 proc timing_sense {name} {
   set ::TIMING_SENSE $name
+}
+
+proc intrinsic_rise {name} {
+  set ::INTRINSIC {rise}
+}
+
+proc intrinsic_fall {name} {
+  set ::INTRINSIC {fall}
 }
 
 proc related_pin {name} {
@@ -268,8 +277,6 @@ proc data_type {name} {}
 proc bit_width {name} {}
 proc bit_from {name} {}
 proc bit_to {name} {}
-proc intrinsic_rise {name} {}
-proc intrinsic_fall {name} {}
 proc ff {args} {}
 proc latch {args} {}
 
@@ -334,7 +341,7 @@ proc related_output_pin {args} {}
 proc clock_gating_flag {args} {}
 
 
-reset LIBRARY CELL PIN BUS BUS_TYPE DIRECTION TIMING_TYPE TIMING_SENSE RELATED_PIN RELATED_BUS_PINS CLOCK
+reset LIBRARY CELL PIN BUS BUS_TYPE DIRECTION TIMING_TYPE TIMING_SENSE INTRINSIC RELATED_PIN RELATED_BUS_PINS CLOCK
 reset FPGA_CONDITION FPGA_CONDITION_VALUE FPGA_ARC_CONDITION
 set cellinfo [list]
 catch {unset dotlib}
@@ -345,7 +352,7 @@ foreach file [lsort -dictionary $files] {
   set cellinfo [list]
   catch {unset dotlib}
   catch {unset fpga_condition}
-  reset LIBRARY CELL PIN BUS BUS_TYPE DIRECTION TIMING_TYPE TIMING_SENSE RELATED_PIN RELATED_BUS_PINS CLOCK
+  reset LIBRARY CELL PIN BUS BUS_TYPE DIRECTION TIMING_TYPE TIMING_SENSE INTRINSIC RELATED_PIN RELATED_BUS_PINS CLOCK
   reset FPGA_CONDITION FPGA_CONDITION_VALUE FPGA_ARC_CONDITION
   if {![file exists $file]} { puts " Error - $file does not exist"; continue }
   puts " Processing $file"

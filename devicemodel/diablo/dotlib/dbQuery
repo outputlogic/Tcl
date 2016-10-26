@@ -3,6 +3,9 @@
 exec tclsh "$0" "$@"
 
 ########################################################################################
+## 10-25-2016 - Added support for database column 'intrinsic'
+##            - Added support for -intrinsic
+##            - Hide columns 'Intrinsic' and 'FPGA Condition' when empty
 ## 12-15-2015 - Added support for -dir to include pin direction (input/output) in the
 ##              attribute column
 ## 05-12-2015 - Added new pin attribute columns to report clock pins and internal
@@ -15,7 +18,7 @@ exec tclsh "$0" "$@"
 # The flow is to generate fragment files from Dotlib first with dotlib2tcl
 # Once this is done, this script can be run.
 
-set SCRIPT_VERSION {12-15-2015}
+set SCRIPT_VERSION {10-25-2016}
 
 lappend auto_path /home/dpefour/git/scripts/toolbox
 package require toolbox
@@ -48,6 +51,7 @@ set cellpattern {%}
 set pinpattern  {}
 set timingsensepattern  {%}
 set timingtypepattern  {%}
+set intrinsicpattern  {%}
 set fpgaconditionpattern  {}
 set veamconditionpattern  {}
 set table {arc}
@@ -105,6 +109,10 @@ while {[llength $argv]} {
     -ts -
     -timing_sense {
       set timingsensepattern [::tb::lshift argv]
+    }
+    -i -
+    -intrinsic {
+      set intrinsicpattern [::tb::lshift argv]
     }
     -fc -
     -fpgacond {
@@ -203,6 +211,7 @@ if {$show_help} {
                 [-t|-to <pattern>]
                 [-tt|-timing_type <pattern>]
                 [-ts|-timing_sense <pattern>]
+                [-i|-intrinsic <pattern>]
                 [-fc|-fpgacond <pattern>]
                 [-vc|-veamcond <pattern>]
                 [-dotlib|-timer|-veam]
@@ -218,7 +227,7 @@ if {$show_help} {
 
     Description: Utility to query SQLite3 database
       The wildcard character for the patterns is %%
-      
+
       The -pin and -from/-to command options are exclusive.
 
       The -dotlib|-timer|-veam select the database table to search into.
@@ -237,7 +246,7 @@ if {$show_help} {
       The first 'U' colunm with -timer/-veam indicates whether the timing arc
       has been found inside the Dotlib. A '*' in this column indicates that no
       matching timing arc is found inside Dotlib.
-      
+
       The -clock reports pins with 'clock : true' inside Dotlib
       The -internal reports internal pins
       The -dir reports pin direction (input/output)
@@ -308,6 +317,11 @@ if {($dbVersion <= 1.5) && $showclockpins} {
   puts " -E- Database version ($dbVersion) is not compatible with -clock"
 }
 
+if {($dbVersion <= 1.6) && ($intrinsicpattern != {%})} {
+  incr error
+  puts " -E- Database version ($dbVersion) is not compatible with -intrinsic"
+}
+
 if {$error} {
   puts "\n Some error(s) occured. Cannot continue.\n"
   # Closing the SQLite3 database
@@ -319,17 +333,17 @@ set tbl [::tb::prettyTable "Timing Arcs Summary\nDatabase: [file normalize $sqli
 switch $table {
   arc {
     if {$VERBOSE} {
-      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {FPGA Condition} {Cell ID} {From ID} {To ID} {Timing ID} {FPGA Condition ID} {Arc ID}]
+      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {Intrinsic} {FPGA Condition} {Cell ID} {From ID} {To ID} {Timing ID} {FPGA Condition ID} {Arc ID}]
     } else {
-      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {FPGA Condition}]
+      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {Intrinsic} {FPGA Condition}]
     }
   }
   timer_arc -
   veam_arc {
     if {$VERBOSE} {
-      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {VEAM Config} {Cell ID} {From ID} {To ID} {Timing ID} {VEAM Config ID} {Arc ID}]
+      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {Intrinsic} {VEAM Config} {Cell ID} {From ID} {To ID} {Timing ID} {VEAM Config ID} {Arc ID}]
     } else {
-      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {VEAM Config}]
+      $tbl header [list {#} {U} {Cell Name} {From} {Attr} {To} {Attr} {Timing Type} {Timing Sense} {Intrinsic} {VEAM Config}]
     }
   }
   default {
@@ -433,6 +447,11 @@ if {[catch {
                  (SELECT direction FROM pin WHERE pin.id=arc.relatedpinid) AS relatedpinDir,
           "
       }
+      if {$dbVersion >= 1.7} {
+        append CMD "
+                 (SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) AS intrinsic,
+          "
+      }
       append CMD "
                  timing.fpga_arc_condition_id AS fpga_conditionID
           FROM arc
@@ -442,6 +461,13 @@ if {[catch {
           WHERE arc.id IN ('[join $arcids ',']')
                 AND timing.timing_type LIKE '$timingtypepattern'
                 AND timing.timing_sense LIKE '$timingsensepattern'
+          "
+      if {$dbVersion >= 1.7} {
+        append CMD "
+                AND timing.intrinsic LIKE '$intrinsicpattern'
+          "
+      }
+      append CMD "
                 ${fpgacondcmd}
           ORDER BY cellName ASC,
                    relatedpinName ASC,
@@ -456,7 +482,7 @@ if {[catch {
       set totalArcs 0
       SQL eval $CMD values {
         incr totalArcs
-        foreach elm {cellID relatedpinID pinID timingID fpga_conditionID arcID} { if {![info exists values($elm)]} { set values($elm) {} } }
+        foreach elm {intrinsic pinClock relatedpinClock pinDir relatedpinDir cellID relatedpinID pinID timingID fpga_conditionID arcID} { if {![info exists values($elm)]} { set values($elm) {} } }
         if {$values(timingID) == {}} {
           # If no reference to a timing section from the Dotlib has been found, mark the column with a '*'
           incr mismatchArcs
@@ -511,9 +537,9 @@ if {[catch {
           if {[string tolower $values(pinDir)] == {internal}} { append toAttr {i} }
         }
         if {$VERBOSE} {
-          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(fpga_condition) $values(cellID) $values(relatedpinID) $values(pinID) $values(timingID) $values(fpga_conditionID) $values(arcID) ]
+          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(intrinsic) $values(fpga_condition) $values(cellID) $values(relatedpinID) $values(pinID) $values(timingID) $values(fpga_conditionID) $values(arcID) ]
         } else {
-          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(fpga_condition) ]
+          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(intrinsic) $values(fpga_condition) ]
         }
         incr num
       }
@@ -550,8 +576,13 @@ if {[catch {
         append CMD "
                  (SELECT clock FROM pin WHERE pin.id=${table}.pinid) AS pinClock,
                  (SELECT clock FROM pin WHERE pin.id=${table}.relatedpinid) AS relatedpinClock,
-                 (SELECT direction FROM pin WHERE pin.id=arc.pinid) AS pinDir,
-                 (SELECT direction FROM pin WHERE pin.id=arc.relatedpinid) AS relatedpinDir,
+                 (SELECT direction FROM pin WHERE pin.id=${table}.pinid) AS pinDir,
+                 (SELECT direction FROM pin WHERE pin.id=${table}.relatedpinid) AS relatedpinDir,
+          "
+      }
+      if {$dbVersion >= 1.7} {
+        append CMD "
+                 (SELECT intrinsic FROM timing WHERE timing.id=${table}.timingid) AS intrinsic,
           "
       }
       append CMD "
@@ -569,6 +600,13 @@ if {[catch {
                 )
                 AND ${table}.timing_type LIKE '$timingtypepattern'
                 AND ${table}.timing_sense LIKE '$timingsensepattern'
+          "
+      if {$dbVersion >= 1.7} {
+        append CMD "
+                AND timing.intrinsic LIKE '$intrinsicpattern'
+          "
+      }
+      append CMD "
                 ${veamcondcmd}
           ORDER BY cellName ASC,
                    relatedpinName ASC,
@@ -585,7 +623,7 @@ if {[catch {
       set totalArcs 0
       SQL eval $CMD values {
         incr totalArcs
-        foreach elm {cellID relatedpinID pinID timingID veam_configID arcID} { if {![info exists values($elm)]} { set values($elm) {} } }
+        foreach elm {intrinsic pinClock relatedpinClock pinDir relatedpinDir cellID relatedpinID pinID timingID veam_configID arcID} { if {![info exists values($elm)]} { set values($elm) {} } }
         if {$values(timingID) == {}} {
           # If no reference to a timing section from the Dotlib has been found, mark the column with a '*'
           incr mismatchArcs
@@ -620,9 +658,9 @@ if {[catch {
           if {[string tolower $values(pinDir)] == {internal}} { append toAttr {i} }
         }
         if {$VERBOSE} {
-          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(veam_config) $values(cellID) $values(relatedpinID) $values(pinID) $values(timingID) $values(veam_configID) $values(arcID) ]
+          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(intrinsic) $values(veam_config) $values(cellID) $values(relatedpinID) $values(pinID) $values(timingID) $values(veam_configID) $values(arcID) ]
         } else {
-          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(veam_config) ]
+          $tbl addrow [list $num $status $values(cellName) $relatedpinName $fromAttr $pinName $toAttr $values(timing_type) $values(timing_sense) $values(intrinsic) $values(veam_config) ]
         }
         incr num
       }
@@ -643,14 +681,24 @@ if {[catch {
 
 if {1} {
   # SQL does sort well bus names (e.g a[0] a[10] .. a[19] a[1] ...)
-  $tbl sort -dictionary +2 +3 +5 +7 +8 +9
+  $tbl sort -dictionary +2 +3 +5 +7 +8 +9 +10
   # Because the table is sorted post-SQL, hide the first column since it does
   # not make sense anymore
-#   set columns [list 2 3 4 5 6 7 8 9 10 11 12 13 14 15]
-  set columns [list 2 3 5 7 8 9 10 11 12 13 14 15]
+#   set columns [list 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17]
+  set columns [list 2 3 5 7 8 9 10 11 12 13 14 15 16 17]
   if {$showinternalpins || $showclockpins || $showdirection} {
     # Showing the pin attribute columns
     set columns [concat $columns [list 4 6] ]
+  }
+  # Hiden empty columns Intrinsic, FPGA Condition
+  catch {unset values}
+  foreach col {9 10} {
+    # Get all the values for the column
+    set values [$tbl getcolumns $col]
+    if {[lsort -unique $values] == [list {}]} {
+      # Remove $col from the list of columns to display
+      set columns [lsearch -all -inline -not -exact $columns $col]
+    }
   }
   switch $table {
     arc {

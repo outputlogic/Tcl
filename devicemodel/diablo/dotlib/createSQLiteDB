@@ -3,16 +3,19 @@
 exec tclsh "$0" "$@"
 
 ########################################################################################
-## 02-23-2015 - Added support for saving the clock attribute 'clock : true' from Dotlib 
+## 10-25-2016 - Added support for saving the intrinsic_{rise|fall} attributes from Dotlib
 ##              libraries inside SQLite database
-##            - Changed default values for some of the tables columns to be NULL 
+##            - Change database version to 1.7
+## 02-23-2015 - Added support for saving the clock attribute 'clock : true' from Dotlib
+##              libraries inside SQLite database
+##            - Changed default values for some of the tables columns to be NULL
 ##            - Change database version to 1.6
 ## 12-03-2013 - Initial release
 ########################################################################################
 
 # Generate SQLite3 database from Dotlib fragment files (*.ftcl)
 
-set SCRIPT_VERSION {02-23-2015}
+set SCRIPT_VERSION {10-25-2016}
 
 lappend auto_path /home/dpefour/git/scripts/toolbox
 package require toolbox
@@ -237,6 +240,7 @@ SQL eval {
            pinid INTEGER,
            timing_type TEXT,
            timing_sense TEXT,
+           intrinsic TEXT,
            related_pin TEXT,
            related_bus_pins TEXT,
            all_related_pins TEXT,
@@ -266,6 +270,7 @@ SQL eval {
            relatedpinid INTEGER,
            timing_type TEXT,
            timing_sense TEXT,
+           intrinsic TEXT,
            delay_max_rise REAL,
            delay_max_fall REAL,
            delay_min_rise REAL,
@@ -286,6 +291,7 @@ SQL eval {
            relatedpinid INTEGER,
            timing_type TEXT,
            timing_sense TEXT,
+           intrinsic TEXT,
            count INTEGER DEFAULT 0,
            veamcondition TEXT,
            veam_config_id INTEGER,
@@ -334,13 +340,14 @@ SQL eval {
          (SELECT name FROM pin WHERE pin.id=timing.pinid) AS pinname,
          timing_type,
          timing_sense,
+         intrinsic,
          related_pin,
          related_bus_pins,
          all_related_pins,
          fpga_arc_condition,
          fpga_arc_condition_id
   FROM timing
-  ORDER BY cellName, pinname, timing_type, timing_sense;
+  ORDER BY cellName, pinname, timing_type, timing_sense, intrinsic;
 
   CREATE VIEW v_arc AS
   SELECT id,
@@ -349,11 +356,12 @@ SQL eval {
          (SELECT name FROM pin WHERE pin.id=arc.pinid) AS pinname,
          (SELECT timing_type FROM timing WHERE timing.id=arc.timingid) AS timing_type,
          (SELECT timing_sense FROM timing WHERE timing.id=arc.timingid) AS timing_sense,
+         (SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) AS intrinsic,
          (SELECT name FROM fpga_condition WHERE fpga_condition.id=arc.fpga_arc_condition_id) AS fpga_condition,
          timingid,
          fpga_arc_condition_id
   FROM arc
-  ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, fpga_condition;
+  ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, intrinsic, fpga_condition;
 
   CREATE VIEW v_fpga_condition AS
   SELECT id,
@@ -370,6 +378,7 @@ SQL eval {
          (SELECT name FROM pin WHERE pin.id=timer_arc.pinid) AS pinname,
          timing_type,
          timing_sense,
+         intrinsic,
          delay_max_rise,
          delay_max_fall,
          delay_min_rise,
@@ -379,7 +388,7 @@ SQL eval {
          arcid,
          veam_config_id
   FROM timer_arc
-  ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, veam_config;
+  ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, intrinsic, veam_config;
 
   CREATE VIEW v_veam_arc AS
   SELECT id,
@@ -388,13 +397,14 @@ SQL eval {
          (SELECT name FROM pin WHERE pin.id=veam_arc.pinid) AS pinname,
          timing_type,
          timing_sense,
+         intrinsic,
          veamcondition,
          (SELECT name FROM veam_config WHERE veam_config.id=veam_arc.veam_config_id) AS veam_config,
          count,
          arcid,
          veam_config_id
   FROM veam_arc
-  ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, veam_config;
+  ORDER BY cellName, relatedpinname, pinname, timing_type, timing_sense, intrinsic, veam_config;
 }
 
 
@@ -419,7 +429,7 @@ puts ""
 # Build the database
 
 # Database version & other parameters
-SQL eval { INSERT INTO param(property,value) VALUES("version","1.6"); }
+SQL eval { INSERT INTO param(property,value) VALUES("version","1.7"); }
 SQL eval { INSERT INTO param(property,value) VALUES("date",strftime('%Y-%m-%d %H:%M:%S','now') ); }
 SQL eval " INSERT INTO param(property,value) VALUES('directory','[file normalize [uplevel #0 pwd]]' ); "
 foreach file $files {
@@ -528,8 +538,8 @@ foreach cell [lsort -dictionary [array names data]] {
         set all_related_pins [regsub -all {(\{|\})} [concat [::tb::expandBusNames $timinginfo(related_pin)] [::tb::expandBusNames $timinginfo(related_bus_pins)]] {}]
 # puts "<all_related_pins:$all_related_pins>"
         SQL eval { INSERT INTO
-                   timing(cellid,pinid,timing_type,timing_sense,related_pin,related_bus_pins,all_related_pins,fpga_arc_condition,fpga_arc_condition_id)
-                   VALUES($cellid,$pinid,$timinginfo(timing_type),$timinginfo(timing_sense),$timinginfo(related_pin),$timinginfo(related_bus_pins),$all_related_pins,$timinginfo(fpga_arc_condition),NULL );
+                   timing(cellid,pinid,timing_type,timing_sense,intrinsic,related_pin,related_bus_pins,all_related_pins,fpga_arc_condition,fpga_arc_condition_id)
+                   VALUES($cellid,$pinid,$timinginfo(timing_type),$timinginfo(timing_sense),$timinginfo(intrinsic),$timinginfo(related_pin),$timinginfo(related_bus_pins),$all_related_pins,$timinginfo(fpga_arc_condition),NULL );
                }
         set timingid [SQL last_insert_rowid]
 
@@ -596,6 +606,7 @@ SELECT
   cell.name AS "cell",
   pin.name AS "pin",
   timing.timing_sense AS "timing sense",
+  timing.intrinsic AS "intrinsic",
   timing.timing_type AS "timing type",
   (select name from pin where id = arc.relatedpinid) AS "related pin",
   timing.fpga_arc_condition AS "fpga arc condition",

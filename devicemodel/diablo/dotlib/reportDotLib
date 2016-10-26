@@ -5,6 +5,7 @@ exec tclsh "$0" "$@"
 # Dotlib library report based on Tcl fragment files.
 
 ########################################################################################
+## 10-25-2016 - Added support for Dotlib attribute 'intrinsic'
 ## 05-13-2015 - Added support for internal pins (DIR column vs IN/OUT columns)
 ##            - Added support for clock pins (column CLOCK)
 ## 05-06-2015 - Removed duplicate lines inside CSV file
@@ -15,7 +16,7 @@ exec tclsh "$0" "$@"
 ## 04-23-2014 - Initial release
 ########################################################################################
 
-set SCRIPT_VERSION {05-13-2015}
+set SCRIPT_VERSION {10-25-2016}
 
 lappend auto_path /home/dpefour/git/scripts/toolbox
 package require toolbox
@@ -69,7 +70,11 @@ array set TimingTypeSense {
   setup_falling| 0
   setup_rising| 0
   skew_falling| 0
+  skew_falling|rise 0
+  skew_falling|fall 0
   skew_rising| 0
+  skew_rising|rise 0
+  skew_rising|fall 0
   three_state_disable|positive_unate 0
   three_state_enable|negative_unate 0
 }
@@ -139,7 +144,7 @@ if {$show_help} {
     Description: Utility to dump Dotlib library information based on Tcl fragment files
 
     Version: %s
-    
+
     Use -expand to prevent bus compaction
 
     Example:
@@ -171,12 +176,16 @@ catch {unset DB}
 set DB(_) [list]
 
 foreach cell [lsort -dictionary [array names data]] {
+# puts "<cell:$cell>"
 #   puts " Processing $cell"
   lappend DB(_) $cell
   foreach elm $data($cell) {
+# puts "<elm:$elm>"
     # Each $elm is a pin information
     catch {unset pininfo}
     array set pininfo $elm
+# puts "############"
+# parray pininfo
     set allPins [list]
     if {[info exists pininfo(pin)]} {
       set allPins $pininfo(pin)
@@ -202,8 +211,10 @@ foreach cell [lsort -dictionary [array names data]] {
       puts "   error - pin and bus not defined [parray pininfo]"
       exit
     }
+# puts "<allPins:$allPins>"
     # Merge the pininfo array inside the DB array
     foreach key [array names pininfo] {
+# puts "<key:$key>"
       # But do it for all the pins of the bus when the current pin is a bus
       foreach pin $allPins {
         # Default values: no timing arc and no related arc
@@ -220,13 +231,28 @@ foreach cell [lsort -dictionary [array names data]] {
       foreach timing $pininfo(timing) {
         catch {unset timinginfo}
         array set timinginfo $timing
+# puts "#################"
+# puts "<timing:$timing>"
+# parray timinginfo
         set timing_type $timinginfo(timing_type)
-        set timing_sense $timinginfo(timing_sense)
-        if {![info exists TimingTypeSense(${timing_type}|${timing_sense})]} {
-          puts " -W- Found new combination ${timing_type}|${timing_sense} of timing type & timing sense"
-          set TimingTypeSense(${timing_type}|${timing_sense}) 0
+        if {[regexp {(skew_rising|skew_falling)} $timing_type]} {
+          # For timing_type == skew_{rising|falling}, Dotlib attribute 'intrinsic'
+          # is used in place of attribute 'timing_sense'
+          set intrinsic $timinginfo(intrinsic)
+# puts "<intrinsic:$intrinsic>"
+          if {![info exists TimingTypeSense(${timing_type}|${intrinsic})]} {
+            puts " -W- Found new combination ${timing_type}|${intrinsic} of timing type & intrinsic edge"
+            set TimingTypeSense(${timing_type}|${intrinsic}) 0
+          }
+          incr TimingTypeSense(${timing_type}|${intrinsic})
+        } else {
+          set timing_sense $timinginfo(timing_sense)
+          if {![info exists TimingTypeSense(${timing_type}|${timing_sense})]} {
+            puts " -W- Found new combination ${timing_type}|${timing_sense} of timing type & timing sense"
+            set TimingTypeSense(${timing_type}|${timing_sense}) 0
+          }
+          incr TimingTypeSense(${timing_type}|${timing_sense})
         }
-        incr TimingTypeSense(${timing_type}|${timing_sense})
       }
     }
 
@@ -305,10 +331,10 @@ foreach cell [lsort -dictionary [array names data]] {
 
 set tbl [::tb::prettyTable "Summary Table"]
 $tbl header [concat \
-               [list {Cell Name} {Pin Name} {DIR} {CLOCK} {ARC} {RELATED PIN} {HAS FCT} {FCT} {TIMING TYPE} {TIMING SENSE} {FPGA ARC CONDITION}] \
+               [list {Cell Name} {Pin Name} {DIR} {CLOCK} {ARC} {RELATED PIN} {HAS FCT} {FCT} {TIMING TYPE} {TIMING SENSE} {INTRINSIC} {FPGA ARC CONDITION}] \
                [lsort -dictionary [array names TimingTypeSense]] \
             ]
-# $tbl header [list {Pin Name} {IN} {OUT} {ARC} {RELATED PIN} {HAS FCT} {FCT} {TIMING TYPE} {TIMING SENSE} {FPGA ARC CONDITION}]
+# $tbl header [list {Pin Name} {IN} {OUT} {ARC} {RELATED PIN} {HAS FCT} {FCT} {TIMING TYPE} {TIMING SENSE} {INTRINSIC} {FPGA ARC CONDITION}]
 
 foreach cell [lsort -dictionary $DB(_)] {
   set pins [list]
@@ -318,7 +344,7 @@ foreach cell [lsort -dictionary $DB(_)] {
   foreach pin [lsort -dictionary $DB(${cell}:_)] {
     set rowtail [list]
     set rowhead "$cell/$pin"
-    foreach var {DIR ARC RELATED_PIN HAS_FCT FCT TIMING_TYPE TIMING_SENSE FPGA_ARC_CONDITION} {eval [subst {set $var {}} ] }
+    foreach var {DIR ARC RELATED_PIN HAS_FCT FCT TIMING_TYPE TIMING_SENSE INTRINSIC FPGA_ARC_CONDITION} {eval [subst {set $var {}} ] }
     if {![info exists DB(${cell}:${pin}:direction)]} {
       puts " error - pin '$pin' does not exist but might have been referenced as a related pin in a timing arc. Pin skipped."
       continue
@@ -355,12 +381,15 @@ foreach cell [lsort -dictionary $DB(_)] {
     set TIMING_SENSE [lsort -dictionary -unique [lskim $DB(${cell}:${pin}:timing) timing_sense]]
     # Remove empty value
     ::tb::lremove TIMING_SENSE {}
+    set INTRINSIC [lsort -dictionary -unique [lskim $DB(${cell}:${pin}:timing) intrinsic]]
+    # Remove empty value
+    ::tb::lremove INTRINSIC {}
     set FPGA_ARC_CONDITION [lsort -dictionary -unique [lskim $DB(${cell}:${pin}:timing) fpga_arc_condition]]
     # Remove empty value
     ::tb::lremove FPGA_ARC_CONDITION {}
     if {$FPGA_ARC_CONDITION != {}} { set FPGA_ARC_CONDITION [llength $FPGA_ARC_CONDITION] }
-    set rowtail [list $DIR $IS_CLOCK $ARC $RELATED_PIN $HAS_FCT $FCT $TIMING_TYPE $TIMING_SENSE $FPGA_ARC_CONDITION]
-    
+    set rowtail [list $DIR $IS_CLOCK $ARC $RELATED_PIN $HAS_FCT $FCT $TIMING_TYPE $TIMING_SENSE $INTRINSIC $FPGA_ARC_CONDITION]
+
     # Add the columns for each pair of <timing_type> & <timing_sense>
     foreach key [array names TimingTypeSense] {
       # Reset the number for each existing pair of <timing_type> & <timing_sense>
@@ -371,8 +400,15 @@ foreach cell [lsort -dictionary $DB(_)] {
         catch {unset timinginfo}
         array set timinginfo $timing
         set timing_type $timinginfo(timing_type)
-        set timing_sense $timinginfo(timing_sense)
-        incr TimingTypeSense(${timing_type}|${timing_sense})
+        if {[regexp {(skew_rising|skew_falling)} $timing_type]} {
+          # For timing_type == skew_{rising|falling}, Dotlib attribute 'intrinsic'
+          # is used in place of attribute 'timing_sense'
+          set intrinsic $timinginfo(intrinsic)
+          incr TimingTypeSense(${timing_type}|${intrinsic})
+        } else {
+          set timing_sense $timinginfo(timing_sense)
+          incr TimingTypeSense(${timing_type}|${timing_sense})
+        }
       }
     }
     foreach key [lsort -dictionary [array names TimingTypeSense]] {

@@ -3,6 +3,7 @@
 exec tclsh "$0" "$@"
 
 ########################################################################################
+## 10-25-2016 - Added checks for max skew and intrinsic_{rise|fall} attribute
 ## 05-06-2015 - Added checks for internal pins
 ## 04-01-2015 - Added recovery/removal checks for some of the clock attribute checks
 ## 03-01-2015 - Added additional checks related to clock attribute 'clock : true' inside
@@ -15,7 +16,7 @@ exec tclsh "$0" "$@"
 # The flow is to generate fragment files from Dotlib first with dotlib2tcl
 # Once this is done, this script can be run.
 
-set SCRIPT_VERSION {05-06-2015}
+set SCRIPT_VERSION {10-25-2016}
 
 lappend auto_path /home/dpefour/git/scripts/toolbox
 package require toolbox
@@ -867,7 +868,7 @@ if {1} {
   puts [format {
  ########################################################################################
  ##
- ## Search for pins with min_pulse_width checks and an associated setup/hold/recovery/removal 
+ ## Search for pins with min_pulse_width checks and an associated setup/hold/recovery/removal
  ## check but without a clock attribute
  ##
  ########################################################################################
@@ -905,7 +906,7 @@ if {1} {
       if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
       lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
     }
-  
+
     foreach cell [lsort -dictionary [array names DB]] {
       puts " Processing $cell"
       foreach elm $DB($cell) {
@@ -923,7 +924,7 @@ if {1} {
   puts [format {
  ########################################################################################
  ##
- ## Search for pins with an associated setup/hold/recovery/removal check and a clock 
+ ## Search for pins with an associated setup/hold/recovery/removal check and a clock
  ## attribute but without a min_pulse_width
  ##
  ########################################################################################
@@ -961,7 +962,7 @@ if {1} {
       if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
       lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
     }
-  
+
     foreach cell [lsort -dictionary [array names DB]] {
       puts " Processing $cell"
       foreach elm $DB($cell) {
@@ -1017,7 +1018,7 @@ if {1} {
       if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
       lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
     }
-  
+
     foreach cell [lsort -dictionary [array names DB]] {
       puts " Processing $cell"
       foreach elm $DB($cell) {
@@ -1035,7 +1036,7 @@ if {1} {
   puts [format {
  ########################################################################################
  ##
- ## Search for pins with a clock attribute but without related setup/hold/recovery/removal 
+ ## Search for pins with a clock attribute but without related setup/hold/recovery/removal
  ## check
  ##
  ########################################################################################
@@ -1070,7 +1071,7 @@ if {1} {
       if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
       lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
     }
-  
+
     foreach cell [lsort -dictionary [array names DB]] {
       puts " Processing $cell"
       foreach elm $DB($cell) {
@@ -1089,7 +1090,7 @@ if {1} {
  ########################################################################################
  ##
  ## Search for pins with a related setup/hold/recovery/removal check but without a clock
- ## attribute 
+ ## attribute
  ##
  ########################################################################################
 }]
@@ -1123,7 +1124,7 @@ if {1} {
       if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
       lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
     }
-  
+
     foreach cell [lsort -dictionary [array names DB]] {
       puts " Processing $cell"
       foreach elm $DB($cell) {
@@ -1137,12 +1138,11 @@ if {1} {
 
 }
 
-
 if {1} {
   puts [format {
  ########################################################################################
  ##
- ## Search for pins with an associated removal/recovery check but without a clock attribute 
+ ## Search for pins with an associated removal/recovery check but without a clock attribute
  ##
  ########################################################################################
 }]
@@ -1174,12 +1174,297 @@ if {1} {
       if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
       lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction)]
     }
-  
+
     foreach cell [lsort -dictionary [array names DB]] {
       puts " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
         puts "   Found $dir pin '$pin' with a removal/recovery check associated but without a 'clock : true' attribute"
+      }
+    }
+  } else {
+    puts " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+  }
+
+}
+
+if {1} {
+  puts [format {
+########################################################################################
+##
+## Search for pins with skew_{rising|falling} checks but without an intrinsic_{rise|fall} attribute
+##
+########################################################################################
+}]
+
+  # Only for database version from 1.7 and upward
+  if {$dbVersion >= 1.7} {
+    catch {unset DB}
+    # Find id of timing with skew_{rising|falling} and no intrinsic_{rise|fall}
+    set timingids [lsort -unique [SQL eval {
+      SELECT DISTINCT timingid
+             FROM arc
+             WHERE ( ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%skew_rising%')
+                     AND
+                     ((SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) = '')
+                   )
+                OR ( ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%skew_falling%')
+                     AND
+                     ((SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) = '')
+                   )
+      ;
+    }] ]
+    SQL eval "
+      SELECT DISTINCT
+             (SELECT name FROM cell WHERE id = arc.cellid ) AS 'cell',
+             (SELECT name FROM pin WHERE id = arc.pinid ) AS 'pin',
+             (SELECT name FROM pin WHERE id = arc.relatedpinid ) AS 'relatedpin',
+             (SELECT direction FROM pin WHERE id = arc.pinid ) AS 'direction',
+             (SELECT timing_type FROM timing WHERE id = arc.timingid ) AS 'timing_type',
+             (SELECT intrinsic FROM timing WHERE id = arc.timingid ) AS 'intrinsic',
+             id
+      FROM arc
+      WHERE arc.timingid IN ('[join $timingids ',']')
+      ORDER BY cell, pin;
+    " values {
+      if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+      lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction) $values(relatedpin) $values(timing_type) $values(intrinsic)]
+    }
+
+    foreach cell [lsort -dictionary [array names DB]] {
+      puts " Processing $cell"
+      foreach elm $DB($cell) {
+        foreach {id pin dir relatedpin type intrinsic} $elm { break }
+        puts "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and no 'intrinsic_{rise|fall}' attribute"
+#         puts "$cell,$pin,$dir,$type"
+      }
+    }
+  } else {
+    puts " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+  }
+
+}
+
+if {1} {
+  puts [format {
+########################################################################################
+##
+## Search for pins with intrinsic_{rise|fall} attribute and no skew_{rising|falling} check
+## (recovery/removal checks are filtered out)
+##
+########################################################################################
+}]
+
+  # Only for database version from 1.7 and upward
+  if {$dbVersion >= 1.7} {
+    catch {unset DB}
+    # Find id of timing with intrinsic_{rise|fall} and no skew_{rising|falling}
+    # Note: recovery/removal timing arcs are filtered out as they could be inside the Dotlib
+    # for PT compatibility but ignored by Vivado
+    set timingids [lsort -unique [SQL eval {
+      SELECT DISTINCT timingid
+             FROM arc
+             WHERE ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) NOT LIKE '%skew_rising%')
+               AND ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) NOT LIKE '%skew_falling%')
+               AND ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) NOT LIKE '%recovery%')
+               AND ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) NOT LIKE '%removal%')
+               AND ((SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) != '')
+      ;
+    }] ]
+    SQL eval "
+      SELECT DISTINCT
+             (SELECT name FROM cell WHERE id = arc.cellid ) AS 'cell',
+             (SELECT name FROM pin WHERE id = arc.pinid ) AS 'pin',
+             (SELECT name FROM pin WHERE id = arc.relatedpinid ) AS 'relatedpin',
+             (SELECT direction FROM pin WHERE id = arc.pinid ) AS 'direction',
+             (SELECT timing_type FROM timing WHERE id = arc.timingid ) AS 'timing_type',
+             (SELECT intrinsic FROM timing WHERE id = arc.timingid ) AS 'intrinsic',
+             id
+      FROM arc
+      WHERE arc.timingid IN ('[join $timingids ',']')
+      ORDER BY cell, pin;
+    " values {
+      if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+      lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction) $values(relatedpin) $values(timing_type) $values(intrinsic)]
+    }
+
+    foreach cell [lsort -dictionary [array names DB]] {
+      puts " Processing $cell"
+      foreach elm $DB($cell) {
+        foreach {id pin dir relatedpin type intrinsic} $elm { break }
+        puts "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
+#         puts "$cell,$pin,$dir,$type"
+      }
+    }
+  } else {
+    puts " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+  }
+
+}
+
+if {0} {
+  puts [format {
+########################################################################################
+##
+## Search for pins with skew_{rising|falling} check and intrinsic_{rise|fall} attribute
+##
+########################################################################################
+}]
+
+  # Only for database version from 1.7 and upward
+  if {$dbVersion >= 1.7} {
+    catch {unset DB}
+    # Find id of timing with intrinsic_{rise|fall} and skew_{rising|falling}
+    set timingids [lsort -unique [SQL eval {
+      SELECT DISTINCT timingid
+             FROM arc
+             WHERE ( ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%skew_rising%')
+                     AND
+                     ((SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) != '')
+                   )
+                OR ( ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%skew_falling%')
+                     AND
+                     ((SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) != '')
+                   )
+      ;
+    }] ]
+    SQL eval "
+      SELECT DISTINCT
+             (SELECT name FROM cell WHERE id = arc.cellid ) AS 'cell',
+             (SELECT name FROM pin WHERE id = arc.pinid ) AS 'pin',
+             (SELECT name FROM pin WHERE id = arc.relatedpinid ) AS 'relatedpin',
+             (SELECT direction FROM pin WHERE id = arc.pinid ) AS 'direction',
+             (SELECT timing_type FROM timing WHERE id = arc.timingid ) AS 'timing_type',
+             (SELECT intrinsic FROM timing WHERE id = arc.timingid ) AS 'intrinsic',
+             id
+      FROM arc
+      WHERE arc.timingid IN ('[join $timingids ',']')
+      ORDER BY cell, pin;
+    " values {
+      if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+      lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction) $values(relatedpin) $values(timing_type) $values(intrinsic)]
+    }
+
+    foreach cell [lsort -dictionary [array names DB]] {
+      puts " Processing $cell"
+      foreach elm $DB($cell) {
+        foreach {id pin dir relatedpin type intrinsic} $elm { break }
+        puts "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
+#         puts "$cell,$pin,$dir,$type"
+      }
+    }
+  } else {
+    puts " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+  }
+
+}
+
+if {1} {
+  puts [format {
+########################################################################################
+##
+## Search for pins with same-edge skew_{rising|falling} check
+##
+########################################################################################
+}]
+
+  # Only for database version from 1.7 and upward
+  if {$dbVersion >= 1.7} {
+    catch {unset DB}
+    # Find id of timing with intrinsic_{rise|fall} and skew_{rising|falling} (SAME EDGE)
+    set timingids [lsort -unique [SQL eval {
+      SELECT DISTINCT timingid
+             FROM arc
+             WHERE ( ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%skew_rising%')
+                     AND
+                     ((SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) = 'rise')
+                   )
+                OR ( ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%skew_falling%')
+                     AND
+                     ((SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) = 'fall')
+                   )
+      ;
+    }] ]
+    SQL eval "
+      SELECT DISTINCT
+             (SELECT name FROM cell WHERE id = arc.cellid ) AS 'cell',
+             (SELECT name FROM pin WHERE id = arc.pinid ) AS 'pin',
+             (SELECT name FROM pin WHERE id = arc.relatedpinid ) AS 'relatedpin',
+             (SELECT direction FROM pin WHERE id = arc.pinid ) AS 'direction',
+             (SELECT timing_type FROM timing WHERE id = arc.timingid ) AS 'timing_type',
+             (SELECT intrinsic FROM timing WHERE id = arc.timingid ) AS 'intrinsic',
+             id
+      FROM arc
+      WHERE arc.timingid IN ('[join $timingids ',']')
+      ORDER BY cell, pin;
+    " values {
+      if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+      lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction) $values(relatedpin) $values(timing_type) $values(intrinsic)]
+    }
+
+    foreach cell [lsort -dictionary [array names DB]] {
+      puts " Processing $cell"
+      foreach elm $DB($cell) {
+        foreach {id pin dir relatedpin type intrinsic} $elm { break }
+        puts "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
+#         puts "$cell,$pin,$dir,$type"
+      }
+    }
+  } else {
+    puts " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+  }
+
+}
+
+if {1} {
+  puts [format {
+########################################################################################
+##
+## Search for pins with opposite-edge skew_{rising|falling} check
+##
+########################################################################################
+}]
+
+  # Only for database version from 1.7 and upward
+  if {$dbVersion >= 1.7} {
+    catch {unset DB}
+    # Find id of timing with intrinsic_{rise|fall} and skew_{rising|falling} (OPPOSITE EDGE)
+    set timingids [lsort -unique [SQL eval {
+      SELECT DISTINCT timingid
+             FROM arc
+             WHERE ( ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%skew_rising%')
+                     AND
+                     ((SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) = 'fall')
+                   )
+                OR ( ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%skew_falling%')
+                     AND
+                     ((SELECT intrinsic FROM timing WHERE timing.id=arc.timingid) = 'rise')
+                   )
+      ;
+    }] ]
+    SQL eval "
+      SELECT DISTINCT
+             (SELECT name FROM cell WHERE id = arc.cellid ) AS 'cell',
+             (SELECT name FROM pin WHERE id = arc.pinid ) AS 'pin',
+             (SELECT name FROM pin WHERE id = arc.relatedpinid ) AS 'relatedpin',
+             (SELECT direction FROM pin WHERE id = arc.pinid ) AS 'direction',
+             (SELECT timing_type FROM timing WHERE id = arc.timingid ) AS 'timing_type',
+             (SELECT intrinsic FROM timing WHERE id = arc.timingid ) AS 'intrinsic',
+             id
+      FROM arc
+      WHERE arc.timingid IN ('[join $timingids ',']')
+      ORDER BY cell, pin;
+    " values {
+      if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+      lappend DB($values(cell)) [list $values(id) $values(pin) $values(direction) $values(relatedpin) $values(timing_type) $values(intrinsic)]
+    }
+
+    foreach cell [lsort -dictionary [array names DB]] {
+      puts " Processing $cell"
+      foreach elm $DB($cell) {
+        foreach {id pin dir relatedpin type intrinsic} $elm { break }
+        puts "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
+#         puts "$cell,$pin,$dir,$type"
       }
     }
   } else {
