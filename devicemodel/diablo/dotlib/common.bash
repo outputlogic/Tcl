@@ -52,7 +52,8 @@ COMPILE() {
   mkdir ./$LIB_NAME/log/
   ${SCR}/createSQLiteDB -ftcl "./$LIB_NAME/ftcl/${LIB_NAME}*.ftcl" -db ./$LIB_NAME/${LIB_NAME}.db -verbose > ./$LIB_NAME/log/createSQLiteDB_${LIB_NAME}.log
   ${SCR}/dbStats -db ./$LIB_NAME/${LIB_NAME}.db -verbose > ./$LIB_NAME/${LIB_NAME}.stats
-  ${SCR}/checkTimingArcsDotLib2 -db "./$LIB_NAME/${LIB_NAME}.db" > ./$LIB_NAME/report/${LIB_NAME}_checkTimingArcsDotLib2.rpt
+  ${SCR}/reportDRC -db "./$LIB_NAME/${LIB_NAME}.db" -output ./$LIB_NAME/report/${LIB_NAME}_DRC.rpt
+  ${SCR}/reportDRC -db "./$LIB_NAME/${LIB_NAME}.db" -output ./$LIB_NAME/report/${LIB_NAME}_DRC_sum.rpt -summary
 
   # Convert CSVs to tabular format
   ${SCR}/csv2tbl -csv ./$LIB_NAME/report/${LIB_NAME}*csv
