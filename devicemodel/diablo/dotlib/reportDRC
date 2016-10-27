@@ -3,9 +3,11 @@
 exec tclsh "$0" "$@"
 
 ########################################################################################
-## 10-26-2016 - Renamed script from checkTimingArcsDotLib2 to reportDRC
+## 10-27-2016 - Renamed script from checkTimingArcsDotLib2 to reportDRC
+##            - Added support to multiple databases
 ##            - Changed output format to DRC-style
-##            - Added support for -checks/-output/-summary_only/-list_checks
+##            - Added support for -checks/-summary_only/-list_checks
+##            - Added support for -output/-source
 ##            - Added summary of all messages
 ##            - Misc enhancements
 ## 10-25-2016 - Added checks for max skew and intrinsic_{rise|fall} attribute
@@ -54,6 +56,7 @@ set DRCDefn [list \
   { {ARC-27}  1  {INFO}     {Pins with opposite-edge max skew check} } \
   ]
 
+
 lappend auto_path /home/dpefour/git/scripts/toolbox
 package require toolbox
 
@@ -78,6 +81,15 @@ proc wait_db_ready { &SQL {cmd {pragma integrity_check} } } {
   return 0
 }
 
+# E.g:
+#   add_drc {ARC-1}   {INFO}     {Pins that are not involved in any timing arc}
+#   add_drc {ARC-25}  {INFO}     {Pins with max skew check and intrinsic_{rise|fall} attribute}   0
+proc add_drc {rule severity description {enabled 1}} {
+  global DRCDefn
+  lappend DRCDefn [list $rule $enabled $severity $description]
+  return -code ok
+}
+
 proc getDRCSeverity {rule} {
   global DRCDefn
   set severity {N/A}
@@ -91,7 +103,7 @@ proc getDRCSeverity {rule} {
   return $severity
 }
 
-proc getDRCDesciption {rule} {
+proc getDRCDescription {rule} {
   global DRCDefn
   set description {N/A}
   foreach elm $DRCDefn {
@@ -117,10 +129,11 @@ proc isDRCEnabled {rule} {
   return $enabled
 }
 
-proc drc {rule msg} {
+proc drc {msg} {
   global rules
   global DRCDefn
-  set rule [string toupper $rule]
+  # Name of the caller proc
+  set rule [info level 1]
   set severity [getDRCSeverity $rule]
   if {![info exists rules($rule)]} { set rules($rule) 0 }
   set idx [incr rules($rule)]
@@ -142,7 +155,9 @@ set output [list]
 set showChecks 0
 set summaryOnly 0
 set channel {stdout}
+set ifilename {}
 set ofilename {}
+set sfilename {}
 set VERBOSE 0
 set DEBUG 0
 set error 0
@@ -157,10 +172,27 @@ while {[llength $argv]} {
   set name [::tb::lshift argv]
   switch -regexp -- $name {
     {^-db} {
-      set filename [::tb::lshift argv]
+      while {![string match "-*" [set filename [::tb::lshift argv]]]} {
+        if {$filename == {}} {
+          break
+        }
+        foreach file [glob -nocomplain $filename] {
+          if {![file exists $file]} {
+            puts " -E- file '$file' does not exist"
+            incr error
+          } else {
+            lappend ifilename $file
+          }
+        }
+      }
+      # The last argument needs to be put back on the stack
+      if {$filename != {}} { ::tb::unlshift argv $filename }
     }
     {^-o(u(t(p(ut?)?)?)?)?$} {
       set ofilename [::tb::lshift argv]
+    }
+    {^-so(u(r(ce?)?)?)?$} {
+      set sfilename [::tb::lshift argv]
     }
     {^-su(m(m(a(r(y(_(o(n(ly?)?)?)?)?)?)?)?)?)?} {
       set summaryOnly 1
@@ -197,23 +229,26 @@ if {$show_help} {
   # <-- HELP
   puts [format {
     Usage: reportDRC
-                [-db <sqlite3 database>]
+                [-db <sqlite3 database(s)>]
                 [-output <filename>]
                 [-summary_only]
                 [-checks <list_checks>]
                 [-list_checks]
+                [-source <filename>]
                 [-verbose|-v]
                 [-help|-h]
 
-    Description: Utility to perform various Dotlib checks on the SQLite3 database
+    Description: Utility to run Dotlib Rule Checks on the SQLite3 database
 
     Version: %s
 
+    Use -source to add custom DRCs.
+
     Example:
-       reportDRC -output drc.rpt
        reportDRC -db './kintex7.db'
-       reportDRC -db './kintex7.db' -checks 'ARC-2 ARC10' -output drc.rpt
-       reportDRC -db './kintex7.db' -summary_only -output drc_summary.rpt
+       reportDRC -db './kintex*.db' -checks 'ARC-2 ARC10' -output drc.rpt
+       reportDRC -db ./kintex*.db -summary_only -output drc_summary.rpt
+       reportDRC -db './kintex7.db' -source extradrcs.tcl -output drc_summary.rpt
 
   } $SCRIPT_VERSION ]
   # HELP -->
@@ -221,58 +256,28 @@ if {$show_help} {
   exit 0
 }
 
+if {[llength $ifilename] == 0} {
+  puts " -E- no input database specified"
+  incr error
+}
+
+if {($sfilename != {}) && ![file exists $sfilename]} {
+  puts " -E- file '$sfilename' does not exist"
+  incr error
+}
+
 if {$error} {
   puts "\n Some error(s) occured. Cannot continue.\n"
   exit -1
 }
 
-if {$showChecks} {
-  # Only show DRC checks
-  set tbl [::tb::prettyTable]
-  $tbl header [list {Rule} {Severity} {Description}]
-  $tbl configure -indent 2
-  foreach elm $DRCDefn {
-    foreach {rule enabled severity description} $elm { break }
-    if {!$enabled} {
-      continue
-    }
-    $tbl addrow [list $rule $severity $description]
-  }
-  puts [$tbl print]
-  catch {$tbl destroy}
-  # Now exit
-  exit 0
-}
+########################################################################################
+# DRC rules
+########################################################################################
 
-if {$ofilename != {}} {
-  set channel [open $ofilename {w}]
-}
-
-# SQLite3 database
-if {![file exists $filename]} {
-  error " File '$filename' does not exist"
-}
-
-# Open SQLite3 database
-sqlite3 SQL $filename -readonly true
-wait_db_ready SQL
-
-# Get database version
-set dbVersion [SQL eval { SELECT value FROM param WHERE property='version' LIMIT 1; } ]
-
-set cells [SQL eval { SELECT name FROM cell ORDER BY name ASC }]
-
-
-if {([lsearch $allrules [set DRCRULE {ARC-1}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins that are not involved in any timing arc
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins that are not involved in any timing arc
+proc ARC-1 {} {
+  global SQL output dbVersion
   catch {unset DB}
   # Get all the pins that are involved in a timing arc
   set pinids [concat [SQL eval { SELECT DISTINCT relatedpinid FROM arc; }] \
@@ -295,22 +300,14 @@ if {([lsearch $allrules [set DRCRULE {ARC-1}]] != -1) && [isDRCEnabled $DRCRULE]
     lappend output " Processing $cell"
     foreach pin [::tb::collapseBusNames $DB($cell)] {
 #       lappend output "   No timing arc association found for pin $pin"
-      lappend output [drc $DRCRULE "No timing arc association found for pin $pin"]
+      lappend output [drc "No timing arc association found for pin $pin"]
     }
   }
-
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-2}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for asynchronous pins that are involved in a combinational timing arc
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for asynchronous pins that are involved in a combinational timing arc
+proc ARC-2 {} {
+  global SQL output dbVersion
   catch {unset DB}
   catch {unset dir}
   set DB(cells) [list]
@@ -358,24 +355,17 @@ if {([lsearch $allrules [set DRCRULE {ARC-2}]] != -1) && [isDRCEnabled $DRCRULE]
     # and can result in trying to acess associative array with invalid key
     foreach pin $pins {
 #       lappend output "   Combinational arc found from asynchronous $dir(${cell}:${pin}) pin '$pin' to pin(s) '[::tb::collapseBusNames [lsort -unique $DB(${cell}:${pin})]]'"
-      lappend output [drc $DRCRULE "Combinational arc found from asynchronous $dir(${cell}:${pin}) pin '$pin' to pin(s) '[::tb::collapseBusNames [lsort -unique $DB(${cell}:${pin})]]'"]
+      lappend output [drc "Combinational arc found from asynchronous $dir(${cell}:${pin}) pin '$pin' to pin(s) '[::tb::collapseBusNames [lsort -unique $DB(${cell}:${pin})]]'"]
     }
   }
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-3}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins that have a falling or rising edge arc defined with a negative or positive unate in addition
-  # Timing check from Brandon:
-  #   if {{timing_type==falling_edge || timing_type==rising_edge} && {timing_sense==”negative_unate” || timing_sense==”positive_unate”}}
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins that have a falling or rising edge arc defined with a negative or positive unate in addition
+# Timing check from Brandon:
+#   if {{timing_type==falling_edge || timing_type==rising_edge} && {timing_sense==”negative_unate” || timing_sense==”positive_unate”}}
+proc ARC-3 {} {
+  global SQL output dbVersion
   catch {unset DB}
   catch {unset dir}
   SQL eval {
@@ -395,22 +385,15 @@ if {([lsearch $allrules [set DRCRULE {ARC-3}]] != -1) && [isDRCEnabled $DRCRULE]
     lappend output " Processing $cell"
     foreach pin [::tb::collapseBusNames $DB($cell)] {
 #       lappend output "   Found pin '$pin' with falling_edge or rising_edge (timing_type) and negative_unate or positive_unate (timing_sense)"
-      lappend output [drc $DRCRULE "Found pin '$pin' with falling_edge or rising_edge (timing_type) and negative_unate or positive_unate (timing_sense)"]
+      lappend output [drc "Found pin '$pin' with falling_edge or rising_edge (timing_type) and negative_unate or positive_unate (timing_sense)"]
     }
   }
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-4}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins that have a setup/hold and recovery/removal timing arcs at the same time
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins that have a setup/hold and recovery/removal timing arcs at the same time
+proc ARC-4 {} {
+  global SQL output dbVersion
   catch {unset DB}
   catch {unset dir}
   set pinids [SQL eval {
@@ -437,21 +420,14 @@ if {([lsearch $allrules [set DRCRULE {ARC-4}]] != -1) && [isDRCEnabled $DRCRULE]
     ORDER BY cellid, relatedpinid, pinid;
   " values {
 #     lappend output " -I- $values(cell): $values(relatedpin) -> $values(pin) ($values(timing_type), $values(timing_sense))"
-    lappend output [drc $DRCRULE "$values(cell): $values(relatedpin) -> $values(pin) ($values(timing_type), $values(timing_sense))"]
+    lappend output [drc "$values(cell): $values(relatedpin) -> $values(pin) ($values(timing_type), $values(timing_sense))"]
   }
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-5}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for existing min_pulse_width checks
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for existing min_pulse_width checks
+proc ARC-5 {} {
+  global SQL output dbVersion
   catch {unset DB}
   SQL eval {
     SELECT DISTINCT
@@ -472,22 +448,15 @@ if {([lsearch $allrules [set DRCRULE {ARC-5}]] != -1) && [isDRCEnabled $DRCRULE]
     foreach elm $DB($cell) {
       foreach {pin dir} $elm { break }
 #       lappend output "   Found $dir pin '$pin' with 'min_pulse_width' check"
-      lappend output [drc $DRCRULE "Found $dir pin '$pin' with 'min_pulse_width' check"]
+      lappend output [drc "Found $dir pin '$pin' with 'min_pulse_width' check"]
     }
   }
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-6}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for missing min_pulse_width checks on clock pins and asynchronous pins
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for missing min_pulse_width checks on clock pins and asynchronous pins
+proc ARC-6 {} {
+  global SQL output dbVersion
   catch {unset DB}
   # Find id of clock pins
   set clockpinids [lsort -unique [SQL eval {
@@ -533,26 +502,19 @@ if {([lsearch $allrules [set DRCRULE {ARC-6}]] != -1) && [isDRCEnabled $DRCRULE]
       foreach {id pin dir} $elm { break }
       if {[lsearch $clockpinids $id] != -1} {
 #         lappend output "   Found clock $dir pin '$pin' with missing 'min_pulse_width' check"
-        lappend output [drc $DRCRULE "Found clock $dir pin '$pin' with missing 'min_pulse_width' check"]
+        lappend output [drc "Found clock $dir pin '$pin' with missing 'min_pulse_width' check"]
       } else {
 #         lappend output "   Found asynchronous $dir pin '$pin' with missing 'min_pulse_width' check"
-        lappend output [drc $DRCRULE "Found asynchronous $dir pin '$pin' with missing 'min_pulse_width' check"]
+        lappend output [drc "Found asynchronous $dir pin '$pin' with missing 'min_pulse_width' check"]
       }
     }
   }
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-7}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with min_pulse_width checks but without setup/hold/removal/recovery/edge checks (FROM/TO)
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with min_pulse_width checks but without setup/hold/removal/recovery/edge checks (FROM/TO)
+proc ARC-7 {} {
+  global SQL output dbVersion
   catch {unset DB}
   # Find id of pins with setup/hold/removal/recovery/edge (FROM/TO)
   set pinids [lsort -unique [SQL eval {
@@ -599,22 +561,15 @@ if {([lsearch $allrules [set DRCRULE {ARC-7}]] != -1) && [isDRCEnabled $DRCRULE]
     foreach elm $DB($cell) {
       foreach {id pin dir} $elm { break }
 #       lappend output "   Found $dir pin '$pin' with 'min_pulse_width' check and no other setup/hold/removal/recovery/edge check associated"
-      lappend output [drc $DRCRULE "Found $dir pin '$pin' with 'min_pulse_width' check and no other setup/hold/removal/recovery/edge check associated"]
+      lappend output [drc "Found $dir pin '$pin' with 'min_pulse_width' check and no other setup/hold/removal/recovery/edge check associated"]
     }
   }
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-8}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for existing minimum_period checks
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for existing minimum_period checks
+proc ARC-8 {} {
+  global SQL output dbVersion
   catch {unset DB}
   SQL eval {
     SELECT DISTINCT
@@ -635,22 +590,15 @@ if {([lsearch $allrules [set DRCRULE {ARC-8}]] != -1) && [isDRCEnabled $DRCRULE]
     foreach elm $DB($cell) {
       foreach {pin dir} $elm { break }
 #       lappend output "   Found $dir pin '$pin' with 'minimum_period' check"
-      lappend output [drc $DRCRULE "Found $dir pin '$pin' with 'minimum_period' check"]
+      lappend output [drc "Found $dir pin '$pin' with 'minimum_period' check"]
     }
   }
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-9}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with a function definition
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with a function definition
+proc ARC-9 {} {
+  global SQL output dbVersion
   catch {unset DB}
   SQL eval {
     SELECT DISTINCT
@@ -672,22 +620,15 @@ if {([lsearch $allrules [set DRCRULE {ARC-9}]] != -1) && [isDRCEnabled $DRCRULE]
     foreach elm $DB($cell) {
       foreach {pin dir function} $elm { break }
 #       lappend output "   Found $dir pin '$pin' with function '$function'"
-      lappend output [drc $DRCRULE "Found $dir pin '$pin' with function '$function'"]
+      lappend output [drc "Found $dir pin '$pin' with function '$function'"]
     }
   }
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-10}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins that have multiple setup/recovery timing arcs
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins that have multiple setup/recovery timing arcs
+proc ARC-10 {} {
+  global SQL output dbVersion
   catch {unset DB}
   set DB(_) [list]
   SQL eval "
@@ -734,10 +675,10 @@ if {([lsearch $allrules [set DRCRULE {ARC-10}]] != -1) && [isDRCEnabled $DRCRULE
             }
             if {$fpgacond != {}} {
 #               lappend output "   Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"
-              lappend output [drc $DRCRULE "Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"]
+              lappend output [drc "Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"]
             } else {
 #               lappend output "   Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"
-              lappend output [drc $DRCRULE "Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"]
+              lappend output [drc "Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"]
             }
             incr count
           }
@@ -748,16 +689,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-10}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-11}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins that have multiple hold/removal timing arcs
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins that have multiple hold/removal timing arcs
+proc ARC-11 {} {
+  global SQL output dbVersion
   catch {unset DB}
   set DB(_) [list]
   SQL eval "
@@ -804,10 +738,10 @@ if {([lsearch $allrules [set DRCRULE {ARC-11}]] != -1) && [isDRCEnabled $DRCRULE
             }
             if {$fpgacond != {}} {
 #               lappend output "   Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"
-              lappend output [drc $DRCRULE "Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"]
+              lappend output [drc "Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"]
             } else {
 #               lappend output "   Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"
-              lappend output [drc $DRCRULE "Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"]
+              lappend output [drc "Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"]
             }
             incr count
           }
@@ -818,16 +752,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-11}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-12}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with a clock attribute
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with a clock attribute
+proc ARC-12 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -851,7 +778,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-12}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {pin dir clock} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with clock attribute '$clock'"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with clock attribute '$clock'"]
+        lappend output [drc "Found $dir pin '$pin' with clock attribute '$clock'"]
       }
     }
   } else {
@@ -860,16 +787,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-12}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-13}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for internal pins
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for internal pins
+proc ARC-13 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -893,7 +813,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-13}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {pin dir clock} $elm { break }
 #         lappend output "   Found $dir pin '$pin'"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin'"]
+        lappend output [drc "Found $dir pin '$pin'"]
       }
     }
   } else {
@@ -902,16 +822,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-13}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-14}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for internal pins with clock attribute
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for internal pins with clock attribute
+proc ARC-14 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -936,7 +849,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-14}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {pin dir clock} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with clock attribute"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with clock attribute"]
+        lappend output [drc "Found $dir pin '$pin' with clock attribute"]
       }
     }
   } else {
@@ -945,16 +858,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-14}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-15}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for internal pins without clock attribute
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for internal pins without clock attribute
+proc ARC-15 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -979,7 +885,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-15}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {pin dir clock} $elm { break }
 #         lappend output "   Found $dir pin '$pin' without clock attribute"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' without clock attribute"]
+        lappend output [drc "Found $dir pin '$pin' without clock attribute"]
       }
     }
   } else {
@@ -988,16 +894,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-15}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-16}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for output pins with a clock attribute
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for output pins with a clock attribute
+proc ARC-16 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -1022,7 +921,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-16}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {pin dir clock} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with clock attribute '$clock'"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with clock attribute '$clock'"]
+        lappend output [drc "Found $dir pin '$pin' with clock attribute '$clock'"]
       }
     }
   } else {
@@ -1031,16 +930,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-16}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-17}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with min_pulse_width checks and an associated setup/hold/recovery/removal check but without a clock attribute
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with min_pulse_width checks and an associated setup/hold/recovery/removal check but without a clock attribute
+proc ARC-17 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -1079,7 +971,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-17}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with 'min_pulse_width' check and setup/hold check associated and no 'clock : true' attribute"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with 'min_pulse_width' check and setup/hold check associated and no 'clock : true' attribute"]
+        lappend output [drc "Found $dir pin '$pin' with 'min_pulse_width' check and setup/hold check associated and no 'clock : true' attribute"]
       }
     }
   } else {
@@ -1088,16 +980,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-17}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-18}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with an associated setup/hold/recovery/removal check and a clock attribute but without a min_pulse_width
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with an associated setup/hold/recovery/removal check and a clock attribute but without a min_pulse_width
+proc ARC-18 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -1136,7 +1021,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-18}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with a setup/hold check associated and a 'clock : true' attribute but without 'min_pulse_width' check"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with a setup/hold check associated and a 'clock : true' attribute but without 'min_pulse_width' check"]
+        lappend output [drc "Found $dir pin '$pin' with a setup/hold check associated and a 'clock : true' attribute but without 'min_pulse_width' check"]
       }
     }
   } else {
@@ -1145,16 +1030,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-18}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-19}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with min_pulse_width checks and a clock attribute but without setup/hold/recovery/removal check associated
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with min_pulse_width checks and a clock attribute but without setup/hold/recovery/removal check associated
+proc ARC-19 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -1193,7 +1071,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-19}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with 'min_pulse_width' check and  a 'clock : true' attribute but without setup/hold check associated"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with 'min_pulse_width' check and  a 'clock : true' attribute but without setup/hold check associated"]
+        lappend output [drc "Found $dir pin '$pin' with 'min_pulse_width' check and  a 'clock : true' attribute but without setup/hold check associated"]
       }
     }
   } else {
@@ -1202,16 +1080,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-19}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-20}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with a clock attribute but without related setup/hold/recovery/removal check
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with a clock attribute but without related setup/hold/recovery/removal check
+proc ARC-20 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -1247,7 +1118,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-20}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with a 'clock : true' attribute but without setup/hold check associated"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with a 'clock : true' attribute but without setup/hold check associated"]
+        lappend output [drc "Found $dir pin '$pin' with a 'clock : true' attribute but without setup/hold check associated"]
       }
     }
   } else {
@@ -1256,16 +1127,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-20}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-21}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with a related setup/hold/recovery/removal check but without a clock attribute
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with a related setup/hold/recovery/removal check but without a clock attribute
+proc ARC-21 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -1301,7 +1165,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-21}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with a setup/hold check associated but without a 'clock : true' attribute"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with a setup/hold check associated but without a 'clock : true' attribute"]
+        lappend output [drc "Found $dir pin '$pin' with a setup/hold check associated but without a 'clock : true' attribute"]
       }
     }
   } else {
@@ -1310,16 +1174,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-21}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-22}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with an associated removal/recovery check but without a clock attribute
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with an associated removal/recovery check but without a clock attribute
+proc ARC-22 {} {
+  global SQL output dbVersion
   # Only for database version from 1.6 and upward
   if {$dbVersion >= 1.6} {
     catch {unset DB}
@@ -1353,7 +1210,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-22}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with a removal/recovery check associated but without a 'clock : true' attribute"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with a removal/recovery check associated but without a 'clock : true' attribute"]
+        lappend output [drc "Found $dir pin '$pin' with a removal/recovery check associated but without a 'clock : true' attribute"]
       }
     }
   } else {
@@ -1362,16 +1219,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-22}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-23}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with skew_{rising|falling} checks but without an intrinsic_{rise|fall} attribute
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with skew_{rising|falling} checks but without an intrinsic_{rise|fall} attribute
+proc ARC-23 {} {
+  global SQL output dbVersion
   # Only for database version from 1.7 and upward
   if {$dbVersion >= 1.7} {
     catch {unset DB}
@@ -1411,7 +1261,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-23}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir relatedpin type intrinsic} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and no 'intrinsic_{rise|fall}' attribute"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and no 'intrinsic_{rise|fall}' attribute"]
+        lappend output [drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and no 'intrinsic_{rise|fall}' attribute"]
       }
     }
   } else {
@@ -1420,18 +1270,10 @@ if {([lsearch $allrules [set DRCRULE {ARC-23}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-24}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with intrinsic_{rise|fall} attribute and no skew_{rising|falling} check
-  # (recovery/removal checks are filtered out)
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ## (recovery/removal checks are filtered out)
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with intrinsic_{rise|fall} attribute and no skew_{rising|falling} check
+# (recovery/removal checks are filtered out)
+proc ARC-24 {} {
+  global SQL output dbVersion
   # Only for database version from 1.7 and upward
   if {$dbVersion >= 1.7} {
     catch {unset DB}
@@ -1470,7 +1312,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-24}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir relatedpin type intrinsic} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
+        lappend output [drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
       }
     }
   } else {
@@ -1479,16 +1321,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-24}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-25}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with skew_{rising|falling} check and intrinsic_{rise|fall} attribute
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with skew_{rising|falling} check and intrinsic_{rise|fall} attribute
+proc ARC-25 {} {
+  global SQL output dbVersion
   # Only for database version from 1.7 and upward
   if {$dbVersion >= 1.7} {
     catch {unset DB}
@@ -1528,7 +1363,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-25}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir relatedpin type intrinsic} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
+        lappend output [drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
       }
     }
   } else {
@@ -1537,16 +1372,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-25}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-26}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with same-edge skew_{rising|falling} check
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with same-edge skew_{rising|falling} check
+proc ARC-26 {} {
+  global SQL output dbVersion
   # Only for database version from 1.7 and upward
   if {$dbVersion >= 1.7} {
     catch {unset DB}
@@ -1586,7 +1414,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-26}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir relatedpin type intrinsic} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
+        lappend output [drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
       }
     }
   } else {
@@ -1595,16 +1423,9 @@ if {([lsearch $allrules [set DRCRULE {ARC-26}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
-if {([lsearch $allrules [set DRCRULE {ARC-27}]] != -1) && [isDRCEnabled $DRCRULE]} {
-  # Search for pins with opposite-edge skew_{rising|falling} check
-  lappend output [format {
- #######################################################################################################################
- ##
- ## %s [%s]
- ##
- #######################################################################################################################
-} [getDRCDesciption $DRCRULE] $DRCRULE]
-
+# Search for pins with opposite-edge skew_{rising|falling} check
+proc ARC-27 {} {
+  global SQL output dbVersion
   # Only for database version from 1.7 and upward
   if {$dbVersion >= 1.7} {
     catch {unset DB}
@@ -1644,7 +1465,7 @@ if {([lsearch $allrules [set DRCRULE {ARC-27}]] != -1) && [isDRCEnabled $DRCRULE
       foreach elm $DB($cell) {
         foreach {id pin dir relatedpin type intrinsic} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
-        lappend output [drc $DRCRULE "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
+        lappend output [drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
       }
     }
   } else {
@@ -1653,50 +1474,136 @@ if {([lsearch $allrules [set DRCRULE {ARC-27}]] != -1) && [isDRCEnabled $DRCRULE
 
 }
 
+
 ########################################################################################
+# Main
 ########################################################################################
 
-# Print report
-if {!$summaryOnly} {
-  foreach line $output {
-    puts $channel $line
-  }
+if {$sfilename != {}} {
+  puts " -I- sourcing file '$sfilename'"
+  source $sfilename
 }
 
-# Print summary
-  puts $channel [format {
-########################################################################################
-##
-## Summary of messages
-##
-########################################################################################
-}]
-set tbl [::tb::prettyTable]
-$tbl header [list {Rule} {Severity} {Messages} {Description}]
-$tbl configure -indent 2
-foreach elm $DRCDefn {
-  foreach {rule enabled severity description} $elm { break }
-  if {!$enabled && $DEBUG} {
+if {$showChecks} {
+  # Only show DRC checks
+  set tbl [::tb::prettyTable]
+  $tbl header [list {Rule} {Severity} {Description}]
+  $tbl configure -indent 2
+  foreach elm $DRCDefn {
+    foreach {rule enabled severity description} $elm { break }
+    if {!$enabled} {
+      continue
+    }
+    $tbl addrow [list $rule $severity $description]
+  }
+  puts [$tbl print]
+  catch {$tbl destroy}
+  # Now exit
+  exit 0
+}
+
+if {$ofilename != {}} {
+  set channel [open $ofilename {w}]
+}
+
+# Iterate through each database
+set numfile 1
+foreach filename $ifilename {
+
+  # SQLite3 database
+  if {![file exists $filename]} {
+    puts " -E- File '$filename' does not exist"
+    set SQL {}
+    continue
+  }
+
+  if {[llength $ifilename] > 1} {
+    puts " -I- Processing database \[$numfile/[llength $ifilename]\]: [file normalize $filename]"
+  }
+
+  # Open SQLite3 database
+  sqlite3 SQL $filename -readonly true
+  wait_db_ready SQL
+
+  # Get database version
+  set dbVersion [SQL eval { SELECT value FROM param WHERE property='version' LIMIT 1; } ]
+
+  set cells [SQL eval { SELECT name FROM cell ORDER BY name ASC }]
+
+  set output {}
+
+  ########################################################################################
+  # Call DRCs
+  ########################################################################################
+
+  foreach elm $DRCDefn {
+    foreach {rule enabled severity description} $elm { break }
+    if {[info proc $rule] == $rule} {
+      if {([lsearch $allrules $rule] != -1) && [isDRCEnabled $rule]} {
+        lappend output [format {
+   #######################################################################################################################
+   ##
+   ## %s [%s]
+   ##
+   #######################################################################################################################
+  } [getDRCDescription $rule] $rule]
+        eval $rule
+      }
+    }
+  }
+
+  ########################################################################################
+  # Print detailed report
+  ########################################################################################
+
+  # Print report
+  if {!$summaryOnly} {
+    foreach line $output {
+      puts $channel $line
+    }
+  }
+
+  # Print summary
+    puts $channel [format {
+  ########################################################################################
+  ##
+  ## Summary of messages
+  ##
+  ########################################################################################
+  }]
+  set tbl [::tb::prettyTable]
+  $tbl header [list {Rule} {Severity} {Messages} {Description}]
+  $tbl configure -indent 2
+  foreach elm $DRCDefn {
+    foreach {rule enabled severity description} $elm { break }
+    if {!$enabled && $DEBUG} {
+      if {[lsearch $allrules $rule] == -1} {
+        continue
+      }
+      $tbl addrow [list $rule $severity {Disabled} $description]
+      continue
+    } elseif {!$enabled} {
+      continue
+    }
+    if {![info exists rules($rule)]} { set rules($rule) 0 }
+    set num $rules($rule)
+    if {($num == 0) && ($VERBOSE == 0)} {
+      continue
+    }
     if {[lsearch $allrules $rule] == -1} {
       continue
     }
-    $tbl addrow [list $rule $severity {Disabled} $description]
-    continue
-  } elseif {!$enabled} {
-    continue
+    $tbl addrow [list $rule $severity $num $description]
   }
-  if {![info exists rules($rule)]} { set rules($rule) 0 }
-  set num $rules($rule)
-  if {($num == 0) && ($VERBOSE == 0)} {
-    continue
-  }
-  if {[lsearch $allrules $rule] == -1} {
-    continue
-  }
-  $tbl addrow [list $rule $severity $num $description]
+  puts $channel [$tbl print]
+  puts $channel ""
+  catch {$tbl destroy}
+
+  # Closing the SQLite3 database
+  SQL close
+
+  incr numfile
 }
-puts $channel [$tbl print]
-catch {$tbl destroy}
 
 # Closing the output file
 if {($channel != {stdout}) && ($channel != {})} {
@@ -1704,8 +1611,5 @@ if {($channel != {stdout}) && ($channel != {})} {
   set channel {}
   puts " -I- Generated file [file normalize $ofilename]"
 }
-
-# Closing the SQLite3 database
-SQL close
 
 exit 0
