@@ -7,7 +7,7 @@ exec tclsh "$0" "$@"
 ##            - Added support to multiple databases
 ##            - Changed output format to DRC-style
 ##            - Added support for -checks/-summary_only/-list_checks
-##            - Added support for -output/-source
+##            - Added support for -output/-source/-no_violation_number
 ##            - Added summary of all messages
 ##            - Misc enhancements
 ## 10-25-2016 - Added checks for max skew and intrinsic_{rise|fall} attribute
@@ -130,14 +130,19 @@ proc isDRCEnabled {rule} {
 }
 
 proc drc {msg} {
-  global rules
-  global DRCDefn
+  global DRCDefn rules showViolationNum
   # Name of the caller proc
   set rule [info level 1]
   set severity [getDRCSeverity $rule]
   if {![info exists rules($rule)]} { set rules($rule) 0 }
   set idx [incr rules($rule)]
-  return [format {    %s: %s [%s#%s]} $severity $msg $rule $idx]
+  if {$showViolationNum} {
+    # E.g: INFO: Found input pin 'CE0' with multiple hold/removal checks ('setup_falling' with related pin 'I0')(1/2) [ARC-11#1]
+    return [format {    %s: %s [%s#%s]} $severity $msg $rule $idx]
+  } else {
+    # E.g: INFO: Found input pin 'CE0' with multiple hold/removal checks ('setup_falling' with related pin 'I0')(1/2) [ARC-11]
+    return [format {    %s: %s [%s]} $severity $msg $rule]
+  }
 }
 
 # SQLite3 database
@@ -150,7 +155,6 @@ for {set idx 0} {$idx < 100} {incr idx} {
   lappend allrules [format {ARC-%s} $idx]
 }
 
-catch {unset rules}
 set output [list]
 set showChecks 0
 set summaryOnly 0
@@ -158,6 +162,7 @@ set channel {stdout}
 set ifilename {}
 set ofilename {}
 set sfilename {}
+set showViolationNum 1
 set VERBOSE 0
 set DEBUG 0
 set error 0
@@ -203,6 +208,9 @@ while {[llength $argv]} {
     {^-li(s(t(_(c(h(e(c(ks?)?)?)?)?)?)?)?)?} {
       set showChecks 1
     }
+    {^-no(_(v(i(o(l(a(t(i(o(n(_(n(u(m(b(er?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?} {
+      set showViolationNum 0
+    }
     {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set VERBOSE 1
     }
@@ -234,6 +242,7 @@ if {$show_help} {
                 [-summary_only]
                 [-checks <list_checks>]
                 [-list_checks]
+                [-no_violation_number]
                 [-source <filename>]
                 [-verbose|-v]
                 [-help|-h]
@@ -243,6 +252,7 @@ if {$show_help} {
     Version: %s
 
     Use -source to add custom DRCs.
+    Use -no_violation_number to remove the violation number from the report.
 
     Example:
        reportDRC -db './kintex7.db'
@@ -1531,6 +1541,7 @@ foreach filename $ifilename {
   set cells [SQL eval { SELECT name FROM cell ORDER BY name ASC }]
 
   set output {}
+  catch {unset rules}
 
   ########################################################################################
   # Call DRCs
