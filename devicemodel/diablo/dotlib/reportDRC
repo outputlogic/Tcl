@@ -149,11 +149,8 @@ proc drc {msg} {
 # set filename {sqlite3.db}
 set filename {}
 
-# Build the list of rules to be checked
+# List of rules to be checked
 set allrules [list]
-for {set idx 0} {$idx < 100} {incr idx} {
-  lappend allrules [format {ARC-%s} $idx]
-}
 
 set output [list]
 set showChecks 0
@@ -203,7 +200,12 @@ while {[llength $argv]} {
       set summaryOnly 1
     }
     {^-c(h(e(c(ks?)?)?)?)?} {
-      set allrules [::tb::lshift argv]
+      # Supports both space and coma between checks
+      foreach elm [::tb::lshift argv] {
+        foreach el [split $elm ,] {
+          lappend allrules $el
+        }
+      }
     }
     {^-li(s(t(_(c(h(e(c(ks?)?)?)?)?)?)?)?)?} {
       set showChecks 1
@@ -251,13 +253,14 @@ if {$show_help} {
 
     Version: %s
 
-    Use -source to add custom DRCs.
+    Use -source to add custom DRCs. Custom DRCs should be registered with 'add_drc' command.
     Use -no_violation_number to remove the violation number from the report.
+    Use -checks to provide a coma-delimited list of rules.
 
     Example:
        reportDRC -db './kintex7.db'
-       reportDRC -db './kintex*.db' -checks 'ARC-2 ARC10' -output drc.rpt
-       reportDRC -db ./kintex*.db -summary_only -output drc_summary.rpt
+       reportDRC -db './kintex*.db' -checks 'ARC-2,ARC10' -output drc.rpt
+       reportDRC -db ./*/kintex*.db -summary_only -output drc_summary.rpt
        reportDRC -db './kintex7.db' -source extradrcs.tcl -output drc_summary.rpt
 
   } $SCRIPT_VERSION ]
@@ -1547,6 +1550,10 @@ foreach filename $ifilename {
   # Call DRCs
   ########################################################################################
 
+  # If list of rules is empty, gather all the procs matching ARC-*
+  if {[llength $allrules] == 0} {
+    set allrules [info proc ARC-*]
+  }
   foreach elm $DRCDefn {
     foreach {rule enabled severity description} $elm { break }
     if {[info proc $rule] == $rule} {
