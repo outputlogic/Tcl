@@ -1,0 +1,112 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" ${1+"$@"}
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2016.10.24
+## Description:    This script removed design strings from Vivado log files
+##
+########################################################################################
+
+# Usage:
+# linux% obfuscateLog vivado.log > vivado_obf.log
+# linux% obfuscateLog vivado.log vivado_obf.log
+
+########################################################################################
+## 2016.10.24 - Initial release
+########################################################################################
+
+proc remove_design_info { input { replace_with {<DEL>} } } {
+  set output $input
+  if {[regexp -nocase -- {(n/a|up/down/right/left/SLR|Average/Exact mesh|Percentage/Avg)} $input]} {
+    return $input
+  }
+  # TMG_DEBUG TA - Rise Only      : YES
+  # stats:   42.72/3469.57e  263.91/4368.33u     0.52/ 8871.37MB UpdateTimingTA
+  # Vcc/Gnd     :  0
+  # ----- Build_Macros
+  if {[regexp -nocase -- {^\s*(Stats:|TMG_DEBUG|Vcc/Gnd|-----)} $input]} {
+    return $input
+  }
+  # Phase 1.3 Constrain Clocks/Macros
+  if {[regexp -nocase -- {^\s*Phase\s+[0-9\.]+\s+Constrain\s+Clocks/Macros} $input]} {
+    return $input
+  }
+  # Global Clock #4
+  #   Net name        : BBC/o_clk_bb
+  #   Source cell name: BBC/clk_bb_bufg
+  set output [ regsub -nocase -all {(^\s*Net name\s*:\s*)([^\s]+)(\s|$|;)} $output "\\1$replace_with\\3" ]
+  set output [ regsub -nocase -all {(^\s*Source cell name\s*:\s*)([^\s]+)(\s|$|;)} $output "\\1$replace_with\\3" ]
+  # clockDomain=control_unit_clk_gen_44p8m_fb wns=3.40282e+38
+  set output [ regsub -nocase -all {(clockDomain\s*=\s*)([^\s]+)(\s.*$)} $output "\\1$replace_with\\3" ]
+  # Terminal O on Instance BF_AUTOCORR_ADDRESS_int_inc[0]_i_4 (LUT2).
+  set output [ regsub -nocase -all {(Terminal\s*.+on Instance\s*)([^\s]+)(\s.*$)} $output "\\1$replace_with\\3" ]
+  # CRITICAL WARNING: [Constraints 18-1055] Clock 'cal_rfic_clk' completely overrides clock 'I_CAL_DATA_CLK'
+  set output [ regsub -nocase -all {(clock\s+\'\s*)([^\s\']+)(\s*\')} $output "\\1$replace_with\\3" ]
+  # WARNING: [Timing 38-102]  no path found to generated clock dbg_hub/inst/N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/UPDATE pin dbg_hub/inst/N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/UPDATE rise edge. Zero source latency will be used.
+  set output [ regsub -nocase -all {(no path found to generated clock\s*)([^\s]+)(\s*)} $output "\\1$replace_with\\3" ]
+  # 4 : arq_ddr_clk_user
+  set output [ regsub -nocase -all {(^\s*[0-9]+\s*:\s*)([^\s]+)(\s*$)} $output "\\1$replace_with\\3" ]
+  # Terminal O on Instance BF_AUTOCORR_ADDRESS_int_inc[0]_i_4 (LUT2).
+  set output [ regsub -nocase -all {(^\s*TermName\s*)([^\s]+)(\s*.*$)} $output "\\1$replace_with\\3" ]
+  # Net [823686] ram_raddr_reg[1]__0[3] numTerms = 88
+  set output [ regsub -nocase -all {(^\s*Net\s*\[[0-9]+\]\s*)([^\s]+)(\s*.*$)} $output "\\1$replace_with\\3" ]
+  # Block [580905] WORD_LANE[1].USE_ALWAYS_PACKER.BYTE_LANE[1].USE_RTL_DATA.USE_REGISTER.M_AXI_WDATA_I[74]_i_1
+  set output [ regsub -nocase -all {(^\s*Block\s*\[[0-9]+\]\s*)([^\s]+)(\s*.*$)} $output "\\1$replace_with\\3" ]
+  # Term [2666879] WORD_LANE[1].USE_ALWAYS_PACKER.BYTE_LANE[1].USE_RTL_DATA.USE_REGISTER.M_AXI_WDATA_I[74]_i_1/I2(-71, 252)
+  set output [ regsub -nocase -all {(^\s*Term\s*\[[0-9]+\]\s*)([^\s\(\)]+)(\s*.*$)} $output "\\1$replace_with\\3" ]
+
+  # Default match and replace
+  set output [ regsub -nocase -all {([^\s\#\"\(\)][^\s\#\"\(\)]+\/[^\s\#\"\(\)][^\s\#\"\(\)]*)} $output "$replace_with" ]
+
+  return $output
+}
+
+if {[llength $argv] == 0} {
+    puts [format {
+  Usage: obfuscateLog <vivado_log_file> > <output_file>
+     OR
+         obfuscateLog <vivado_log_file> <output_file>
+
+  Description:
+
+     This script removes some design information from Vivado log
+
+  Example:
+     obfuscateLog vivado.log > vivado_obf.log
+     obfuscateLog vivado.log vivado_obf.log
+} ]
+    # HELP -->
+  exit 0
+}
+
+set vivadolog [lindex $argv 0]
+
+set FH [open $vivadolog r]
+if {$argc == 2} {
+  set obflog [lindex $argv 1]
+  set OBF    [open $obflog w]
+}
+
+while {![eof $FH]} {
+  gets $FH line
+  set line [remove_design_info $line]
+  if {$argc == 2} { puts $OBF $line } else { puts $line }
+}
+
+close $FH
+if {$argc == 2} {close $OBF}
+
+exit 0
