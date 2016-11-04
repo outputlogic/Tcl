@@ -72,7 +72,7 @@ namespace eval ::tb::utils {
 namespace eval ::tb::utils::report_failfast {
   namespace export -force report_failfast
   variable version {2016.11.01}
-  variable SPRITE_INTEGRATION 0
+  variable SPRITE_INTEGRATION 1
   variable params
   variable output {}
   variable metrics
