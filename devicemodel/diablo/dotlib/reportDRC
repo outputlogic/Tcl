@@ -3,6 +3,9 @@
 exec tclsh "$0" "$@"
 
 ########################################################################################
+## 11-03-2016 - Added support for -format/-csv/-table/-file
+##            - Added support for waivers (-waivers/-show_waivers)
+##            - Reformated message for ARC-4
 ## 10-27-2016 - Renamed script from checkTimingArcsDotLib2 to reportDRC
 ##            - Added support to multiple databases
 ##            - Changed output format to DRC-style
@@ -23,7 +26,7 @@ exec tclsh "$0" "$@"
 # The flow is to generate fragment files from Dotlib first with dotlib2tcl
 # Once this is done, this script can be run.
 
-set SCRIPT_VERSION {10-26-2016}
+set SCRIPT_VERSION {11-03-2016}
 
 # Format: <RuleID> <Enabled> <Severity> <Description>
 set DRCDefn [list \
@@ -55,6 +58,40 @@ set DRCDefn [list \
   { {ARC-26}  1  {INFO}     {Pins with same-edge max skew check} } \
   { {ARC-27}  1  {INFO}     {Pins with opposite-edge max skew check} } \
   ]
+
+# Adding custom DRC:
+#  - Use '-source <filename>' to import the Tcl file with new DRC(s)
+#  - Use '-check' if necessary to only run new DRC(s)
+#  - The Tcl variables $cell/$pin/$relatedpin should be defined
+#    before calling 'drc' command
+#   proc ARC-xxxx {} {
+#     global SQL output dbVersion
+#     catch {unset DB}
+#     SQL eval {
+#       SELECT DISTINCT
+#              (SELECT name FROM cell WHERE id = pin.cellid ) AS "cell",
+#              name AS "pin",
+#              ...
+#              ...
+#       FROM pin
+#       WHERE
+#              ...
+#       ORDER BY cell, pin;
+#     } values {
+#       if {![info exists DB($values(cell))]} { set DB($values(cell)) [list] }
+#       lappend DB($values(cell)) [list $values(pin) ...]
+#     }
+#
+#     foreach cell [lsort -dictionary [array names DB]] {
+#       foreach elm $DB($cell) {
+#         foreach {pin ...} $elm { break }
+#         drc "Found $dir pin '$pin' with function '$function'"
+#       }
+#     }
+#     return -code ok
+#   }
+#
+#   add_drc ARC-xxxx <SEVERITY> <DESCRIPTION>
 
 
 lappend auto_path /home/dpefour/git/scripts/toolbox
@@ -130,19 +167,157 @@ proc isDRCEnabled {rule} {
 }
 
 proc drc {msg} {
-  global DRCDefn rules showViolationNum
+  global DRCDefn rules showViolationNum csv waivers
   # Name of the caller proc
   set rule [info level 1]
-  set severity [getDRCSeverity $rule]
+  # Try to get the Tcl variables cell/pin/relatedpin from the caller
+  upvar 1 cell cell ; if {![info exists cell]} { set cell {} }
+  upvar 1 pin pin ; if {![info exists pin]} { set pin {} }
+  upvar 1 relatedpin relatedpin ; if {![info exists relatedpin]} { set relatedpin {} }
   if {![info exists rules($rule)]} { set rules($rule) 0 }
-  set idx [incr rules($rule)]
-  if {$showViolationNum} {
-    # E.g: INFO: Found input pin 'CE0' with multiple hold/removal checks ('setup_falling' with related pin 'I0')(1/2) [ARC-11#1]
-    return [format {    %s: %s [%s#%s]} $severity $msg $rule $idx]
+  if {![info exists waivers($rule)]} { set waivers($rule) 0 }
+  # Is DRC waived?
+  if {[info exists waivers(${rule}\0${cell}\0${pin}\0${relatedpin})]} {
+    # Increment the number of times the DRC is waived
+    incr waivers(${rule}\0${cell}\0${pin}\0${relatedpin})
+    incr waivers($rule)
+    # Set '-' as violation number
+    set idx {-}
+    set isWaived {Y}
+#     # Return
+#     return -code ok
   } else {
-    # E.g: INFO: Found input pin 'CE0' with multiple hold/removal checks ('setup_falling' with related pin 'I0')(1/2) [ARC-11]
-    return [format {    %s: %s [%s]} $severity $msg $rule]
+    # No waiver exists.
+    set idx [incr rules($rule)]
+    set isWaived {}
   }
+  set severity [getDRCSeverity $rule]
+  lappend csv [list $rule $severity $cell $pin $relatedpin $msg $idx $isWaived]
+  return -code ok
+}
+
+proc read-waivers {filename} {
+  global waivers
+  set tbl [::tb::prettyTable]
+  read-csv tbl $filename {,}
+#   puts [$tbl print]
+  set header [$tbl header]
+  set colRule -1
+  set colCell -1
+  set colPin -1
+  set colRelatedPin -1
+  # E.g: "Rule","Severity","Cell","Pin","Related Pin","Message"
+  for {set i 0} {$i < [llength $header]} {incr i} {
+    switch -nocase -regexp -- [lindex $header $i] {
+      {^Rule$} {
+        set colRule $i
+      }
+      {^Cell$} {
+        set colCell $i
+      }
+      {^Pin$} {
+        set colPin $i
+      }
+      {^Related Pin$} {
+        set colRelatedPin $i
+      }
+    }
+  }
+  if {($colRule == -1) || ($colCell == -1) || ($colPin == -1) || ($colRelatedPin == -1)} {
+    error " -E- some of the column(s) 'Rule'/'Cell'/'Pin'/'Relate Pin' could not be found"
+  }
+  foreach row [$tbl gettable] {
+    set rule [lindex $row $colRule]
+    set cell [lindex $row $colCell]
+    set pin [lindex $row $colPin]
+    set relatedpin [lindex $row $colRelatedPin]
+    set waivers(${rule}\0${cell}\0${pin}\0${relatedpin}) 0
+  }
+  puts " -I- Number of imported waiver(s): [llength [$tbl gettable]]"
+  catch {$tbl destroy}
+  return -code ok
+}
+
+# Read CSV file and return a Table object
+proc read-csv {&tbl filename {csvDelimiter ,} {parseHeader 1}} {
+  global VERBOSE DEBUG
+  if {![file exists $filename]} {
+    error " -E- file '$filename' does not exist"
+  }
+  upvar 1 ${&tbl} tbl
+  set FH [open $filename]
+  set first 1
+  set count 0
+  while {![eof $FH]} {
+    gets $FH line
+    # Skip comments and empty lines
+    if {[regexp {^\s*#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    if {$first} {
+      set header [split-csv $line $csvDelimiter]
+      if {[subst $${tbl}::header] != {}} {
+        # If we are in merge mode, then check that the header for this CSV file
+        # does match the existing header
+        if {$parseHeader} {
+          if {![lequal [subst $${tbl}::header] $header]} {
+            if {$DEBUG} {
+              puts " -I- CSV header: $header"
+              puts " -I- Table header: [subst $${tbl}::header]"
+            }
+            puts " -W- The CSV header does not match. File $filename skipped"
+            return 1
+          }
+        }
+      }
+      if {$parseHeader} {
+        $tbl header $header
+      } else {
+        # If the CSV file has no header, create an empty header with correct number
+        # of columns and add the first line as a row
+        set L [list] ; foreach el $header { lappend L {} }
+        $tbl header $L
+        $tbl addrow $header
+        incr count
+      }
+      set first 0
+    } else {
+      $tbl addrow [split-csv $line $csvDelimiter]
+      incr count
+    }
+  }
+  close $FH
+  if {$DEBUG} {
+    puts " -I- Header: $header"
+    puts " -I- Number of imported row(s): $count"
+  }
+  return 0
+}
+
+# Convert a CSV string to a Tcl list based on a field separator
+proc split-csv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
 }
 
 # SQLite3 database
@@ -152,13 +327,20 @@ set filename {}
 # List of rules to be checked
 set allrules [list]
 
+# Waivers
+catch {unset waivers}
+
 set output [list]
+set csv [list]
+set oformat {default}; # default|table|csv
+set showWaivers 0
 set showChecks 0
 set summaryOnly 0
 set channel {stdout}
 set ifilename {}
 set ofilename {}
 set sfilename {}
+set wfilename {}
 set showViolationNum 1
 set VERBOSE 0
 set DEBUG 0
@@ -173,7 +355,7 @@ if {[llength $argv] == 0} {
 while {[llength $argv]} {
   set name [::tb::lshift argv]
   switch -regexp -- $name {
-    {^-db} {
+    {^-db$} {
       while {![string match "-*" [set filename [::tb::lshift argv]]]} {
         if {$filename == {}} {
           break
@@ -190,28 +372,45 @@ while {[llength $argv]} {
       # The last argument needs to be put back on the stack
       if {$filename != {}} { ::tb::unlshift argv $filename }
     }
+    {^-fi(le?)?$} -
     {^-o(u(t(p(ut?)?)?)?)?$} {
       set ofilename [::tb::lshift argv]
+    }
+    {^-w(a(i(v(e(rs?)?)?)?)?)?$} {
+      set wfilename [::tb::lshift argv]
+    }
+    {^-fo(r(m(at?)?)?)?$} {
+      set oformat [::tb::lshift argv]
+    }
+    {^-csv?$} {
+      set oformat {csv}
+    }
+    {^-ta(b(le?)?)?$} {
+      set oformat {table}
     }
     {^-so(u(r(ce?)?)?)?$} {
       set sfilename [::tb::lshift argv]
     }
-    {^-su(m(m(a(r(y(_(o(n(ly?)?)?)?)?)?)?)?)?)?} {
+    {^-su(m(m(a(r(y(_(o(n(ly?)?)?)?)?)?)?)?)?)?$} {
       set summaryOnly 1
     }
-    {^-c(h(e(c(ks?)?)?)?)?} {
+    {^-c(h(e(c(ks?)?)?)?)?$} {
       # Supports both space and coma between checks
       foreach elm [::tb::lshift argv] {
         foreach el [split $elm ,] {
-          lappend allrules $el
+          # Uppercase the DRC rule name
+          lappend allrules [string toupper $el]
         }
       }
     }
-    {^-li(s(t(_(c(h(e(c(ks?)?)?)?)?)?)?)?)?} {
+    {^-li(s(t(_(c(h(e(c(ks?)?)?)?)?)?)?)?)?$} {
       set showChecks 1
     }
-    {^-no(_(v(i(o(l(a(t(i(o(n(_(n(u(m(b(er?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?} {
+    {^-no(_(v(i(o(l(a(t(i(o(n(_(n(u(m(b(er?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$} {
       set showViolationNum 0
+    }
+    {^-sh(o(w(_(w(a(i(v(e(rs?)?)?)?)?)?)?)?)?)?$} {
+      set showWaivers 1
     }
     {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set VERBOSE 1
@@ -240,12 +439,15 @@ if {$show_help} {
   puts [format {
     Usage: reportDRC
                 [-db <sqlite3 database(s)>]
-                [-output <filename>]
+                [-output <filename>|-file <filename>]
+                [-format <default|table|csv>][-table][-csv]
                 [-summary_only]
                 [-checks <list_checks>]
                 [-list_checks]
                 [-no_violation_number]
                 [-source <filename>]
+                [-waivers <filename>]
+                [-show_waivers]
                 [-verbose|-v]
                 [-help|-h]
 
@@ -256,6 +458,7 @@ if {$show_help} {
     Use -source to add custom DRCs. Custom DRCs should be registered with 'add_drc' command.
     Use -no_violation_number to remove the violation number from the report.
     Use -checks to provide a coma-delimited list of rules.
+    Use -waivers/-show_waivers to use and report waivers.
 
     Example:
        reportDRC -db './kintex7.db'
@@ -269,6 +472,13 @@ if {$show_help} {
   exit 0
 }
 
+if {$wfilename != {}} {
+  if {[catch {read-waivers $wfilename} errorstring]} {
+    puts "$errorstring"
+    incr error
+  }
+}
+
 if {[llength $ifilename] == 0} {
   puts " -E- no input database specified"
   incr error
@@ -276,6 +486,11 @@ if {[llength $ifilename] == 0} {
 
 if {($sfilename != {}) && ![file exists $sfilename]} {
   puts " -E- file '$sfilename' does not exist"
+  incr error
+}
+
+if {![regexp {^(default|csv|table)$} $oformat]} {
+  puts " -E- invalid output format '$oformat'"
   incr error
 }
 
@@ -310,12 +525,13 @@ proc ARC-1 {} {
   }
 
   foreach cell [lsort -dictionary [array names DB]] {
-    lappend output " Processing $cell"
+#     lappend output " Processing $cell"
     foreach pin [::tb::collapseBusNames $DB($cell)] {
 #       lappend output "   No timing arc association found for pin $pin"
-      lappend output [drc "No timing arc association found for pin $pin"]
+      drc "No timing arc association found for pin $pin"
     }
   }
+  return -code ok
 }
 
 # Search for asynchronous pins that are involved in a combinational timing arc
@@ -358,7 +574,7 @@ proc ARC-2 {} {
 #   }
 
   foreach cell [lsort -dictionary [lsort -dictionary -unique $DB(cells)]] {
-    lappend output " Processing $cell"
+#     lappend output " Processing $cell"
     set pins [list]
     foreach elm [array names DB ${cell}:*] {
       lappend pins [regsub "${cell}:" $elm {}]
@@ -367,11 +583,12 @@ proc ARC-2 {} {
     # Do NOT collapse pins with [::tb::collapseBusNames $pins] since it does not sense here
     # and can result in trying to acess associative array with invalid key
     foreach pin $pins {
+      set relatedpin [::tb::collapseBusNames [lsort -unique $DB(${cell}:${pin})]]
 #       lappend output "   Combinational arc found from asynchronous $dir(${cell}:${pin}) pin '$pin' to pin(s) '[::tb::collapseBusNames [lsort -unique $DB(${cell}:${pin})]]'"
-      lappend output [drc "Combinational arc found from asynchronous $dir(${cell}:${pin}) pin '$pin' to pin(s) '[::tb::collapseBusNames [lsort -unique $DB(${cell}:${pin})]]'"]
+      drc "Combinational arc found from asynchronous $dir(${cell}:${pin}) pin '$pin' to pin(s) '$relatedpin'"
     }
   }
-
+  return -code ok
 }
 
 # Search for pins that have a falling or rising edge arc defined with a negative or positive unate in addition
@@ -395,13 +612,13 @@ proc ARC-3 {} {
   }
 
   foreach cell [lsort -dictionary [array names DB]] {
-    lappend output " Processing $cell"
+#     lappend output " Processing $cell"
     foreach pin [::tb::collapseBusNames $DB($cell)] {
 #       lappend output "   Found pin '$pin' with falling_edge or rising_edge (timing_type) and negative_unate or positive_unate (timing_sense)"
-      lappend output [drc "Found pin '$pin' with falling_edge or rising_edge (timing_type) and negative_unate or positive_unate (timing_sense)"]
+      drc "Found pin '$pin' with falling_edge or rising_edge (timing_type) and negative_unate or positive_unate (timing_sense)"
     }
   }
-
+  return -code ok
 }
 
 # Search for pins that have a setup/hold and recovery/removal timing arcs at the same time
@@ -430,12 +647,15 @@ proc ARC-4 {} {
           OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%recovery%')
           OR ((SELECT timing_type FROM timing WHERE timing.id=arc.timingid) LIKE '%removal%')
           )
-    ORDER BY cellid, relatedpinid, pinid;
+    ORDER BY cellid, pinid, relatedpinid;
   " values {
 #     lappend output " -I- $values(cell): $values(relatedpin) -> $values(pin) ($values(timing_type), $values(timing_sense))"
-    lappend output [drc "$values(cell): $values(relatedpin) -> $values(pin) ($values(timing_type), $values(timing_sense))"]
+    set cell $values(cell)
+    set pin $values(pin)
+    set relatedpin $values(relatedpin)
+    drc "Found pin '$pin' with a setup/hold and recovery/removal timing arcs at the same time ($values(timing_type), $values(timing_sense))"
   }
-
+  return -code ok
 }
 
 # Search for existing min_pulse_width checks
@@ -457,14 +677,14 @@ proc ARC-5 {} {
   }
 
   foreach cell [lsort -dictionary [array names DB]] {
-    lappend output " Processing $cell"
+#     lappend output " Processing $cell"
     foreach elm $DB($cell) {
       foreach {pin dir} $elm { break }
 #       lappend output "   Found $dir pin '$pin' with 'min_pulse_width' check"
-      lappend output [drc "Found $dir pin '$pin' with 'min_pulse_width' check"]
+      drc "Found $dir pin '$pin' with 'min_pulse_width' check"
     }
   }
-
+  return -code ok
 }
 
 # Search for missing min_pulse_width checks on clock pins and asynchronous pins
@@ -510,19 +730,19 @@ proc ARC-6 {} {
   }
 
   foreach cell [lsort -dictionary [array names DB]] {
-    lappend output " Processing $cell"
+#     lappend output " Processing $cell"
     foreach elm $DB($cell) {
       foreach {id pin dir} $elm { break }
       if {[lsearch $clockpinids $id] != -1} {
 #         lappend output "   Found clock $dir pin '$pin' with missing 'min_pulse_width' check"
-        lappend output [drc "Found clock $dir pin '$pin' with missing 'min_pulse_width' check"]
+        drc "Found clock $dir pin '$pin' with missing 'min_pulse_width' check"
       } else {
 #         lappend output "   Found asynchronous $dir pin '$pin' with missing 'min_pulse_width' check"
-        lappend output [drc "Found asynchronous $dir pin '$pin' with missing 'min_pulse_width' check"]
+        drc "Found asynchronous $dir pin '$pin' with missing 'min_pulse_width' check"
       }
     }
   }
-
+  return -code ok
 }
 
 # Search for pins with min_pulse_width checks but without setup/hold/removal/recovery/edge checks (FROM/TO)
@@ -570,14 +790,14 @@ proc ARC-7 {} {
   }
 
   foreach cell [lsort -dictionary [array names DB]] {
-    lappend output " Processing $cell"
+#     lappend output " Processing $cell"
     foreach elm $DB($cell) {
       foreach {id pin dir} $elm { break }
 #       lappend output "   Found $dir pin '$pin' with 'min_pulse_width' check and no other setup/hold/removal/recovery/edge check associated"
-      lappend output [drc "Found $dir pin '$pin' with 'min_pulse_width' check and no other setup/hold/removal/recovery/edge check associated"]
+      drc "Found $dir pin '$pin' with 'min_pulse_width' check and no other setup/hold/removal/recovery/edge check associated"
     }
   }
-
+  return -code ok
 }
 
 # Search for existing minimum_period checks
@@ -599,14 +819,14 @@ proc ARC-8 {} {
   }
 
   foreach cell [lsort -dictionary [array names DB]] {
-    lappend output " Processing $cell"
+#     lappend output " Processing $cell"
     foreach elm $DB($cell) {
       foreach {pin dir} $elm { break }
 #       lappend output "   Found $dir pin '$pin' with 'minimum_period' check"
-      lappend output [drc "Found $dir pin '$pin' with 'minimum_period' check"]
+      drc "Found $dir pin '$pin' with 'minimum_period' check"
     }
   }
-
+  return -code ok
 }
 
 # Search for pins with a function definition
@@ -629,14 +849,14 @@ proc ARC-9 {} {
   }
 
   foreach cell [lsort -dictionary [array names DB]] {
-    lappend output " Processing $cell"
+#     lappend output " Processing $cell"
     foreach elm $DB($cell) {
       foreach {pin dir function} $elm { break }
 #       lappend output "   Found $dir pin '$pin' with function '$function'"
-      lappend output [drc "Found $dir pin '$pin' with function '$function'"]
+      drc "Found $dir pin '$pin' with function '$function'"
     }
   }
-
+  return -code ok
 }
 
 # Search for pins that have multiple setup/recovery timing arcs
@@ -683,15 +903,15 @@ proc ARC-10 {} {
           foreach elm [lsort -dictionary -index 1 $ar($fpgacond)] {
             foreach {relatedpin pin dir timing_type timing_sense} $elm { break }
             if {$first} {
-              lappend output " Processing $cell"
+          #     lappend output " Processing $cell"
               set first 0
             }
             if {$fpgacond != {}} {
 #               lappend output "   Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"
-              lappend output [drc "Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"]
+              drc "Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"
             } else {
 #               lappend output "   Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"
-              lappend output [drc "Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"]
+              drc "Found $dir pin '$pin' with multiple setup/recovery checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"
             }
             incr count
           }
@@ -699,7 +919,7 @@ proc ARC-10 {} {
       }
     }
   }
-
+  return -code ok
 }
 
 # Search for pins that have multiple hold/removal timing arcs
@@ -746,15 +966,15 @@ proc ARC-11 {} {
           foreach elm [lsort -dictionary -index 1 $ar($fpgacond)] {
             foreach {relatedpin pin dir timing_type timing_sense} $elm { break }
             if {$first} {
-              lappend output " Processing $cell"
+          #     lappend output " Processing $cell"
               set first 0
             }
             if {$fpgacond != {}} {
 #               lappend output "   Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"
-              lappend output [drc "Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"]
+              drc "Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])\t($fpgacond)"
             } else {
 #               lappend output "   Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"
-              lappend output [drc "Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"]
+              drc "Found $dir pin '$pin' with multiple hold/removal checks ('$timing_type' with related pin '$relatedpin')($count/[llength $ar($fpgacond)])"
             }
             incr count
           }
@@ -762,7 +982,7 @@ proc ARC-11 {} {
       }
     }
   }
-
+  return -code ok
 }
 
 # Search for pins with a clock attribute
@@ -787,17 +1007,17 @@ proc ARC-12 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {pin dir clock} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with clock attribute '$clock'"
-        lappend output [drc "Found $dir pin '$pin' with clock attribute '$clock'"]
+        drc "Found $dir pin '$pin' with clock attribute '$clock'"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for internal pins
@@ -822,17 +1042,17 @@ proc ARC-13 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {pin dir clock} $elm { break }
 #         lappend output "   Found $dir pin '$pin'"
-        lappend output [drc "Found $dir pin '$pin'"]
+        drc "Found $dir pin '$pin'"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for internal pins with clock attribute
@@ -858,17 +1078,17 @@ proc ARC-14 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {pin dir clock} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with clock attribute"
-        lappend output [drc "Found $dir pin '$pin' with clock attribute"]
+        drc "Found $dir pin '$pin' with clock attribute"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for internal pins without clock attribute
@@ -894,17 +1114,17 @@ proc ARC-15 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {pin dir clock} $elm { break }
 #         lappend output "   Found $dir pin '$pin' without clock attribute"
-        lappend output [drc "Found $dir pin '$pin' without clock attribute"]
+        drc "Found $dir pin '$pin' without clock attribute"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for output pins with a clock attribute
@@ -930,17 +1150,17 @@ proc ARC-16 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {pin dir clock} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with clock attribute '$clock'"
-        lappend output [drc "Found $dir pin '$pin' with clock attribute '$clock'"]
+        drc "Found $dir pin '$pin' with clock attribute '$clock'"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with min_pulse_width checks and an associated setup/hold/recovery/removal check but without a clock attribute
@@ -980,17 +1200,17 @@ proc ARC-17 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with 'min_pulse_width' check and setup/hold check associated and no 'clock : true' attribute"
-        lappend output [drc "Found $dir pin '$pin' with 'min_pulse_width' check and setup/hold check associated and no 'clock : true' attribute"]
+        drc "Found $dir pin '$pin' with 'min_pulse_width' check and setup/hold check associated and no 'clock : true' attribute"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with an associated setup/hold/recovery/removal check and a clock attribute but without a min_pulse_width
@@ -1030,17 +1250,17 @@ proc ARC-18 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with a setup/hold check associated and a 'clock : true' attribute but without 'min_pulse_width' check"
-        lappend output [drc "Found $dir pin '$pin' with a setup/hold check associated and a 'clock : true' attribute but without 'min_pulse_width' check"]
+        drc "Found $dir pin '$pin' with a setup/hold check associated and a 'clock : true' attribute but without 'min_pulse_width' check"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with min_pulse_width checks and a clock attribute but without setup/hold/recovery/removal check associated
@@ -1080,17 +1300,17 @@ proc ARC-19 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with 'min_pulse_width' check and  a 'clock : true' attribute but without setup/hold check associated"
-        lappend output [drc "Found $dir pin '$pin' with 'min_pulse_width' check and  a 'clock : true' attribute but without setup/hold check associated"]
+        drc "Found $dir pin '$pin' with 'min_pulse_width' check and  a 'clock : true' attribute but without setup/hold check associated"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with a clock attribute but without related setup/hold/recovery/removal check
@@ -1127,17 +1347,17 @@ proc ARC-20 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with a 'clock : true' attribute but without setup/hold check associated"
-        lappend output [drc "Found $dir pin '$pin' with a 'clock : true' attribute but without setup/hold check associated"]
+        drc "Found $dir pin '$pin' with a 'clock : true' attribute but without setup/hold check associated"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with a related setup/hold/recovery/removal check but without a clock attribute
@@ -1174,17 +1394,17 @@ proc ARC-21 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with a setup/hold check associated but without a 'clock : true' attribute"
-        lappend output [drc "Found $dir pin '$pin' with a setup/hold check associated but without a 'clock : true' attribute"]
+        drc "Found $dir pin '$pin' with a setup/hold check associated but without a 'clock : true' attribute"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with an associated removal/recovery check but without a clock attribute
@@ -1219,17 +1439,17 @@ proc ARC-22 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with a removal/recovery check associated but without a 'clock : true' attribute"
-        lappend output [drc "Found $dir pin '$pin' with a removal/recovery check associated but without a 'clock : true' attribute"]
+        drc "Found $dir pin '$pin' with a removal/recovery check associated but without a 'clock : true' attribute"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with skew_{rising|falling} checks but without an intrinsic_{rise|fall} attribute
@@ -1270,17 +1490,17 @@ proc ARC-23 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir relatedpin type intrinsic} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and no 'intrinsic_{rise|fall}' attribute"
-        lappend output [drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and no 'intrinsic_{rise|fall}' attribute"]
+        drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and no 'intrinsic_{rise|fall}' attribute"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with intrinsic_{rise|fall} attribute and no skew_{rising|falling} check
@@ -1321,17 +1541,17 @@ proc ARC-24 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir relatedpin type intrinsic} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
-        lappend output [drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
+        drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with skew_{rising|falling} check and intrinsic_{rise|fall} attribute
@@ -1372,17 +1592,17 @@ proc ARC-25 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir relatedpin type intrinsic} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
-        lappend output [drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
+        drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with same-edge skew_{rising|falling} check
@@ -1423,17 +1643,17 @@ proc ARC-26 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir relatedpin type intrinsic} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
-        lappend output [drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
+        drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 # Search for pins with opposite-edge skew_{rising|falling} check
@@ -1474,17 +1694,17 @@ proc ARC-27 {} {
     }
 
     foreach cell [lsort -dictionary [array names DB]] {
-      lappend output " Processing $cell"
+  #     lappend output " Processing $cell"
       foreach elm $DB($cell) {
         foreach {id pin dir relatedpin type intrinsic} $elm { break }
 #         lappend output "   Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
-        lappend output [drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"]
+        drc "Found $dir pin '$pin' with '$type' check related to pin '$relatedpin' and 'intrinsic_${intrinsic}' attribute"
       }
     }
   } else {
-    lappend output " UNSUPPORTED CHECK BY CURRENT DATABASE VERSION ($dbVersion)"
+    lappend output " UNSUPPORTED CHECK '[info level 0]' BY CURRENT DATABASE VERSION ($dbVersion)"
   }
-
+  return -code ok
 }
 
 
@@ -1517,6 +1737,9 @@ if {$showChecks} {
 
 if {$ofilename != {}} {
   set channel [open $ofilename {w}]
+  puts $channel "# ----------------------------------------------------------------------\n"
+  puts $channel [format "# Created on %s with reportDRC (%s)\n" [clock format [clock seconds]] $SCRIPT_VERSION ]
+  puts $channel "# ----------------------------------------------------------------------\n"
 }
 
 # Iterate through each database
@@ -1558,17 +1781,48 @@ foreach filename $ifilename {
     foreach {rule enabled severity description} $elm { break }
     if {[info proc $rule] == $rule} {
       if {([lsearch $allrules $rule] != -1) && [isDRCEnabled $rule]} {
-        lappend output [format {
-   #######################################################################################################################
-   ##
-   ## %s [%s]
-   ##
-   #######################################################################################################################
-  } [getDRCDescription $rule] $rule]
+#         if {$oformat == {default}} {
+#           lappend output [format {
+#    #######################################################################################################################
+#    ##
+#    ## %s [%s]
+#    ##
+#    #######################################################################################################################
+#   } [getDRCDescription $rule] $rule]
+#         }
         eval $rule
       }
     }
   }
+
+  ########################################################################################
+  # Build table of all violations
+  ########################################################################################
+
+  set tbl [::tb::prettyTable]
+  $tbl header [list {Rule} {Severity} {Cell} {Pin} {Related Pin} {Message} {#} {Waived}]
+  set columns [list 0 1 2 3 4 5]
+  if {$showViolationNum} { lappend columns {6} }
+  if {$showWaivers} { lappend columns {7} }
+  $tbl configure -indent 2 -display_columns $columns
+#   if {$showViolationNum} {
+#     $tbl header [list {Rule} {Severity} {Cell} {Pin} {Related Pin} {Message} {#}]
+#   } else {
+#     $tbl header [list {Rule} {Severity} {Cell} {Pin} {Related Pin} {Message}]
+#   }
+  foreach el $csv {
+    foreach {rule severity cell pin relatedpin msg num isWaived} $el { break }
+    if {($isWaived == {Y}) && !$showWaivers} {
+      # Skip DRCs that have been waived
+      continue
+    }
+    $tbl addrow $el
+  }
+  if {!$showWaivers} {
+    # Remove the column from the table so that it does not appear inside CSV
+    $tbl delcolumns {7}
+  }
+#   puts [$tbl print]
 
   ########################################################################################
   # Print detailed report
@@ -1576,9 +1830,60 @@ foreach filename $ifilename {
 
   # Print report
   if {!$summaryOnly} {
-    foreach line $output {
-      puts $channel $line
+    switch $oformat {
+      table {
+        puts $channel [$tbl print]
+        # Print out the $output Tcl list
+        foreach line $output {
+          puts $channel $line
+        }
+      }
+      csv {
+        set content {}
+        $tbl export -format csv -return_var content
+        puts $channel $content
+        # Print out the $output Tcl list
+        foreach line $output {
+          puts $channel "# $line"
+        }
+      }
+      default {
+        set prev_rule {} ; set prev_cell {} ; set prev_pin {}
+        foreach el $csv {
+          foreach {rule severity cell pin relatedpin msg idx isWaived} $el { break }
+          if {($isWaived == {Y}) && !$showWaivers} {
+            # Skip DRCs that have been waived
+            continue
+          }
+          if {$isWaived == {Y}} {
+            set severity [format {%s (WAIVED)} $severity]
+          }
+          if {$rule != $prev_rule} {
+            puts $channel [format {
+   #######################################################################################################################
+   ##
+   ## %s [%s]
+   ##
+   #######################################################################################################################
+  } [getDRCDescription $rule] $rule]
+          }
+          if {$cell != $prev_cell} {
+            puts $channel " Processing $cell"
+          }
+          if {$showViolationNum} {
+            puts $channel [format {    %s: %s [%s#%s]} $severity $msg $rule $idx]
+          } else {
+            puts $channel [format {    %s: %s [%s]} $severity $msg $rule]
+          }
+          set prev_rule $rule ; set prev_cell $cell ; set prev_pin $pin
+        }
+        # Print out the $output Tcl list
+        foreach line $output {
+          puts $channel $line
+        }
+      }
     }
+    catch {$tbl destroy}
   }
 
   # Print summary
@@ -1590,7 +1895,7 @@ foreach filename $ifilename {
   ########################################################################################
   }]
   set tbl [::tb::prettyTable]
-  $tbl header [list {Rule} {Severity} {Messages} {Description}]
+  $tbl header [list {Rule} {Severity} {Messages} {Waived} {Description}]
   $tbl configure -indent 2
   foreach elm $DRCDefn {
     foreach {rule enabled severity description} $elm { break }
@@ -1598,12 +1903,13 @@ foreach filename $ifilename {
       if {[lsearch $allrules $rule] == -1} {
         continue
       }
-      $tbl addrow [list $rule $severity {Disabled} $description]
+      $tbl addrow [list $rule $severity {Disabled} {-} $description]
       continue
     } elseif {!$enabled} {
       continue
     }
     if {![info exists rules($rule)]} { set rules($rule) 0 }
+    if {![info exists waivers($rule)]} { set waivers($rule) 0 }
     set num $rules($rule)
     if {($num == 0) && ($VERBOSE == 0)} {
       continue
@@ -1611,10 +1917,32 @@ foreach filename $ifilename {
     if {[lsearch $allrules $rule] == -1} {
       continue
     }
-    $tbl addrow [list $rule $severity $num $description]
+    $tbl addrow [list $rule $severity $num $waivers($rule) $description]
   }
-  puts $channel [$tbl print]
-  puts $channel ""
+  if {$showWaivers} {
+    set columns [list 0 1 2 3 4]
+    $tbl configure -display_columns $columns
+  } else {
+    # Remove the column from the table so that it does not appear inside CSV
+    $tbl delcolumns {3}
+    # Since column '3' has been deleted, the previously column '4' is now '3'
+    set columns [list 0 1 2 3]
+    $tbl configure -display_columns $columns
+  }
+  switch $oformat {
+    table {
+      puts $channel [$tbl print]
+      puts $channel ""
+    }
+    csv {
+      puts $channel [$tbl export -format csv]
+      puts $channel ""
+    }
+    default {
+      puts $channel [$tbl print]
+      puts $channel ""
+    }
+  }
   catch {$tbl destroy}
 
   # Closing the SQLite3 database
