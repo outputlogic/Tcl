@@ -18,12 +18,13 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.06.30
+## Version:        2016.10.24
 ## Description:    Utility to convert Vivado report(s) into CSV file(s)
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.10.24 - Save table line number when processing default report
 ## 2016.06.30 - Added support for gzip-ed input files
 ## 2016.06.03 - Added proc rpt2tbl
 ##            - Added support for -return_tables (rptutils)
@@ -53,7 +54,7 @@ namespace eval ::tb::utils::rptutils {
   namespace export rptutils
   namespace export rpt2tbl
 
-  variable version {2016.06.30}
+  variable version {2016.10.24}
   variable channel {}
   variable tables {}
   array set params [list format {csv} extension {csv} writeheader 1 verbose 0 debug 0 ]
@@ -1174,6 +1175,7 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
     set SM {search_pattern}
   }
   set numtables 0
+  set indextable -1
   set print 1
   for {set index 0} {$index < [llength $report]} {incr index} {
     set line [lindex $report $index]
@@ -1208,6 +1210,8 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
             regsub -all {\+} $line { } line
             set columns [extract_columns2 [string trimright $line] {-}]
             set print 0
+            # Save the line starting the table
+            set indextable $index
           } else {
             # E.g: (report_clock_utlization)
             # +-------------------+----------------------+----------------------+----------------------+----------------------+
@@ -1233,6 +1237,8 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           regsub -all {\+} $line { } line
           set columns [extract_columns2 [string trimright $line] {-}]
           set print 0
+          # Save the line starting the table
+          set indextable $index
         } elseif {[regexp {^\s*\+--*\+--*\+} $line]
              && [regexp {^\s*\|.+\|.+\|} [lindex $report [expr $index +1]]]
              && [regexp {^\s*\+--*\+--*\+} [lindex $report [expr $index +2]]] } {
@@ -1246,6 +1252,8 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           regsub -all {\+} $line { } line
           set columns [extract_columns2 [string trimright $line] {-}]
           set print 0
+          # Save the line starting the table
+          set indextable $index
         } elseif {[regexp {^\-+\s+\-+\s+\-+} $line]} {
           # E.g:
           # WNS(ns)  TNS(ns)  TNS Failing Endpoints
@@ -1256,6 +1264,8 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
           set header [extract_row2 [lindex $report [expr $index -1]] $columns]
           set table [list $header ]
           set print 0
+          # Save the line starting the table
+          set indextable $index
         }
       }
       header_classic {
@@ -1349,7 +1359,7 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
         incr numtables
         print $channel ""
         print $channel "#####################################"
-        print $channel "# Table $numtables"
+        print $channel "# Table $numtables (line [expr $indextable +1])"
         print $channel "#####################################"
         set tbl [::tb::prettyTable]
         $tbl header [lindex $table 0]
@@ -1386,6 +1396,8 @@ proc ::tb::utils::rptutils::processDefaultReport {filein channel {maxnumtables -
         } else {
           set SM {search_table}
         }
+        # Reset variable
+        set indextable -1
       }
       end {
       }
