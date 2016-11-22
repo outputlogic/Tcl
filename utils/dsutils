@@ -1,0 +1,1126 @@
+#!/bin/sh
+# use -*-TCL-*- \
+exec tclsh "$0" -- ${1+"$@"}
+
+####################################################################################################
+# HEADER_BEGIN
+# COPYRIGHT NOTICE
+# Copyright 2001-2016 Xilinx Inc. All Rights Reserved.
+# http://www.xilinx.com/support
+# HEADER_END
+####################################################################################################
+
+# proc [file tail [info script]] {} " source [info script]; puts \" [info script] reloaded\" "
+# proc reload {} " uplevel #0 \[list source [info script]; puts \" [info script] reloaded\" \]"
+
+########################################################################################
+##
+## Company:        Xilinx, Inc.
+## Created by:     David Pefourque
+##
+## Version:        2016.11.22
+## Description:    Utility to report on Design Summary files
+##
+########################################################################################
+
+########################################################################################
+## 2016.11.22 - Initial release
+########################################################################################
+
+# Example of template:
+# --------------------
+#    #!/bin/sh
+#    # Run the dsutils from the users PATH \
+#    exec dsutils -template "$0" ${1+"$@"}
+#
+#    [script
+#      <Tcl Script>
+#    ]
+#
+#    This is:
+#      design.cells.primitive: [design.cells.primitive]
+#      design.cells.primitive: [design.cells.primitive name]
+#      design.cells.primitive: [design.cells.primitive description]
+#      design.cells.primitive: [design.cells.primitive value]
+#
+#    Table:
+#    ======
+#    [table -details -indent 1 design.cells.primitive clkinteraction.* clockpair.9.* checktiming.*]
+#
+#    [table -csv design.cells.primitive clkinteraction.* ]
+#
+#    [table congestion*]
+#
+#    [csv design.cells.primitive clkinteraction.* ]
+#
+#    [status design.cells.primitive clkinteraction.* ]
+#
+#    [status * ]
+
+# Example of configuration file:
+# ------------------------------
+#    # Threshold (PASS) for LUT
+#    set requirements(utilization.clb.lut.pct)         {<=70%}
+#    # Threshold (PASS) for FD
+#    set requirements(utilization.clb.ff.pct)          {<=50%}
+#    # Threshold (PASS) for LUTRAM+SRL
+#    set requirements(utilization.clb.lutmem.pct)      {<=25%}
+#    # Threshold (PASS) for CARRY8
+#    set requirements(utilization.clb.carry8.pct)      {<=25%}
+#    # Threshold (PASS) for MUXF7
+#    set requirements(utilization.clb.f7mux.pct)       {<=15%}
+#    # Threshold (PASS) for MUXF8
+#    set requirements(utilization.clb.f8mux.pct)       {<=7%}
+#    # Threshold (PASS) for HLUTNM
+#    set requirements(design.cells.hlutnm.pct)         {<=20%}
+#    # Threshold (PASS) for DSP48
+#    set requirements(utilization.dsp.pct)             {<=80%}
+#    # Threshold (PASS) for RAMB36/FIFO36
+#    set requirements(utilization.ram.tile.pct)        {<=80%}
+#    # Threshold (PASS) for BUFGCE* + BUFGCTRL
+#    set requirements(utilization.clk.all)             {<=24}
+#    # Threshold (PASS) for Control Sets
+#    set requirements(utilization.ctrlsets.uniq)       {<=10000}
+#    # Threshold (PASS) for TIMING-6
+#    set requirements(methodology.timing-6)            {=0}
+#    # Threshold (PASS) for TIMING-7
+#    set requirements(methodology.timing-7)            {=0}
+#    # Threshold (PASS) for TIMING-8
+#    set requirements(methodology.timing-8)            {=0}
+#    # Threshold (PASS) for TIMING-14
+#    set requirements(methodology.timing-14)           {=0}
+#    # Threshold (PASS) for TIMING-35
+#    set requirements(methodology.timing-35)           {=0}
+
+
+namespace eval ::tb {
+  namespace export -force dsutils
+}
+
+namespace eval ::tb::utils {
+  namespace export -force dsutils
+}
+
+namespace eval ::tb::utils::dsutils {
+  namespace export -force dsutils
+  variable metrics
+  variable requirements
+
+  variable version {2016.11.22}
+  array set params [list metrics {} header {} format {table} details 0 verbose 0 debug 0 ]
+  catch {unset metrics}
+  catch {unset requirements}
+}
+
+##-----------------------------------------------------------------------
+## Long help function
+##-----------------------------------------------------------------------
+proc ::tb::utils::dsutils::print_help {} {
+
+set help_message [format {
+#########################################################################
+#########################################################################
+##
+## dsutils
+##
+## Example:
+##    dsutils
+##
+## Description:
+##   Utility to report on Design Summary files
+##
+## Options:
+##
+##   -input             Input report file(s)
+##
+#########################################################################
+#########################################################################
+} ]
+
+  foreach line [split $help_message "\n"] {
+    regsub {##} $line {  } line
+    puts $line
+  }
+
+}
+
+##-----------------------------------------------------------------------
+## lshift unlshift
+##-----------------------------------------------------------------------
+## Stack functions
+##-----------------------------------------------------------------------
+proc ::tb::utils::dsutils::lshift { inputlist } {
+  upvar $inputlist argv
+  set arg  [lindex $argv 0]
+  set argv [lrange $argv 1 end]
+  return $arg
+}
+
+proc ::tb::utils::dsutils::unlshift { ls data } {
+   upvar 1 $ls LIST
+   set LIST [concat $data $LIST]
+}
+
+proc ::tb::utils::dsutils::dputs {args} {
+  variable params
+  if {$params(debug)} {
+    eval [concat puts $args]
+  }
+  return -code ok
+}
+
+proc ::tb::utils::dsutils::getAllMetrics {} {
+  variable metrics
+  set L [list]
+  foreach el [array names metrics *:def] {
+    regsub {:def} $el {} el
+    lappend L $el
+  }
+  return [lsort $L]
+}
+
+proc ::tb::utils::dsutils::script {args} {
+#   puts "<[info level]><$args><[list {*}$args ]><$args>"
+  uplevel 1 $args
+#   uplevel 2 [list {*}$args ; list ]
+#   uplevel 0 [list {*}$args ; list ]
+  return -code ok
+}
+
+interp alias {} table {} ::tb::utils::dsutils::process table
+interp alias {} csv {} ::tb::utils::dsutils::process csv
+interp alias {} status {} ::tb::utils::dsutils::process status
+
+proc ::tb::utils::dsutils::process {format args} {
+  variable params
+  variable metrics
+
+  set _details $params(details)
+  set oformat {table}
+  set indent 0
+  set error 0
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-in(d(e(nt?)?)?)?$} {
+        set indent [lshift args]
+      }
+      {^-de(t(a(i(ls?)?)?)?)?$} {
+        set params(details) 1
+      }
+      {^-csv?$} {
+        set oformat {csv}
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option."
+          incr error
+        } else {
+          # Move $name back to $args and stop parsing arguments
+          unlshift args $name
+          break
+#           puts " -E- option '$name' is not a valid option."
+#           incr error
+        }
+      }
+    }
+  }
+  if {$error} {
+    puts " -E- some error(s) happened. Cannot continue"
+    # Restore value for params(details)
+    set params(details) $_details
+    return -code ok
+  }
+
+  set tbl [::Table::Create]
+  $tbl indent $indent
+  if {$format == {status}} {
+    if {$params(details)} {
+      $tbl header [list {Id} {Criteria} {Requirement} {Actual} {Status} ]
+    } else {
+      $tbl header [list {Criteria} {Requirement} {Actual} {Status} ]
+    }
+  } else {
+    if {$params(details)} {
+      $tbl header $params(header)
+    } else {
+      $tbl header [lrange $params(header) 1 end]
+    }
+  }
+  set matches [list]
+  foreach pattern $args {
+    set L [lsearch -glob -all $params(metrics) $pattern]
+    if {$L == -1} {
+      continue
+    }
+    foreach el $L {
+      if {[lsearch $matches $el] == -1} {
+        lappend matches [lindex $params(metrics) $el]
+      }
+    }
+  }
+  foreach name $matches {
+    if {![info exists metrics(${name}:def)]} {
+      puts " -E- metric '$name' does not exist"
+      continue
+    }
+    if {$params(details)} {
+      set row [list $name $metrics(${name}:description) $metrics(${name}:val) ]
+    } else {
+      set row [list $metrics(${name}:description) $metrics(${name}:val) ]
+    }
+    if {$format == {status}} {
+      generateTableRow tbl $name
+    } else {
+      $tbl addrow $row
+    }
+  }
+  # Restore value for params(details)
+  set params(details) $_details
+  if {($format == {csv}) || ($oformat == {csv})} {
+    return [$tbl csv]
+  } else {
+    return [$tbl print]
+  }
+  return -code ok
+}
+
+proc ::tb::utils::dsutils::do {metric args} {
+  variable metrics
+  switch -regexp -- $args {
+    {^n(a(me?)?)?$} {
+      return [format {%s} $metric]
+    }
+    {^d(e(s(c(r(i(p(t(i(on?)?)?)?)?)?)?)?)?)?$} {
+      return [format {%s} $metrics(${metric}:description)]
+    }
+    {^$} -
+    {^v(a(l(ue?)?)?)?$} {
+      return [format {%s} $metrics(${metric}:val)]
+    }
+    default {
+      return {#ERROR}
+    }
+  }
+  return [format {<%s>} $metrics(${metric}:val)]
+}
+
+proc ::tb::utils::dsutils::addMetric {name {description {}}} {
+  variable metrics
+  variable params
+  if {[info exists metrics(${name}:def)]} {
+    if {$params(verbose)} { puts " -W- metric '$name' already exist. Skipping new definition" }
+    return -code ok
+  }
+  if {$description == {}} { set description $name }
+  set metrics(${name}:def) 1
+  set metrics(${name}:description) $description
+  set metrics(${name}:val) {}
+  return -code ok
+}
+
+proc ::tb::utils::dsutils::getMetric {name} {
+  variable metrics
+  if {![info exists metrics(${name}:def)]} {
+    puts " -E- metric '$name' does not exist"
+    return {}
+  }
+  return $metrics(${name}:val)
+}
+
+proc ::tb::utils::dsutils::setMetric {name value} {
+  variable metrics
+  if {![info exists metrics(${name}:def)]} {
+    puts " -E- metric '$name' does not exist"
+    return -code ok
+  }
+  set metrics(${name}:def) 2
+  set metrics(${name}:val) $value
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## getParam
+##-----------------------------------------------------------------------
+## Extract param from a list of rows
+##-----------------------------------------------------------------------
+proc ::tb::utils::dsutils::getParam {rows param} {
+  set value {}
+  foreach row $rows {
+    if {[lindex $row 0] == $param} {
+      set value [lindex $row 2]
+    }
+  }
+  return $value
+}
+
+proc ::tb::utils::dsutils::generateTableRow {&tbl name {description {}}} {
+  variable requirements
+  variable metrics
+  variable params
+  if {![info exists metrics(${name}:def)]} {
+    puts " -E- metric '$name' does not exist"
+    return -code ok
+  }
+  if {![info exists requirements(${name})]} {
+    if {$params(verbose)} {
+      puts " -W- requirement for '$name' does not exist"
+    }
+#     puts " -E- requirement for '$name' does not exist"
+    return -code ok
+  }
+  upvar 1 ${&tbl} tbl
+#   set status {PASS}
+  set status {OK}
+  set suffix {}
+  # Get requirement for metric $name
+  set requirement $requirements($name)
+  # Is the requirement expressed in %?
+  if {[regexp {%$} $requirement]} {
+    set suffix {%}
+    regsub {%$} $requirement {} requirement
+  }
+  if {[regexp {^([^0-9]+)([0-9].*)$} $requirement - mode m]} {
+    set requirement $m
+  } else {
+    set mode {<=}
+  }
+  if {$description == {}} {
+    set description $metrics(${name}:description)
+  }
+  set value [getMetric $name]
+  set row [list]
+  if {$params(details)} {
+    # Add metric name in detail mode
+    lappend row $name
+  }
+  lappend row $description
+  lappend row ${requirement}${suffix}
+  lappend row ${value}${suffix}
+  switch $mode {
+    "<=" {
+      if {$value > $requirement} {
+        set status {FAIL}
+      }
+    }
+    "<" {
+      if {$value >= $requirement} {
+        set status {FAIL}
+      }
+    }
+    ">=" {
+      if {$value < $requirement} {
+        set status {FAIL}
+      }
+    }
+    ">" {
+      if {$value <= $requirement} {
+        set status {FAIL}
+      }
+    }
+    "=" -
+    "==" {
+      if {$value != $requirement} {
+        set status {FAIL}
+      }
+    }
+    "!=" {
+      if {$value == $requirement} {
+        set status {FAIL}
+      }
+    }
+  }
+  if {$value == {n/a}} { set status {ERROR} }
+  lappend row $status
+  switch $status {
+    FAIL -
+    ERROR {
+      incr params(failed)
+    }
+  }
+  # Add row to table
+  $tbl addrow $row
+  return -code ok
+}
+
+##-----------------------------------------------------------------------
+## split-csv
+##-----------------------------------------------------------------------
+## Convert a CSV string to a Tcl list based on a field separator
+##-----------------------------------------------------------------------
+proc ::tb::utils::dsutils::split-csv { str {sepChar ,} } {
+  regsub -all {(\A\"|\"\Z)} $str \0 str
+  set str [string map [list $sepChar\"\"$sepChar $sepChar$sepChar] $str]
+  set str [string map [list $sepChar\"\"\" $sepChar\0\" \
+                            \"\"\"$sepChar \"\0$sepChar \
+                            $sepChar\"\"$sepChar $sepChar$sepChar \
+                           \"\" \" \
+                           \" \0 \
+                           ] $str]
+  set end 0
+  while {[regexp -indices -start $end {(\0)[^\0]*(\0)} $str \
+          -> start end]} {
+      set start [lindex $start 0]
+      set end   [lindex $end 0]
+      set range [string range $str $start $end]
+      set first [string first $sepChar $range]
+      if {$first >= 0} {
+          set str [string replace $str $start $end \
+              [string map [list $sepChar \1] $range]]
+      }
+      incr end
+  }
+  set str [string map [list $sepChar \0 \1 $sepChar \0 {} ] $str]
+  return [split $str \0]
+}
+
+##-----------------------------------------------------------------------
+## read-csv
+##-----------------------------------------------------------------------
+## Read CSV file and return a Table object
+##-----------------------------------------------------------------------
+proc ::tb::utils::dsutils::read-csv {filename {csvDelimiter ,}} {
+  variable params
+  if {![file exists $filename]} {
+    error " -E- file '$filename' does not exist"
+  }
+  set FH [open $filename]
+  set first 1
+  set count 0
+  set header [list]
+  set rows [list]
+  while {![eof $FH]} {
+    gets $FH line
+    # Skip comments and empty lines
+    if {[regexp {^\s*#} $line]} { continue }
+    if {[regexp {^\s*$} $line]} { continue }
+    if {$first} {
+      set header [split-csv $line $csvDelimiter]
+      set first 0
+    } else {
+      lappend rows [split-csv $line $csvDelimiter]
+      incr count
+    }
+  }
+  set params(header) $header
+  close $FH
+  if {$params(verbose)} {
+    puts " -I- Header: $header"
+    puts " -I- Number of imported row(s): $count"
+  }
+  return $rows
+}
+
+##-----------------------------------------------------------------------
+## dsutils
+##-----------------------------------------------------------------------
+## Main proc
+##-----------------------------------------------------------------------
+proc ::tb::utils::dsutils::dsutils {args} {
+
+  variable version
+  variable params
+  variable metrics
+  variable requirements
+
+  if {[lsearch $args {-summary}] != -1} {
+    # Integration with standalone script 'report_summary'
+    set args [lsearch -all -inline -not -exact $args {-summary}]
+    if {[catch { set result [exec report_summary {*}$args] } errorstring]} {
+      regsub {child process exited abnormally} $errorstring {} errorstring
+      puts $errorstring
+    } else {
+      puts $result
+    }
+    return -code ok
+  } elseif {[lsearch $args {-compare}] != -1} {
+    # Integration with standalone script 'compare_design_summary'
+    set args [lsearch -all -inline -not -exact $args {-compare}]
+    if {[catch { set result [exec compare_design_summary {*}$args] } errorstring]} {
+      regsub {child process exited abnormally} $errorstring {} errorstring
+      puts $errorstring
+    } else {
+      puts $result
+    }
+    return -code ok
+  }
+
+  set params(verbose) 0
+  set params(debug) 0
+  set params(format) {table}
+  set params(metrics) [list]
+  catch {unset metrics}
+  catch {unset requirements}
+  # Template filename
+  set tfilename {}
+  # Output filename
+  set ofilename {}
+  # Input filenames (metrics)
+  set ifilenames [list]
+  set metricname {*}
+  set configFilename {}
+  set channel {stdout}
+  set filemode {w}
+  # Default template (defined later)
+#   set template {[table *]}
+#   set template {[status *]}
+  set standalone 0
+  set error 0
+  set show_help 0
+  set show_long_help 0
+  if {([llength $args] == 0) || ($args == {-standalone})} {
+    incr show_help
+  }
+  #-------------------------------------------------------
+  # Process command line arguments
+  #-------------------------------------------------------
+  while {[llength $args]} {
+    set name [lshift args]
+    switch -regexp -- $name {
+      {^-input$} -
+      {^-i(n(p(ut?)?)?)?$} {
+        foreach pattern [lshift args] {
+          foreach file [glob -nocomplain $pattern] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
+              incr error
+              continue
+            }
+            lappend ifilenames [file normalize $file]
+          }
+        }
+        set ifilenames [lsort -unique $ifilenames]
+      }
+      {^-me(t(r(i(cs?)?)?)?)?$} {
+        set metricname [lshift args]
+      }
+      {^-te(m(p(l(a(te?)?)?)?)?)?$} {
+        set tfilename [lshift args]
+      }
+      {^-fi(le?)?$} -
+      {^-o(ut?)?$} {
+        set ofilename [lshift args]
+      }
+      {^-ap(p(e(nd?)?)?)?$} {
+        set filemode {a}
+      }
+      {^-de(t(a(i(ls?)?)?)?)?$} {
+        set params(details) 1
+      }
+      {^-co(n(f(i(g(_(f(i(le?)?)?)?)?)?)?)?)?$} {
+        set configFilename [lshift args]
+      }
+      {^-csv?$} {
+        set params(format) {csv}
+      }
+      {^-standalone$} {
+        # The script is run in standalone mode
+        set standalone 1
+      }
+      {^-v(e(r(b(o(se?)?)?)?)?)?$} {
+        set params(verbose) 1
+      }
+      {^-d(e(b(ug?)?)?)?$} {
+        set params(debug) 1
+      }
+      {^-h(e(lp?)?)?$} {
+        set show_help 1
+      }
+      {^-lo(n(g(h(e(lp?)?)?)?)?)?$} {
+        incr show_help
+        incr show_long_help
+      }
+      default {
+        if {[string match "-*" $name]} {
+          puts " -E- option '$name' is not a valid option"
+          incr error
+        } else {
+          foreach file [glob -nocomplain $name] {
+            if {![file exists $file]} {
+              puts " -E- File '$file' does not exist"
+              incr error
+              continue
+            }
+            lappend ifilenames [file normalize $file]
+          }
+          set ifilenames [lsort -unique $ifilenames]
+#           puts " -E- option '$name' is not a valid option"
+#           incr error
+        }
+      }
+    }
+  }
+
+  if {$show_help} {
+    # <-- HELP
+    set help [format {
+      Usage: tb::dsutils
+                  [<pattern>][-input <filename>][-input <pattern>]
+                  [-template <filename>]
+                  [-config_file <filename>]
+                  [-file <filename>]
+                  [-append]
+                  [-metrics <pattern>]
+                  [-csv]
+                  [-details]
+              +--------------------+
+                  [-summary]
+                  [-compare]
+              +--------------------+
+                  [-verbose|-v]
+                  [-help|-h]
+                  [-longhelp]
+
+      Description: Utility to report on Design Summary files
+
+      Version: %s
+
+        Use -file/-append for export to output file
+        Use -csv to generate CSV file format
+        Use -template to provide a template file (invalid with -csv/-metrics)
+        Use -config_file to provide a configuration file with metrics requirements
+        Use -details to show metric names inside report
+
+        Use -summary to call external script 'report_summary'
+        Use -compare to call external script 'compare_design_summary'
+
+      Example:
+         tb::dsutils -input summary.csv -file summary.out
+         tb::dsutils -input summary.csv -file summary.out -csv
+         tb::dsutils -input summary.csv -file summary.out -metrics {utilization.*}
+         tb::dsutils -input {summary*.csv} -file summary.out -config_file summary.cfg
+         tb::dsutils -input summary.csv -file summary.out -config_file summary.cfg -template summary.tpl
+              +--------------------+
+         tb::dsutils -input {summary*.csv} -format percent -reference 1 -file compare.csv -compare
+         tb::dsutils -input {summary*.csv} -expand_iterations -hide_steps 'synth opt' -summary
+
+    } $version ]
+    # HELP -->
+    if {$standalone} {
+      regsub -all {tb::} $help {} help
+      regsub -all {\{} $help {'} help
+      regsub -all {\}} $help {'} help
+    }
+    puts $help
+
+    if {$show_long_help} { print_help }
+
+    return -code ok
+  }
+
+  if {($configFilename != {}) && ![file exists $configFilename]} {
+    puts " -E- config file '$configFilename' does not exist"
+    incr error
+  }
+
+  if {($tfilename != {}) && ![file exists $tfilename]} {
+    puts " -E- template file '$tfilename' does not exist"
+    incr error
+  }
+
+  if {($tfilename != {}) && ($params(format) == {csv})} {
+    puts " -E- -template and -csv are mutually exclusive"
+    incr error
+  }
+
+  if {($tfilename != {}) && ($metricname != {*})} {
+    puts " -E- -template and -metrics are mutually exclusive"
+    incr error
+  }
+
+  if {$error} {
+    error "\n Some error(s) occured. Cannot continue.\n"
+#    exit -1
+  }
+
+  if {$configFilename != {}} {
+    # Read the user config file
+    puts " -I- reading user config file [file normalize $configFilename]"
+    source $configFilename
+  }
+
+  # Read template
+  if {$tfilename != {}} {
+    set FH [open $tfilename {r}]
+    set template [read $FH]
+    close $FH
+  }
+
+  if {$ofilename != {}} {
+    set channel [open $ofilename $filemode]
+    puts $channel "# ---------------------------------------------------------------------------------"
+    puts $channel [format {# Created on %s with dsutils (%s)} [clock format [clock seconds]] $::tb::utils::dsutils::version ]
+    puts $channel "# ---------------------------------------------------------------------------------\n"
+  }
+
+  if {$tfilename == {}} {
+    # If no template file is provided, then define the default template
+    if {$configFilename != {}} {
+      # If a config file is specified, then the default template should
+      # report the fail/pass requirement
+      if {$params(format) == {table}} {
+        set template {[status $metricname]}
+      } else {
+        set template {[status -csv $metricname]}
+      }
+    } else {
+      # Otherwise just report the metrics
+      if {$params(format) == {table}} {
+        set template {[table $metricname]}
+      } else {
+        set template {[csv $metricname]}
+      }
+    }
+  }
+
+  # Iterate through all the input design summary files
+  foreach file $ifilenames {
+
+    # Reset some internal structures
+    set params(metrics) [list]
+    catch {unset metrics}
+
+    if {$params(verbose)} {
+      puts " -I- Processing file $file"
+    }
+
+    if {[llength $ifilenames] != 1} {
+      puts $channel "\n##########################################################################"
+      puts $channel "# File $file"
+      puts $channel "##########################################################################"
+    }
+
+    set rows [read-csv $file]
+
+    set tbl [::Table::Create {Summary Metrics}]
+    $tbl indent 1
+    $tbl header $params(header)
+
+    foreach row $rows {
+#   puts "<$row>"
+      $tbl addrow $row
+      switch [llength $row] {
+        2 {
+          set metric [lindex $row 0]
+          set description {}
+          set value [lindex $row 1]
+        }
+        default {
+          set metric [lindex $row 0]
+          set description [lindex $row 1]
+          set value [lindex $row 2]
+        }
+      }
+      lappend params(metrics) $metric
+      addMetric $metric $description
+      setMetric $metric $value
+      interp alias {} $metric {} ::tb::utils::dsutils::do $metric
+    }
+    if {$params(debug)} {
+      puts [$tbl print]
+    }
+
+    set content $template
+#     set content [subst -novariables $content]
+#     set content [subst -nocommands $content]
+#     set content [subst -novariables -nocommands $content]
+    if {[catch { set content [subst -novariables $content] } errorstring]} {
+      puts $errorstring
+      set content $errorstring
+    }
+
+    # Remove interp aliases
+    foreach metric $params(metrics) {
+      catch { interp alias {} $metric {} }
+    }
+
+    puts $channel $content
+  }
+
+  if {$channel != {stdout}} {
+    puts " -I- Generated file [file normalize $ofilename]"
+    close $channel
+    set channel {}
+  }
+
+  return -code ok
+}
+
+namespace eval ::tb::utils {
+  namespace import -force ::tb::utils::dsutils::dsutils
+}
+
+namespace eval ::tb {
+  namespace import -force ::tb::utils::dsutils
+}
+
+
+
+###########################################################################
+##
+## Simple package to handle printing of tables
+##
+## %> set tbl [Table::Create {this is my title}]
+## %> $tbl header [list "name" "#Pins" "case_value" "user_case_value"]
+## %> $tbl addrow [list A/B/C/D/E/F 12 - -]
+## %> $tbl addrow [list A/B/C/D/E/F 24 1 -]
+## %> $tbl separator
+## %> $tbl addrow [list A/B/C/D/E/F 48 0 1]
+## %> $tbl indent 0
+## %> $tbl print
+## +-------------+-------+------------+-----------------+
+## | name        | #Pins | case_value | user_case_value |
+## +-------------+-------+------------+-----------------+
+## | A/B/C/D/E/F | 12    | -          | -               |
+## | A/B/C/D/E/F | 24    | 1          | -               |
+## +-------------+-------+------------+-----------------+
+## | A/B/C/D/E/F | 48    | 0          | 1               |
+## +-------------+-------+------------+-----------------+
+## %> $tbl indent 2
+## %> $tbl print
+##   +-------------+-------+------------+-----------------+
+##   | name        | #Pins | case_value | user_case_value |
+##   +-------------+-------+------------+-----------------+
+##   | A/B/C/D/E/F | 12    | -          | -               |
+##   | A/B/C/D/E/F | 24    | 1          | -               |
+##   +-------------+-------+------------+-----------------+
+##   | A/B/C/D/E/F | 48    | 0          | 1               |
+##   +-------------+-------+------------+-----------------+
+## %> $tbl sort {-index 1 -increasing} {-index 2 -dictionary}
+## %> $tbl print
+## %> $tbl destroy
+##
+###########################################################################
+
+# namespace eval Table { set n 0 }
+
+# Trick to silence the linter
+eval [list namespace eval ::Table {
+  set n 0
+} ]
+
+proc ::Table::Create { {title {}} } { #-- constructor
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  variable n
+  set instance [namespace current]::[incr n]
+  namespace eval $instance { variable tbl [list]; variable header [list]; variable indent 0; variable title {}; variable numrows 0 }
+  interp alias {} $instance {} ::Table::do $instance
+  # Set the title
+  $instance title $title
+  set instance
+}
+
+proc ::Table::do {self method args} { #-- Dispatcher with methods
+  # Summary :
+  # Argument Usage:
+  # Return Value:
+
+  upvar #0 ${self}::tbl tbl
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::numrows numrows
+  switch -- $method {
+      header {
+        set header [lindex $args 0]
+        return 0
+      }
+      addrow {
+        eval lappend tbl $args
+        incr numrows
+        return 0
+      }
+      separator {
+        eval lappend tbl {%%SEPARATOR%%}
+        return 0
+      }
+      title {
+        set ${self}::title [lindex $args 0]
+        return 0
+      }
+      indent {
+        set ${self}::indent $args
+        return 0
+      }
+      print {
+        eval ::Table::print $self
+      }
+      csv {
+        eval ::Table::printcsv $self
+      }
+      length {
+        return $numrows
+      }
+      sort {
+        # Each argument is a list of: <lsort arguments>
+        set command {}
+        while {[llength $args]} {
+          if {$command == {}} {
+            set command "lsort [[namespace parent]::lshift args] \$tbl"
+          } else {
+            set command "lsort [[namespace parent]::lshift args] \[$command\]"
+          }
+        }
+        if {[catch { set tbl [eval $command] } errorstring]} {
+          puts " -E- $errorstring"
+        } else {
+        }
+      }
+      reset {
+        set ${self}::tbl [list]
+        set ${self}::header [list]
+        set ${self}::indent 0
+        set ${self}::title {}
+        return 0
+      }
+      destroy {
+        set ${self}::tbl [list]
+        set ${self}::header [list]
+        set ${self}::indent 0
+        set ${self}::title {}
+        namespace delete $self
+        return 0
+      }
+      default {error "unknown method $method"}
+  }
+}
+
+proc ::Table::print {self} {
+   upvar #0 ${self}::tbl table
+   upvar #0 ${self}::header header
+   upvar #0 ${self}::indent indent
+   upvar #0 ${self}::title title
+   set maxs {}
+   foreach item $header {
+       lappend maxs [string length $item]
+   }
+   set numCols [llength $header]
+   foreach row $table {
+       if {$row eq {%%SEPARATOR%%}} { continue }
+       for {set j 0} {$j<$numCols} {incr j} {
+            set item [lindex $row $j]
+            set max [lindex $maxs $j]
+            if {[string length $item]>$max} {
+               lset maxs $j [string length $item]
+           }
+       }
+   }
+  set head " [string repeat " " [expr $indent * 4]]+"
+  foreach max $maxs {append head -[string repeat - $max]-+}
+
+  # Generate the title
+  if {$title ne {}} {
+    # The upper separator should something like +----...----+
+    append res " [string repeat " " [expr $indent * 4]]+[string repeat - [expr [string length [string trim $head]] -2]]+\n"
+    # Suports multi-lines title
+    foreach line [split $title \n] {
+      append res " [string repeat " " [expr $indent * 4]]| "
+      append res [format "%-[expr [string length [string trim $head]] -4]s" $line]
+      append res " |\n"
+    }
+  }
+
+  # Generate the table header
+  append res $head\n
+  # Generate the table rows
+  set first 1
+  set numsep 0
+  foreach row [concat [list $header] $table] {
+      if {$row eq {%%SEPARATOR%%}} {
+        incr numsep
+        if {$numsep == 1} { append res $head\n }
+        continue
+      } else {
+        set numsep 0
+      }
+      append res " [string repeat " " [expr $indent * 4]]|"
+      foreach item $row max $maxs {append res [format " %-${max}s |" $item]}
+      append res \n
+      if {$first} {
+        append res $head\n
+        set first 0
+        incr numsep
+      }
+  }
+  append res $head
+  set res
+}
+
+proc ::Table::printcsv {self args} {
+  upvar #0 ${self}::tbl table
+  upvar #0 ${self}::header header
+  upvar #0 ${self}::title title
+
+  array set defaults [list \
+      -delimiter {,} \
+    ]
+  array set options [array get defaults]
+  array set options $args
+  set sepChar $options(-delimiter)
+
+  set res {}
+  # Support for multi-lines title
+  set first 1
+  foreach line [split $title \n] {
+    if {$first} {
+      set first 0
+      append res "# title${sepChar}[::Table::list2csv [list $line] $sepChar]\n"
+    } else {
+      append res "#      ${sepChar}[::Table::list2csv [list $line] $sepChar]\n"
+    }
+  }
+  append res "[::Table::list2csv $header $sepChar]\n"
+  set count 0
+  set numsep 0
+  foreach row $table {
+    incr count
+    if {$row eq {%%SEPARATOR%%}} {
+      incr numsep
+      if {$numsep == 1} {
+        append res "# [::Table::list2csv {++++++++++++++++++++++++++++++++++++++++++++++++++} $sepChar]\n"
+      }
+      continue
+    } else {
+      set numsep 0
+    }
+    append res "[::Table::list2csv $row $sepChar]\n"
+  }
+  return $res
+}
+
+proc ::Table::list2csv { list {sepChar ,} } {
+  set out ""
+  set sep {}
+  foreach val $list {
+    if {[string match "*\[\"$sepChar\]*" $val]} {
+      append out $sep\"[string map [list \" \"\"] $val]\"
+    } else {
+      append out $sep\"$val\"
+    }
+    set sep $sepChar
+  }
+  return $out
+}
+
+
+
+##-----------------------------------------------------------------------
+## GLOBAL VARIABLES
+##-----------------------------------------------------------------------
+
+if {[file tail [info script]]!=[file tail $argv0]} {
+  # This file is sourced
+  set QUIET 1
+#   error " ERROR - this script is meant to be executed and not sourced.\n"
+  if {!$QUIET} { puts " INFO - sourcing [info script]" }
+#   ::tb::utils::dsutils::dsutils
+} else {
+  # Remove first '--' due to magic exec: exec tclsh "$0" -- ${1+"$@"}
+  set ::argv [lrange $::argv 1 end]
+  if {[catch {eval [concat ::tb::utils::dsutils::dsutils -standalone $argv]} errorstring]} {
+    puts $errorstring
+    exit 1
+  }
+  exit 0
+}

@@ -14,12 +14,15 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.10.08
+## Version:        2016.11.07
 ## Description:    Generate a design summary report
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.11.07 - Added better support for post-place utilization report
+##            - Added support for extracting small percent such as "<0.1"
+##            - Added new design/utilization metrics
 ## 2016.10.08 - Fixed command line options collisions
 ##            - Added new design/utilization metrics
 ## 2016.07.27 - Added support for -prefix (config_flow_automation)
@@ -78,154 +81,232 @@
 ########################################################################################
 
 # Example of report:
-#       +-----------------------------------------------------------------------------------------------------------------------------------------------------+
-#       | Design Summary                                                                                                                                      |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | Id                                           | Description                                                               | Value                    |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | tag.project                                  | Project                                                                   | myproject                |
-#       | tag.version                                  | Version                                                                   | myversion                |
-#       | tag.experiment                               | Experiment                                                                | myexperiment             |
-#       | tag.step                                     | Step                                                                      | route_design             |
-#       | tag.directive                                | Directive                                                                 | Explore                  |
-#       | tag.runtime                                  | Runtime                                                                   | 3612                     |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | vivado.version                               | Vivado Release                                                            | 2016.1                   |
-#       | vivado.build                                 | Vivado Build                                                              | 1496441                  |
-#       | vivado.plateform                             | Plateform                                                                 | unix                     |
-#       | vivado.os                                    | OS                                                                        | Linux                    |
-#       | vivado.osVersion                             | OS Version                                                                | 2.6.18-371.4.1.el5       |
-#       | vivado.top                                   | Top Module Name                                                           | fpga0_top                |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | design.part.architecture.name                | Architecture Name                                                         | Virtex UltraScale        |
-#       | design.part.architecture                     | Architecture                                                              | virtexu                  |
-#       | design.part                                  | Part                                                                      | xcvu190-flga2577-2-e-es2 |
-#       | design.part.speed.class                      | Speed class                                                               | -2                       |
-#       | design.part.speed.label                      | Speed label                                                               | ADVANCED                 |
-#       | design.part.speed.id                         | Speed ID                                                                  | 1.18                     |
-#       | design.part.speed.date                       | Speed date                                                                | 11-17-2015               |
-#       | design.cells.blackbox                        | Number of blackbox cells                                                  | 0                        |
-#       | design.cells.hier                            | Number of hierarchical cells                                              | 35016                    |
-#       | design.cells.primitive                       | Number of primitive cells                                                 | 1609440                  |
-#       | design.clocks                                | Number of clocks (all inclusive)                                          | 118                      |
-#       | design.clocks.primary                        | Number of primary clocks                                                  | 22                       |
-#       | design.clocks.usergenerated                  | Number of user generated clocks                                           | 0                        |
-#       | design.clocks.autoderived                    | Number of auto-derived clocks                                             | 96                       |
-#       | design.clocks.virtual                        | Number of virtual clocks                                                  | 0                        |
-#       | design.ips.list                              | List of IPs                                                               |                          |
-#       | design.ips                                   | Number of IPs                                                             | 0                        |
-#       | design.nets                                  | Number of nets                                                            | 1763658                  |
-#       | design.nets.slls                             | Number of SLL nets                                                        | 14680                    |
-#       | design.pblocks                               | Number of pblocks                                                         | 4                        |
-#       | design.ports                                 | Number of ports                                                           | 725                      |
-#       | design.slrs                                  | Number of SLRs                                                            | 3                        |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | utilization.clb.ff                           | CLB Registers                                                             | 894822                   |
-#       | utilization.clb.ff.pct                       | CLB Registers (%)                                                         | 41.65                    |
-#       | utilization.clb.lut                          | CLB LUTs                                                                  | 620063                   |
-#       | utilization.clb.lut.pct                      | CLB LUTs (%)                                                              | 57.72                    |
-#       | utilization.ctrlsets.lost                    | Registers Lost due to Control Sets                                        | n/a                      |
-#       | utilization.ctrlsets.uniq                    | Unique Control Sets                                                       | 30239                    |
-#       | utilization.dsp                              | DSPs                                                                      | 8                        |
-#       | utilization.dsp.pct                          | DSPs (%)                                                                  | 0.44                     |
-#       | utilization.io                               | IOs                                                                       | 116                      |
-#       | utilization.io.pct                           | IOs (%)                                                                   | 25.89                    |
-#       | utilization.ram.blockram                     | RAM (Blocks)                                                              | 4023                     |
-#       | utilization.ram.distributedram               | RAM (Distributed)                                                         | 3884                     |
-#       | utilization.ram.tile                         | Block RAM Tile                                                            | 2011.5                   |
-#       | utilization.ram.tile.pct                     | Block RAM Tile (%)                                                        | 53.21                    |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | timing.wns                                   | WNS                                                                       | 0.031                    |
-#       | timing.tns                                   | TNS                                                                       | 0.000                    |
-#       | timing.tnsFallingEp                          | TNS Failing Endpoints                                                     | 0                        |
-#       | timing.tnsTotalEp                            | TNS Total Endpoints                                                       | 2113723                  |
-#       | timing.wns.spclock                           | WNS Startpoint Clock                                                      | jmmcm_sys_clk122m88      |
-#       | timing.wns.epclock                           | WNS Endpoint Clock                                                        | jmmcm_sys_clk122m88      |
-#       | timing.whs                                   | WHS                                                                       | 0.030                    |
-#       | timing.ths                                   | THS                                                                       | 0.000                    |
-#       | timing.thsFallingEp                          | THS Failing Endpoints                                                     | 0                        |
-#       | timing.thsTotalEp                            | THS Total Endpoints                                                       | 2113723                  |
-#       | timing.whs.spclock                           | WHS Startpoint Clock                                                      | jmmcm_cbus_clk200m       |
-#       | timing.whs.epclock                           | WHS Endpoint Clock                                                        | jmmcm_cbus_clk200m       |
-#       | timing.wpws                                  | WPWS                                                                      | 0.019                    |
-#       | timing.tpws                                  | TPWS                                                                      | 0.000                    |
-#       | timing.tpwsFailingEp                         | TPWS Failing Endpoints                                                    | 0                        |
-#       | timing.tpwsTotalEp                           | TPWS Total Endpoints                                                      | 930207                   |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | clockpair.0.wns                              | Clock Pair (WNS)                                                          | 0.03                     |
-#       | clockpair.0.tns                              | Clock Pair (TNS)                                                          | 0.00                     |
-#       | clockpair.0.from                             | Clock Pair (From)                                                         | jmmcm_sys_clk122m88      |
-#       | clockpair.0.to                               | Clock Pair (To)                                                           | jmmcm_sys_clk122m88      |
-#       | clockpair.1.wns                              | Clock Pair (WNS)                                                          | 0.04                     |
-#       | clockpair.1.tns                              | Clock Pair (TNS)                                                          | 0.00                     |
-#       | clockpair.1.from                             | Clock Pair (From)                                                         | jmmcm_cbus_clk200m       |
-#       | clockpair.1.to                               | Clock Pair (To)                                                           | jmmcm_cbus_clk200m       |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | clkinteraction.timed                         | Clock Interaction (Timed)                                                 | 29                       |
-#       | clkinteraction.asynchronous_groups           | Clock Interaction (Asynchronous Groups)                                   | 105                      |
-#       | clkinteraction.partial_false_path            | Clock Interaction (Partial False Path)                                    | 1                        |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | checktiming.constant_clock                   | check_timing (constant_clock)                                             | 0                        |
-#       | checktiming.generated_clocks                 | check_timing (generated_clocks)                                           | 0                        |
-#       | checktiming.latch_loops                      | check_timing (latch_loops)                                                | 0                        |
-#       | checktiming.loops                            | check_timing (loops)                                                      | 0                        |
-#       | checktiming.multiple_clock                   | check_timing (multiple_clock)                                             | 0                        |
-#       | checktiming.no_clock                         | check_timing (no_clock)                                                   | 6775                     |
-#       | checktiming.no_input_delay                   | check_timing (no_input_delay)                                             | 42                       |
-#       | checktiming.no_output_delay                  | check_timing (no_output_delay)                                            | 41                       |
-#       | checktiming.partial_input_delay              | check_timing (partial_input_delay)                                        | 0                        |
-#       | checktiming.partial_output_delay             | check_timing (partial_output_delay)                                       | 0                        |
-#       | checktiming.pulse_width_clock                | check_timing (pulse_width_clock)                                          | 0                        |
-#       | checktiming.unconstrained_internal_endpoints | check_timing (unconstrained_internal_endpoints)                           | 18114                    |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | congestion.placer                            | Placer Congestion (N-S-E-W)                                               | 4-6-3-1                  |
-#       | congestion.router                            | Router Congestion (N-S-E-W)                                               | 1-0-0-u                  |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | route.nets                                   | Routable nets                                                             | 1286992                  |
-#       | route.routed                                 | Fully routed nets                                                         | 1286992                  |
-#       | route.fixed                                  | Nets with fixed routing                                                   | n/a                      |
-#       | route.errors                                 | Nets with routing errors                                                  | 0                        |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | cdc.cdc-1                                    | 1-bit unknown CDC circuitry (Critical)                                    | 13654                    |
-#       | cdc.cdc-2                                    | 1-bit synchronized with missing ASYNC_REG property (Warning)              | 4857                     |
-#       | cdc.cdc-3                                    | 1-bit synchronized with ASYNC_REG property (Info)                         | 2                        |
-#       | cdc.cdc-4                                    | Multi-bit unknown CDC circuitry (Critical)                                | 1                        |
-#       | cdc.cdc-5                                    | Multi-bit synchronized with missing ASYNC_REG property (Warning)          | 1445                     |
-#       | cdc.cdc-7                                    | Asynchronous reset unknown CDC circuitry (Critical)                       | 13477                    |
-#       | cdc.cdc-8                                    | Asynchronous reset synchronized with missing ASYNC_REG property (Warning) | 18                       |
-#       | cdc.cdc-9                                    | Asynchronous reset synchronized with ASYNC_REG property (Info)            | 2                        |
-#       | cdc.cdc-10                                   | Combinatorial logic detected before a synchronizer (Critical)             | 171                      |
-#       | cdc.cdc-11                                   | Fan-out from launch flop to destination clock (Critical)                  | 156                      |
-#       | cdc.cdc-12                                   | Multi-clock fan-in to synchronizer (Critical)                             | 358                      |
-#       | cdc.cdc-13                                   | 1-bit CDC path on a non-FD primitive (Critical)                           | 3370                     |
-#       | cdc.cdc-14                                   | Multi-bit CDC path on a non-FD primitive (Critical)                       | 160                      |
-#       | cdc.cdc-15                                   | Clock enable controlled CDC structure detected (Warning)                  | 37394                    |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | drc.ckld-1                                   | Clock Net has non-BUF driver and too many loads (Warning)                 | 1                        |
-#       | drc.timing-17                                | Non-clocked sequential cell (Advisory)                                    | 88                       |
-#       | drc.timing-20                                | Non-clocked latch (Warning)                                               | 2                        |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
-#       | constraints.create_clock                     | create_clock                                                              | 22                       |
-#       | constraints.create_generated_clock           | create_generated_clock                                                    | 0                        |
-#       | constraints.group_path                       | group_path                                                                | 2                        |
-#       | constraints.set_bus_skew                     | set_bus_skew                                                              | 0                        |
-#       | constraints.set_case_analysis                | set_case_analysis                                                         | 0                        |
-#       | constraints.set_clock_groups                 | set_clock_groups                                                          | 42                       |
-#       | constraints.set_clock_latency                | set_clock_latency                                                         | 0                        |
-#       | constraints.set_clock_sense                  | set_clock_sense                                                           | 0                        |
-#       | constraints.set_clock_uncertainty            | set_clock_uncertainty                                                     | 0                        |
-#       | constraints.set_data_check                   | set_data_check                                                            | 0                        |
-#       | constraints.set_disable_timing               | set_disable_timing                                                        | 0                        |
-#       | constraints.set_external_delay               | set_external_delay                                                        | 0                        |
-#       | constraints.set_false_path                   | set_false_path                                                            | 2                        |
-#       | constraints.set_input_delay                  | set_input_delay                                                           | 0                        |
-#       | constraints.set_input_jitter                 | set_input_jitter                                                          | 0                        |
-#       | constraints.set_max_delay                    | set_max_delay                                                             | 201                      |
-#       | constraints.set_min_delay                    | set_min_delay                                                             | 0                        |
-#       | constraints.set_multicycle_path              | set_multicycle_path                                                       | 0                        |
-#       | constraints.set_output_delay                 | set_output_delay                                                          | 0                        |
-#       | constraints.set_system_jitter                | set_system_jitter                                                         | 0                        |
-#       +----------------------------------------------+---------------------------------------------------------------------------+--------------------------+
+#       +-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+#       | Design Summary                                                                                                                                                                                                              |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | Id                                           | Description                                                        | Value                                                                                                   |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | tag.project                                  | Project                                                            | myproject                                                                                               |
+#       | tag.version                                  | Version                                                            | myversion                                                                                               |
+#       | tag.experiment                               | Experiment                                                         | myexperiment                                                                                            |
+#       | tag.step                                     | Step                                                               | route_design                                                                                            |
+#       | tag.directive                                | Directive                                                          | Explore                                                                                                 |
+#       | tag.runtime                                  | Runtime                                                            | 3612                                                                                                    |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | vivado.version                               | Vivado Release                                                     | 2016.1                                                                                                  |
+#       | vivado.build                                 | Vivado Build                                                       | 1496441                                                                                                 |
+#       | vivado.plateform                             | Plateform                                                          | unix                                                                                                    |
+#       | vivado.os                                    | OS                                                                 | Linux                                                                                                   |
+#       | vivado.osVersion                             | OS Version                                                         | 2.6.18-371.4.1.el5                                                                                      |
+#       | vivado.top                                   | Top Module Name                                                    | fpga0_top                                                                                               |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | design.part.architecture.name                | Architecture Name                                                  | Virtex UltraScale                                                                                       |
+#       | design.part.architecture                     | Architecture                                                       | virtexu                                                                                                 |
+#       | design.part                                  | Part                                                               | xcvu160-flgb2104-2-e-es2                                                                                |
+#       | design.part.speed.class                      | Speed class                                                        | -2                                                                                                      |
+#       | design.part.speed.label                      | Speed label                                                        | ADVANCED                                                                                                |
+#       | design.part.speed.id                         | Speed ID                                                           | 1.18                                                                                                    |
+#       | design.part.speed.date                       | Speed date                                                         | 11-17-2015                                                                                              |
+#       | design.cells.blackbox                        | Number of blackbox cells                                           | 0                                                                                                       |
+#       | design.cells.hier                            | Number of hierarchical cells                                       | 46486                                                                                                   |
+#       | design.cells.primitive                       | Number of primitive cells                                          | 837075                                                                                                  |
+#       | design.cells.hlutnm                          | Number of HLUTNM cells                                             | 33740                                                                                                   |
+#       | design.cells.hlutnm.pct                      | Number of HLUTNM cells (%)                                         | 8.67                                                                                                    |
+#       | design.cells.ratiofdlut                      | Ratio of registers over LUTs                                       | 1.00                                                                                                    |
+#       | design.clocks                                | Number of clocks (all inclusive)                                   | 86                                                                                                      |
+#       | design.clocks.primary                        | Number of primary clocks                                           | 14                                                                                                      |
+#       | design.clocks.usergenerated                  | Number of user generated clocks                                    | 1                                                                                                       |
+#       | design.clocks.autoderived                    | Number of auto-derived clocks                                      | 71                                                                                                      |
+#       | design.clocks.virtual                        | Number of virtual clocks                                           | 0                                                                                                       |
+#       | design.ips.list                              | List of IPs                                                        |                                                                                                         |
+#       | design.ips                                   | Number of IPs                                                      | 0                                                                                                       |
+#       | design.nets                                  | Number of nets                                                     | 1000680                                                                                                 |
+#       | design.nets.slls                             | Number of SLL nets                                                 | 7077                                                                                                    |
+#       | design.pblocks                               | Number of pblocks                                                  | 0                                                                                                       |
+#       | design.ports                                 | Number of ports                                                    | 587                                                                                                     |
+#       | design.slrs                                  | Number of SLRs                                                     | 3                                                                                                       |
+#       | design.slls                                  | SLLs Connections                                                   | SLR1->SLR2 {16 9 7 85 879 486 824 649 510 30 0 0} SLR0->SLR1 {1 4 12 164 317 943 1286 657 247 48 30 16} |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | utilization.clb.ff                           | CLB Registers                                                      | 387901                                                                                                  |
+#       | utilization.clb.ff.pct                       | CLB Registers (%)                                                  | 20.94                                                                                                   |
+#       | utilization.clb.lut                          | CLB LUTs                                                           | 366488                                                                                                  |
+#       | utilization.clb.lut.pct                      | CLB LUTs (%)                                                       | 39.56                                                                                                   |
+#       | utilization.clb.lutmem                       | LUT as Memory                                                      | 2543                                                                                                    |
+#       | utilization.clb.lutmem.pct                   | LUT as Memory (%)                                                  | 5.11                                                                                                    |
+#       | utilization.clb.carry8                       | CARRY8                                                             | 2882                                                                                                    |
+#       | utilization.clb.carry8.pct                   | CARRY8 (%)                                                         | 2.29                                                                                                    |
+#       | utilization.clb.f7mux                        | F7 Muxes                                                           | 1621                                                                                                    |
+#       | utilization.clb.f7mux.pct                    | F7 Muxes (%)                                                       | 0.32                                                                                                    |
+#       | utilization.clb.f8mux                        | F8 Muxes                                                           | 42                                                                                                      |
+#       | utilization.clb.f8mux.pct                    | F8 Muxes (%)                                                       | 0.02                                                                                                    |
+#       | utilization.clb.f9mux                        | F9 Muxes                                                           | 0                                                                                                       |
+#       | utilization.clb.f9mux.pct                    | F9 Muxes (%)                                                       | 0.00                                                                                                    |
+#       | utilization.ctrlsets.lost                    | Registers Lost due to Control Sets                                 | n/a                                                                                                     |
+#       | utilization.ctrlsets.uniq                    | Unique Control Sets                                                | 14096                                                                                                   |
+#       | utilization.clk.bufgce                       | BUFGCE Buffers                                                     | 22                                                                                                      |
+#       | utilization.clk.bufgce.pct                   | BUFGCE Buffers (%)                                                 | 3.27                                                                                                    |
+#       | utilization.clk.bufgcediv                    | BUFGCE_DIV Buffers                                                 | 0                                                                                                       |
+#       | utilization.clk.bufgcediv.pct                | BUFGCE_DIV Buffers (%)                                             | 0.00                                                                                                    |
+#       | utilization.clk.bufggt                       | BUFG_GT Buffers                                                    | 21                                                                                                      |
+#       | utilization.clk.bufggt.pct                   | BUFG_GT Buffers (%)                                                | 3.13                                                                                                    |
+#       | utilization.clk.bufgps                       | BUFG_PS Buffers                                                    | n/a                                                                                                     |
+#       | utilization.clk.bufgps.pct                   | BUFG_PS Buffers (%)                                                | n/a                                                                                                     |
+#       | utilization.clk.bufgctrl                     | BUFGCTRL Buffers                                                   | 0                                                                                                       |
+#       | utilization.clk.bufgctrl.pct                 | BUFGCTRL Buffers (%)                                               | 0.00                                                                                                    |
+#       | utilization.dsp                              | DSPs                                                               | 0                                                                                                       |
+#       | utilization.dsp.pct                          | DSPs (%)                                                           | 0.00                                                                                                    |
+#       | utilization.io                               | IOs                                                                | 501                                                                                                     |
+#       | utilization.io.pct                           | IOs (%)                                                            | 71.98                                                                                                   |
+#       | utilization.ram.blockram                     | RAM (Blocks)                                                       | 1639                                                                                                    |
+#       | utilization.ram.distributedram               | RAM (Distributed)                                                  | 2914                                                                                                    |
+#       | utilization.ram.tile                         | Block RAM Tile                                                     | 1732.5                                                                                                  |
+#       | utilization.ram.tile.pct                     | Block RAM Tile (%)                                                 | 52.88                                                                                                   |
+#       | utilization.clb.lutmem                       | LUT as Memory                                                      | 11240                                                                                                   |
+#       | utilization.clk.all                          | BUFG* Buffers                                                      | 22                                                                                                      |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | timing.wns                                   | WNS                                                                | -0.019                                                                                                  |
+#       | timing.tns                                   | TNS                                                                | -0.019                                                                                                  |
+#       | timing.tnsFallingEp                          | TNS Failing Endpoints                                              | 1                                                                                                       |
+#       | timing.tnsTotalEp                            | TNS Total Endpoints                                                | 933907                                                                                                  |
+#       | timing.wns.spclock                           | WNS Startpoint Clock                                               | clk_out1_System_Clock                                                                                   |
+#       | timing.wns.epclock                           | WNS Endpoint Clock                                                 | clk_out1_System_Clock                                                                                   |
+#       | timing.wns.primitives                        | WNS Path                                                           | FIFO36E2 FDRE                                                                                           |
+#       | timing.whs                                   | WHS                                                                | 0.030                                                                                                   |
+#       | timing.ths                                   | THS                                                                | 0.000                                                                                                   |
+#       | timing.thsFallingEp                          | THS Failing Endpoints                                              | 0                                                                                                       |
+#       | timing.thsTotalEp                            | THS Total Endpoints                                                | 931559                                                                                                  |
+#       | timing.whs.spclock                           | WHS Startpoint Clock                                               | P3RxClk                                                                                                 |
+#       | timing.whs.epclock                           | WHS Endpoint Clock                                                 | P3RxClk                                                                                                 |
+#       | timing.whs.primitives                        | WHS Path                                                           | FDRE LUT4 FDRE                                                                                          |
+#       | timing.wpws                                  | WPWS                                                               | 0.000                                                                                                   |
+#       | timing.tpws                                  | TPWS                                                               | 0.000                                                                                                   |
+#       | timing.tpwsFailingEp                         | TPWS Failing Endpoints                                             | 0                                                                                                       |
+#       | timing.tpwsTotalEp                           | TPWS Total Endpoints                                               | 411984                                                                                                  |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | clockpair.0.wns                              | Clock Pair (WNS)                                                   | -0.02                                                                                                   |
+#       | clockpair.0.tns                              | Clock Pair (TNS)                                                   | -0.02                                                                                                   |
+#       | clockpair.0.from                             | Clock Pair (From)                                                  | clk_out1_System_Clock                                                                                   |
+#       | clockpair.0.to                               | Clock Pair (To)                                                    | clk_out1_System_Clock                                                                                   |
+#       | clockpair.1.wns                              | Clock Pair (WNS)                                                   | 0.01                                                                                                    |
+#       | clockpair.1.tns                              | Clock Pair (TNS)                                                   | 0.00                                                                                                    |
+#       | clockpair.1.from                             | Clock Pair (From)                                                  | clk_out2_System_Clock                                                                                   |
+#       | clockpair.1.to                               | Clock Pair (To)                                                    | clk_out2_System_Clock                                                                                   |
+#       | clockpair.2.wns                              | Clock Pair (WNS)                                                   | 0.02                                                                                                    |
+#       | clockpair.2.tns                              | Clock Pair (TNS)                                                   | 0.00                                                                                                    |
+#       | clockpair.2.from                             | Clock Pair (From)                                                  | P4RxClk                                                                                                 |
+#       | clockpair.2.to                               | Clock Pair (To)                                                    | P4RxClk                                                                                                 |
+#       | clockpair.3.wns                              | Clock Pair (WNS)                                                   | 0.03                                                                                                    |
+#       | clockpair.3.tns                              | Clock Pair (TNS)                                                   | 0.00                                                                                                    |
+#       | clockpair.3.from                             | Clock Pair (From)                                                  | P2RxClk                                                                                                 |
+#       | clockpair.3.to                               | Clock Pair (To)                                                    | P2RxClk                                                                                                 |
+#       | clockpair.4.wns                              | Clock Pair (WNS)                                                   | 0.04                                                                                                    |
+#       | clockpair.4.tns                              | Clock Pair (TNS)                                                   | 0.00                                                                                                    |
+#       | clockpair.4.from                             | Clock Pair (From)                                                  | P3RxClk                                                                                                 |
+#       | clockpair.4.to                               | Clock Pair (To)                                                    | P3RxClk                                                                                                 |
+#       | clockpair.5.wns                              | Clock Pair (WNS)                                                   | 0.08                                                                                                    |
+#       | clockpair.5.tns                              | Clock Pair (TNS)                                                   | 0.00                                                                                                    |
+#       | clockpair.5.from                             | Clock Pair (From)                                                  | P1RxClk                                                                                                 |
+#       | clockpair.5.to                               | Clock Pair (To)                                                    | P1RxClk                                                                                                 |
+#       | clockpair.6.wns                              | Clock Pair (WNS)                                                   | 0.20                                                                                                    |
+#       | clockpair.6.tns                              | Clock Pair (TNS)                                                   | 0.00                                                                                                    |
+#       | clockpair.6.from                             | Clock Pair (From)                                                  | mmcm_clkout0_3                                                                                          |
+#       | clockpair.6.to                               | Clock Pair (To)                                                    | mmcm_clkout0_3                                                                                          |
+#       | clockpair.7.wns                              | Clock Pair (WNS)                                                   | 0.30                                                                                                    |
+#       | clockpair.7.tns                              | Clock Pair (TNS)                                                   | 0.00                                                                                                    |
+#       | clockpair.7.from                             | Clock Pair (From)                                                  | clk_out1_Timestamp_Clock                                                                                |
+#       | clockpair.7.to                               | Clock Pair (To)                                                    | clk_out1_Timestamp_Clock                                                                                |
+#       | clockpair.8.wns                              | Clock Pair (WNS)                                                   | 0.37                                                                                                    |
+#       | clockpair.8.tns                              | Clock Pair (TNS)                                                   | 0.00                                                                                                    |
+#       | clockpair.8.from                             | Clock Pair (From)                                                  | clk_out2_Timestamp_Clock                                                                                |
+#       | clockpair.8.to                               | Clock Pair (To)                                                    | clk_out2_Timestamp_Clock                                                                                |
+#       | clockpair.9.wns                              | Clock Pair (WNS)                                                   | 0.41                                                                                                    |
+#       | clockpair.9.tns                              | Clock Pair (TNS)                                                   | 0.00                                                                                                    |
+#       | clockpair.9.from                             | Clock Pair (From)                                                  | mmcm_clkout0_1                                                                                          |
+#       | clockpair.9.to                               | Clock Pair (To)                                                    | mmcm_clkout0_1                                                                                          |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | clkinteraction.timed                         | Clock Interaction (Timed)                                          | 13                                                                                                      |
+#       | clkinteraction.timed_unsafe                  | Clock Interaction (Timed (unsafe))                                 | 1                                                                                                       |
+#       | clkinteraction.asynchronous_groups           | Clock Interaction (Asynchronous Groups)                            | 2                                                                                                       |
+#       | clkinteraction.false_path                    | Clock Interaction (False Path)                                     | 96                                                                                                      |
+#       | clkinteraction.partial_false_path            | Clock Interaction (Partial False Path)                             | 16                                                                                                      |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | checktiming.constant_clock                   | check_timing (constant_clock)                                      | 0                                                                                                       |
+#       | checktiming.generated_clocks                 | check_timing (generated_clocks)                                    | 0                                                                                                       |
+#       | checktiming.latch_loops                      | check_timing (latch_loops)                                         | 0                                                                                                       |
+#       | checktiming.loops                            | check_timing (loops)                                               | 0                                                                                                       |
+#       | checktiming.multiple_clock                   | check_timing (multiple_clock)                                      | 0                                                                                                       |
+#       | checktiming.no_clock                         | check_timing (no_clock)                                            | 0                                                                                                       |
+#       | checktiming.no_input_delay                   | check_timing (no_input_delay)                                      | 15                                                                                                      |
+#       | checktiming.no_output_delay                  | check_timing (no_output_delay)                                     | 19                                                                                                      |
+#       | checktiming.partial_input_delay              | check_timing (partial_input_delay)                                 | 0                                                                                                       |
+#       | checktiming.partial_output_delay             | check_timing (partial_output_delay)                                | 0                                                                                                       |
+#       | checktiming.pulse_width_clock                | check_timing (pulse_width_clock)                                   | 0                                                                                                       |
+#       | checktiming.unconstrained_internal_endpoints | check_timing (unconstrained_internal_endpoints)                    | 0                                                                                                       |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | congestion.placer                            | Placer Congestion (N-S-E-W)                                        | 5-5-4-3                                                                                                 |
+#       | congestion.router                            | Router Congestion (N-S-E-W)                                        | 0-1-0-0                                                                                                 |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | route.nets                                   | Routable nets                                                      | 708670                                                                                                  |
+#       | route.routed                                 | Fully routed nets                                                  | 708670                                                                                                  |
+#       | route.fixed                                  | Nets with fixed routing                                            | n/a                                                                                                     |
+#       | route.errors                                 | Nets with routing errors                                           | 0                                                                                                       |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | cdc.cdc-1                                    | 1-bit unknown CDC circuitry (Critical)                             | 7611                                                                                                    |
+#       | cdc.cdc-2                                    | 1-bit synchronized with missing ASYNC_REG property (Warning)       | 16                                                                                                      |
+#       | cdc.cdc-3                                    | 1-bit synchronized with ASYNC_REG property (Info)                  | 488                                                                                                     |
+#       | cdc.cdc-4                                    | Multi-bit unknown CDC circuitry (Critical)                         | 6                                                                                                       |
+#       | cdc.cdc-5                                    | Multi-bit synchronized with missing ASYNC_REG property (Warning)   | 25                                                                                                      |
+#       | cdc.cdc-6                                    | Multi-bit synchronized with ASYNC_REG property (Warning)           | 50                                                                                                      |
+#       | cdc.cdc-7                                    | Asynchronous reset unknown CDC circuitry (Critical)                | 5265                                                                                                    |
+#       | cdc.cdc-9                                    | Asynchronous reset synchronized with ASYNC_REG property (Info)     | 56                                                                                                      |
+#       | cdc.cdc-10                                   | Combinatorial logic detected before a synchronizer (Critical)      | 11                                                                                                      |
+#       | cdc.cdc-11                                   | Fan-out from launch flop to destination clock (Critical)           | 4                                                                                                       |
+#       | cdc.cdc-12                                   | Multi-clock fan-in to synchronizer (Critical)                      | 123                                                                                                     |
+#       | cdc.cdc-13                                   | 1-bit CDC path on a non-FD primitive (Critical)                    | 1908                                                                                                    |
+#       | cdc.cdc-14                                   | Multi-bit CDC path on a non-FD primitive (Critical)                | 630                                                                                                     |
+#       | cdc.cdc-15                                   | Clock enable controlled CDC structure detected (Warning)           | 26095                                                                                                   |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | methodology.clkc-21                          | MMCME3 with ZHOLD does not drive sequential IO (Advisory)          | 1                                                                                                       |
+#       | methodology.clkc-23                          | MMCME3 with ZHOLD drives sequential IO not with CLKOUT0 (Advisory) | 1                                                                                                       |
+#       | methodology.clkc-39                          | Substitute PLLE3 for MMCME3 check (Advisory)                       | 3                                                                                                       |
+#       | methodology.pdrc-190                         | Suboptimally placed synchronized register chain (Warning)          | 1                                                                                                       |
+#       | methodology.timing-9                         | Unknown CDC Logic (Warning)                                        | 1                                                                                                       |
+#       | methodology.timing-10                        | Missing property on synchronizer (Warning)                         | 1                                                                                                       |
+#       | methodology.timing-11                        | Inappropriate max delay with datapath only option (Warning)        | 16                                                                                                      |
+#       | methodology.timing-18                        | Missing input or output delay (Warning)                            | 54                                                                                                      |
+#       | methodology.timing-24                        | Overridden Max delay datapath only (Warning)                       | 110                                                                                                     |
+#       | methodology.timing-28                        | Auto-derived clock referenced by a timing constraint (Warning)     | 210                                                                                                     |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | drc.bivc-1                                   | Bank IO standard Vcc  - IOBank:72 (Error)                          | 4                                                                                                       |
+#       | drc.pdcn-1569                                | LUT equation term check (Warning)                                  | 272                                                                                                     |
+#       | drc.pdrc-203                                 | BITSLICE0 not available during BISC (Critical)                     | 3                                                                                                       |
+#       | drc.reqp-1857                                | RAMB18E2_writefirst_collision_advisory (Advisory)                  | 18                                                                                                      |
+#       | drc.reqp-1858                                | RAMB36E2_writefirst_collision_advisory (Advisory)                  | 535                                                                                                     |
+#       | drc.reqp-1935                                | RAMB36E2_nochange_collision_advisory (Advisory)                    | 128                                                                                                     |
+#       | drc.rpbf-3                                   | IO port buffering is incomplete (Warning)                          | 4                                                                                                       |
+#       | drc.rtstat-10                                | No routable loads (Warning)                                        | 1                                                                                                       |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
+#       | constraints.create_clock                     | create_clock                                                       | 14                                                                                                      |
+#       | constraints.create_generated_clock           | create_generated_clock                                             | 1                                                                                                       |
+#       | constraints.group_path                       | group_path                                                         | 0                                                                                                       |
+#       | constraints.set_bus_skew                     | set_bus_skew                                                       | 0                                                                                                       |
+#       | constraints.set_case_analysis                | set_case_analysis                                                  | 15                                                                                                      |
+#       | constraints.set_clock_groups                 | set_clock_groups                                                   | 1                                                                                                       |
+#       | constraints.set_clock_latency                | set_clock_latency                                                  | 0                                                                                                       |
+#       | constraints.set_clock_sense                  | set_clock_sense                                                    | 0                                                                                                       |
+#       | constraints.set_clock_uncertainty            | set_clock_uncertainty                                              | 0                                                                                                       |
+#       | constraints.set_data_check                   | set_data_check                                                     | 0                                                                                                       |
+#       | constraints.set_disable_timing               | set_disable_timing                                                 | 8                                                                                                       |
+#       | constraints.set_external_delay               | set_external_delay                                                 | 0                                                                                                       |
+#       | constraints.set_false_path                   | set_false_path                                                     | 480                                                                                                     |
+#       | constraints.set_input_delay                  | set_input_delay                                                    | 0                                                                                                       |
+#       | constraints.set_input_jitter                 | set_input_jitter                                                   | 2                                                                                                       |
+#       | constraints.set_max_delay                    | set_max_delay                                                      | 170                                                                                                     |
+#       | constraints.set_min_delay                    | set_min_delay                                                      | 0                                                                                                       |
+#       | constraints.set_multicycle_path              | set_multicycle_path                                                | 10                                                                                                      |
+#       | constraints.set_output_delay                 | set_output_delay                                                   | 0                                                                                                       |
+#       | constraints.set_system_jitter                | set_system_jitter                                                  | 0                                                                                                       |
+#       +----------------------------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------+
 
 # Example of code for .Xilinx/Vivado/init.tcl
 #   # Design summary (support for project mode)
@@ -250,7 +331,7 @@ namespace eval ::tb::utils {
 namespace eval ::tb::utils::report_design_summary {
   namespace export -force report_design_summary
   namespace export -force config_flow_automation
-  variable version {2016.10.08}
+  variable version {2016.11.07}
   variable params
   variable output {}
   variable reports
@@ -628,6 +709,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
      tb::report_design_summary -file myreport.rpt -details -all
      tb::report_design_summary -timing -csv -return_string -hide_missing
      tb::report_design_summary -vivadolog ./vivado.log -all -csv -file summary.csv
+     tb::report_design_summary -vivadolog ./vivado.log -all -csv -file summary.csv -save_reports postroute -step route_design -verbose
 } ]
     # HELP -->
     return -code ok
@@ -924,8 +1006,12 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       }
       set hlutnm [filter -quiet $luts {SOFT_HLUTNM != "" || HLUTNM != ""}]
       setMetric {design.cells.hlutnm} [llength $hlutnm]
-      # Calculate the percent of HLUTNM over the total number of LUT
-      setMetric {design.cells.hlutnm.pct} [format {%.2f} [expr {100.0 * double([llength $hlutnm]) / double([llength $luts])}] ]
+      if {[llength $luts]} {
+        # Calculate the percent of HLUTNM over the total number of LUT
+        setMetric {design.cells.hlutnm.pct} [format {%.2f} [expr {100.0 * double([llength $hlutnm]) / double([llength $luts])}] ]
+      } else {
+        setMetric {design.cells.hlutnm.pct} {n/a}
+      }
 
       set clocks [get_clocks -quiet]
       setMetric {design.clocks}               [llength $clocks]
@@ -956,22 +1042,24 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
 #       set report [split [getReport {report_timing_summary} {-quiet -no_detailed_paths -no_check_timing -no_header}] \n]
       set report [split [getReport {report_timing_summary} {-quiet -no_detailed_paths -no_check_timing}] \n]
 
-      addMetric {timing.wns}           {WNS}
-      addMetric {timing.tns}           {TNS}
-      addMetric {timing.tnsFallingEp}  {TNS Failing Endpoints}
-      addMetric {timing.tnsTotalEp}    {TNS Total Endpoints}
-      addMetric {timing.whs}           {WHS}
-      addMetric {timing.ths}           {THS}
-      addMetric {timing.thsFallingEp}  {THS Failing Endpoints}
-      addMetric {timing.thsTotalEp}    {THS Total Endpoints}
-      addMetric {timing.wpws}          {WPWS}
-      addMetric {timing.tpws}          {TPWS}
-      addMetric {timing.tpwsFailingEp} {TPWS Failing Endpoints}
-      addMetric {timing.tpwsTotalEp}   {TPWS Total Endpoints}
-      addMetric {timing.wns.spclock}   {WNS Startpoint Clock}
-      addMetric {timing.wns.epclock}   {WNS Endpoint Clock}
-      addMetric {timing.whs.spclock}   {WHS Startpoint Clock}
-      addMetric {timing.whs.epclock}   {WHS Endpoint Clock}
+      addMetric {timing.wns}             {WNS}
+      addMetric {timing.wns.path}        {WNS Path}
+      addMetric {timing.tns}             {TNS}
+      addMetric {timing.tnsFallingEp}    {TNS Failing Endpoints}
+      addMetric {timing.tnsTotalEp}      {TNS Total Endpoints}
+      addMetric {timing.whs}             {WHS}
+      addMetric {timing.whs.path}        {WHS Path}
+      addMetric {timing.ths}             {THS}
+      addMetric {timing.thsFallingEp}    {THS Failing Endpoints}
+      addMetric {timing.thsTotalEp}      {THS Total Endpoints}
+      addMetric {timing.wpws}            {WPWS}
+      addMetric {timing.tpws}            {TPWS}
+      addMetric {timing.tpwsFailingEp}   {TPWS Failing Endpoints}
+      addMetric {timing.tpwsTotalEp}     {TPWS Total Endpoints}
+      addMetric {timing.wns.spclock}     {WNS Startpoint Clock}
+      addMetric {timing.wns.epclock}     {WNS Endpoint Clock}
+      addMetric {timing.whs.spclock}     {WHS Startpoint Clock}
+      addMetric {timing.whs.epclock}     {WHS Endpoint Clock}
 
       # Extract metrics
       if {[set i [lsearch -regexp $report {Design Timing Summary}]] != -1} {
@@ -998,6 +1086,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       set epClk [get_property -quiet ENDPOINT_CLOCK $wnsPath]
       setMetric {timing.wns.spclock}   $spClk
       setMetric {timing.wns.epclock}   $epClk
+      setMetric {timing.wns.path}  [get_property -quiet REF_NAME [get_cells -quiet -of $wnsPath]]
       setReport {WNS} [report_timing -quiet -of $wnsPath -return_string]
 
       # Saving startpoint/endpoint clock(s) of WHS path
@@ -1006,6 +1095,7 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       set epClk [get_property -quiet ENDPOINT_CLOCK $whsPath]
       setMetric {timing.whs.spclock}   $spClk
       setMetric {timing.whs.epclock}   $epClk
+      setMetric {timing.whs.path}  [get_property -quiet REF_NAME [get_cells -quiet -of $whsPath]]
       setReport {WHS} [report_timing -quiet -of $whsPath -return_string]
     }
 
@@ -1311,6 +1401,20 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       # Get report
       set report [getReport {report_utilization} {-quiet}]
 
+      # +----------------------------+--------+-------+-----------+-------+
+      # |          Site Type         |  Used  | Fixed | Available | Util% |
+      # +----------------------------+--------+-------+-----------+-------+
+      # | Slice LUTs                 | 396856 |     0 |   1221600 | 32.49 |
+      # |   LUT as Logic             | 394919 |     0 |   1221600 | 32.33 |
+      # |   LUT as Memory            |   1937 |     0 |    344800 |  0.56 |
+      # |     LUT as Distributed RAM |     64 |     0 |           |       |
+      # |     LUT as Shift Register  |   1873 |     0 |           |       |
+      # | Slice Registers            | 224301 |     2 |   2443200 |  9.18 |
+      # |   Register as Flip Flop    | 200897 |     0 |   2443200 |  8.22 |
+      # |   Register as Latch        |  23404 |     2 |   2443200 |  0.96 |
+      # | F7 Muxes                   |   6787 |     0 |    610800 |  1.11 |
+      # | F8 Muxes                   |   2619 |     0 |    305400 |  0.86 |
+      # +----------------------------+--------+-------+-----------+-------+
       # +----------------------------+------+-------+-----------+-------+
       # |          Site Type         | Used | Fixed | Available | Util% |
       # +----------------------------+------+-------+-----------+-------+
@@ -1361,23 +1465,45 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {utilization.clb.f8mux.pct}  {F8 Muxes (%)}
       addMetric {utilization.clb.f9mux}      {F9 Muxes}
       addMetric {utilization.clb.f9mux.pct}  {F9 Muxes (%)}
+      addMetric {utilization.clb.lutmem}     {LUT as Memory}
+      addMetric {utilization.clb.lutmem.pct} {LUT as Memory (%)}
       addMetric {utilization.ctrlsets.uniq}  {Unique Control Sets}
       addMetric {utilization.ctrlsets.lost}  {Registers Lost due to Control Sets}
 
-      extractMetric {report_utilization} {utilization.clb.lut}         {\|\s+CLB LUTs[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                      {n/a}
-      extractMetric {report_utilization} {utilization.clb.lut.pct}     {\|\s+CLB LUTs[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
-      extractMetric {report_utilization} {utilization.clb.ff}          {\|\s+CLB Registers[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                 {n/a}
-      extractMetric {report_utilization} {utilization.clb.ff.pct}      {\|\s+CLB Registers[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
-      extractMetric {report_utilization} {utilization.clb.carry8}      {\|\s+CARRY8[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                        {n/a}
-      extractMetric {report_utilization} {utilization.clb.carry8.pct}  {\|\s+CARRY8[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}        {n/a}
-      extractMetric {report_utilization} {utilization.clb.f7mux}       {\|\s+F7 Muxes[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                      {n/a}
-      extractMetric {report_utilization} {utilization.clb.f7mux.pct}   {\|\s+F7 Muxes[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
-      extractMetric {report_utilization} {utilization.clb.f8mux}       {\|\s+F8 Muxes[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                      {n/a}
-      extractMetric {report_utilization} {utilization.clb.f8mux.pct}   {\|\s+F8 Muxes[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
-      extractMetric {report_utilization} {utilization.clb.f9mux}       {\|\s+F9 Muxes[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                      {n/a}
-      extractMetric {report_utilization} {utilization.clb.f9mux.pct}   {\|\s+F9 Muxes[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
-      extractMetric {report_utilization} {utilization.ctrlsets.uniq}   {\|\s+Unique Control Sets[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                           {n/a}
-      extractMetric {report_utilization} {utilization.ctrlsets.lost}   {\|\s+.+registers lost to control set restriction[^\|]*\s*\|\s+([0-9\.]+).+\s+\|}                 {n/a}
+#       extractMetric {report_utilization} {utilization.clb.lut}         {\|\s+CLB LUTs[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                      {n/a}
+#       extractMetric {report_utilization} {utilization.clb.lut.pct}     {\|\s+CLB LUTs[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
+#       extractMetric {report_utilization} {utilization.clb.ff}          {\|\s+CLB Registers[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                 {n/a}
+#       extractMetric {report_utilization} {utilization.clb.ff.pct}      {\|\s+CLB Registers[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
+
+      extractMetric2 {report_utilization} {utilization.clb.lut}        -p [list {\|\s+CLB LUTs[^\|]*\s*\|\s+([0-9\.]+)\s+\|} \
+                                                                                {\|\s+SLICE LUTs[^\|]*\s*\|\s+([0-9\.]+)\s+\|} \
+                                                                          ] \
+                                                                       -default {n/a}
+      extractMetric2 {report_utilization} {utilization.clb.lut.pct}    -p [list {\|\s+CLB LUTs[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} \
+                                                                                {\|\s+SLICE LUTs[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} \
+                                                                          ] \
+                                                                       -default {n/a}
+      extractMetric2 {report_utilization} {utilization.clb.ff}         -p [list {\|\s+CLB Registers[^\|]*\s*\|\s+([0-9\.]+)\s+\|} \
+                                                                                {\|\s+SLICE Registers[^\|]*\s*\|\s+([0-9\.]+)\s+\|} \
+                                                                          ] \
+                                                                       -default {n/a}
+      extractMetric2 {report_utilization} {utilization.clb.ff.pct}     -p [list {\|\s+CLB Registers[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+<?([0-9\.]+)\s+\|} \
+                                                                                {\|\s+SLICE Registers[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+<?([0-9\.]+)\s+\|} \
+                                                                          ] \
+                                                                       -default {n/a}
+
+      extractMetric {report_utilization} {utilization.clb.carry8}      {\|\s+CARRY8[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                          {n/a}
+      extractMetric {report_utilization} {utilization.clb.carry8.pct}  {\|\s+CARRY8[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+<?([0-9\.]+)\s+\|}        {n/a}
+      extractMetric {report_utilization} {utilization.clb.f7mux}       {\|\s+F7 Muxes[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                        {n/a}
+      extractMetric {report_utilization} {utilization.clb.f7mux.pct}   {\|\s+F7 Muxes[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+<?([0-9\.]+)\s+\|}      {n/a}
+      extractMetric {report_utilization} {utilization.clb.f8mux}       {\|\s+F8 Muxes[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                        {n/a}
+      extractMetric {report_utilization} {utilization.clb.f8mux.pct}   {\|\s+F8 Muxes[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+<?([0-9\.]+)\s+\|}      {n/a}
+      extractMetric {report_utilization} {utilization.clb.f9mux}       {\|\s+F9 Muxes[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                        {n/a}
+      extractMetric {report_utilization} {utilization.clb.f9mux.pct}   {\|\s+F9 Muxes[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+<?([0-9\.]+)\s+\|}      {n/a}
+      extractMetric {report_utilization} {utilization.clb.lutmem}      {\|\s+LUT as Memory[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                   {n/a}
+      extractMetric {report_utilization} {utilization.clb.lutmem.pct}  {\|\s+LUT as Memory[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+<?([0-9\.]+)\s+\|} {n/a}
+      extractMetric {report_utilization} {utilization.ctrlsets.uniq}   {\|\s+Unique Control Sets[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                             {n/a}
+      extractMetric {report_utilization} {utilization.ctrlsets.lost}   {\|\s+.+registers lost to control set restriction[^\|]*\s*\|\s+([0-9\.]+).+\s+\|}                   {n/a}
 
       # +-------------------+------+-------+-----------+-------+
       # |     Site Type     | Used | Fixed | Available | Util% |
@@ -1391,8 +1517,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {utilization.ram.tile}     {Block RAM Tile}
       addMetric {utilization.ram.tile.pct} {Block RAM Tile (%)}
 
-      extractMetric {report_utilization} {utilization.ram.tile}     {\|\s+Block RAM Tile[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                 {n/a}
-      extractMetric {report_utilization} {utilization.ram.tile.pct} {\|\s+Block RAM Tile[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
+      extractMetric {report_utilization} {utilization.ram.tile}     {\|\s+Block RAM Tile[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                   {n/a}
+      extractMetric {report_utilization} {utilization.ram.tile.pct} {\|\s+Block RAM Tile[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+<?([0-9\.]+)\s+\|} {n/a}
 
       # +-----------+------+-------+-----------+-------+
       # | Site Type | Used | Fixed | Available | Util% |
@@ -1403,8 +1529,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {utilization.dsp}     {DSPs}
       addMetric {utilization.dsp.pct} {DSPs (%)}
 
-      extractMetric {report_utilization} {utilization.dsp}     {\|\s+DSPs[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                 {n/a}
-      extractMetric {report_utilization} {utilization.dsp.pct} {\|\s+DSPs[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
+      extractMetric {report_utilization} {utilization.dsp}     {\|\s+DSPs[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                   {n/a}
+      extractMetric {report_utilization} {utilization.dsp.pct} {\|\s+DSPs[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+<?([0-9\.]+)\s+\|} {n/a}
 
       # +----------------------+------+-------+-----------+-------+
       # |       Site Type      | Used | Fixed | Available | Util% |
@@ -1427,22 +1553,29 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {utilization.clk.bufgps.pct}       {BUFG_PS Buffers (%)}
       addMetric {utilization.clk.bufgctrl}         {BUFGCTRL Buffers}
       addMetric {utilization.clk.bufgctrl.pct}     {BUFGCTRL Buffers (%)}
+      addMetric {utilization.clk.all}              {BUFG* Buffers}
 
-      extractMetric {report_utilization} {utilization.clk.bufgce}        {\|\s+BUFGCE[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                {n/a}
-#       extractMetric {report_utilization} {utilization.clk.bufgce.pct}    {\|\s+BUFGCE[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
-      extractMetric {report_utilization} {utilization.clk.bufgce.pct}    {\|\s+BUFGCE[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+([0-9\.]+)\s+\|}      {n/a}
-      extractMetric {report_utilization} {utilization.clk.bufgcediv}     {\|\s+BUFGCE_DIV[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                            {n/a}
-#       extractMetric {report_utilization} {utilization.clk.bufgcediv.pct} {\|\s+BUFGCE_DIV[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}  {n/a}
-      extractMetric {report_utilization} {utilization.clk.bufgcediv.pct} {\|\s+BUFGCE_DIV[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+([0-9\.]+)\s+\|}  {n/a}
-      extractMetric {report_utilization} {utilization.clk.bufggt}        {\|\s+BUFG_GT[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                               {n/a}
-#       extractMetric {report_utilization} {utilization.clk.bufggt.pct}    {\|\s+BUFG_GT[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}     {n/a}
-      extractMetric {report_utilization} {utilization.clk.bufggt.pct}    {\|\s+BUFG_GT[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+([0-9\.]+)\s+\|}     {n/a}
-      extractMetric {report_utilization} {utilization.clk.bufgps}        {\|\s+BUFG_PS[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                               {n/a}
-#       extractMetric {report_utilization} {utilization.clk.bufgps.pct}    {\|\s+BUFG_PS[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|}     {n/a}
-      extractMetric {report_utilization} {utilization.clk.bufgps.pct}    {\|\s+BUFG_PS[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+([0-9\.]+)\s+\|}     {n/a}
-      extractMetric {report_utilization} {utilization.clk.bufgctrl}      {\|\s+BUFGCTRL\*?[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                           {n/a}
-#       extractMetric {report_utilization} {utilization.clk.bufgctrl.pct}  {\|\s+BUFGCTRL\*?[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
-      extractMetric {report_utilization} {utilization.clk.bufgctrl.pct}  {\|\s+BUFGCTRL\*?[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgce}        {\|\s+BUFGCE[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                  {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgce.pct}    {\|\s+BUFGCE[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+<?([0-9\.]+)\s+\|}      {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgcediv}     {\|\s+BUFGCE_DIV[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                              {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgcediv.pct} {\|\s+BUFGCE_DIV[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+<?([0-9\.]+)\s+\|}  {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufggt}        {\|\s+BUFG_GT[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                 {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufggt.pct}    {\|\s+BUFG_GT[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+<?([0-9\.]+)\s+\|}     {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgps}        {\|\s+BUFG_PS[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                 {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgps.pct}    {\|\s+BUFG_PS[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+<?([0-9\.]+)\s+\|}     {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgctrl}      {\|\s+BUFGCTRL\*?[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                             {n/a}
+      extractMetric {report_utilization} {utilization.clk.bufgctrl.pct}  {\|\s+BUFGCTRL\*?[^\|]*\s*\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+[^\|]+\s+\|\s+<?([0-9\.]+)\s+\|} {n/a}
+
+      if {[catch {
+        # Cumulative metric (w/o BUFG_GT/BUFG_PS)
+        set num 0
+        if {[set val [getMetric {utilization.clk.bufgce}]] != {n/a}} { incr num $val}
+        if {[set val [getMetric {utilization.clk.bufgcediv}]] != {n/a}} { incr num $val}
+        if {[set val [getMetric {utilization.clk.bufgctrl}]] != {n/a}} { incr num $val}
+        setMetric {utilization.clk.all} $num
+      }]} {
+        setMetric {utilization.clk.all} {n/a}
+      }
 
       # +------------------+------+-------+-----------+-------+
       # |     Site Type    | Used | Fixed | Available | Util% |
@@ -1471,8 +1604,8 @@ proc ::tb::utils::report_design_summary::report_design_summary {args} {
       addMetric {utilization.io}     {IOs}
       addMetric {utilization.io.pct} {IOs (%)}
 
-      extractMetric {report_utilization} {utilization.io}     {\|\s+Bonded IOB[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                 {n/a}
-      extractMetric {report_utilization} {utilization.io.pct} {\|\s+Bonded IOB[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+([0-9\.]+)\s+\|} {n/a}
+      extractMetric {report_utilization} {utilization.io}     {\|\s+Bonded IOB[^\|]*\s*\|\s+([0-9\.]+)\s+\|}                                                   {n/a}
+      extractMetric {report_utilization} {utilization.io.pct} {\|\s+Bonded IOB[^\|]*\s*\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+[0-9\.]+\s+\|\s+<?([0-9\.]+)\s+\|} {n/a}
 
     }
 
@@ -2128,6 +2261,50 @@ proc ::tb::utils::report_design_summary::extractMetric {report name exp {notfoun
     dputs " -D- failed to extract metric '$name' from report"
   }
   if {!$save} {
+    return $value
+  }
+  setMetric $name $value
+#   dputs " -D- setting: $name = $value"
+#   set metrics(${name}:def) 2
+#   set metrics(${name}:val) $value
+  return -code ok
+}
+
+# Supports a list of patterns
+proc ::tb::utils::report_design_summary::extractMetric2 {report name args} {
+  variable metrics
+  variable reports
+  array set defaults [list \
+      -default {n/a} \
+      -save 1 \
+      -p [list] \
+    ]
+  array set options [array get defaults]
+  array set options $args
+  if {![info exists metrics(${name}:def)]} {
+    puts " -E- metric '$name' does not exist"
+    return -code ok
+  }
+  if {[info exists reports($report)]} {
+    dputs " -D- found report '$report'"
+    set report $reports($report)
+  } else {
+    dputs " -D- inline report"
+  }
+  # Default value if not found in any pattern
+  set value $options(-default)
+  set found 0
+  foreach exp $options(-p) {
+    if {![regexp -nocase -- $exp $report -- value]} {
+    } else {
+      set found 1
+      break
+    }
+  }
+  if {!$found} {
+    dputs " -D- failed to extract metric '$name' from report"
+  }
+  if {!$options(-save)} {
     return $value
   }
   setMetric $name $value
@@ -3111,6 +3288,7 @@ proc ::tb::utils::report_design_summary::orderedMetrics {} {
           design.cells.hier \
           design.cells.primitive \
           design.cells.hlutnm \
+          design.cells.hlutnm.pct \
           design.cells.ratiofdlut \
           design.clocks \
           design.clocks.primary \
@@ -3129,6 +3307,8 @@ proc ::tb::utils::report_design_summary::orderedMetrics {} {
           utilization.clb.ff.pct \
           utilization.clb.lut \
           utilization.clb.lut.pct \
+          utilization.clb.lutmem \
+          utilization.clb.lutmem.pct \
           utilization.clb.carry8 \
           utilization.clb.carry8.pct \
           utilization.clb.f7mux \
@@ -3164,12 +3344,14 @@ proc ::tb::utils::report_design_summary::orderedMetrics {} {
           timing.tnsTotalEp \
           timing.wns.spclock \
           timing.wns.epclock \
+          timing.wns.path \
           timing.whs \
           timing.ths \
           timing.thsFallingEp \
           timing.thsTotalEp \
           timing.whs.spclock \
           timing.whs.epclock \
+          timing.whs.path \
           timing.wpws \
           timing.tpws \
           timing.tpwsFailingEp \

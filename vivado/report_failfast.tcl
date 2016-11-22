@@ -11,12 +11,17 @@
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.11.01
+## Version:        2016.11.18
 ## Description:    Generate a fast fail/pass report
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.11.18 - Metrics that are not specified in the config file are not calculated
+##              and reported
+## 2016.11.16 - Added support for -config_file/-export_config
+##            - Added support for configurable metrics thresholds for pass/fail
+##              through configuration file
 ## 2016.11.01 - Added few more utilization metrics inside CSV
 ## 2016.10.31 - Fix minor formating issue with some percent metrics
 ##            - Added missing metrics inside CSV
@@ -71,16 +76,18 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_failfast {
   namespace export -force report_failfast
-  variable version {2016.11.01}
+  variable version {2016.11.18}
   variable SPRITE_INTEGRATION 0
   variable params
   variable output {}
   variable metrics
+  variable requirements
   variable data
   array set params [list failed 0 format {table} verbose 0 debug 0]
   array set reports [list]
   array set metrics [list]
   catch {unset data}
+  catch {unset requirements}
 }
 
 proc ::tb::utils::report_failfast::lshift {inputlist} {
@@ -94,6 +101,7 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
   variable SPRITE_INTEGRATION
   variable metrics
   variable params
+  variable requirements
   variable output
   variable data
   set params(failed) 0
@@ -102,6 +110,7 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
   set params(format) {table}
   set filename {}
   set filemode {w}
+  set userConfigFilename {}
   set time [clock seconds]
   set date [clock format $time]
   set error 0
@@ -117,6 +126,26 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
       }
       {^-ap(p(e(nd?)?)?)?$} {
         set filemode {a}
+      }
+      {^-co(n(f(i(g(_(f(i(le?)?)?)?)?)?)?)?)?$} {
+        set userConfigFilename [lshift args]
+      }
+      {^-ex(p(o(r(t(_(c(o(n(f(ig?)?)?)?)?)?)?)?)?)?)?$} {
+        set file [lshift args]
+        if {$file == {}} {
+          puts " -E- no output file provided"
+          return -code ok
+        }
+        set FH [open $file {w}]
+        set content [info body ::tb::utils::report_failfast::config]
+        puts $FH "# Configuration file for report_failfast"
+        puts $FH "# Use report_failfast -config_file <filename> to read the configuration file back in\n"
+        foreach line [lrange [split $content \n] 2 end-2] {
+          puts $FH [string trimleft $line]
+        }
+        close $FH
+        puts " -I- Exported configuration to [file normalize $file]"
+        return -code ok
       }
       {^-v(e(r(b(o(se?)?)?)?)?)?$} {
         set params(verbose) 1
@@ -141,27 +170,49 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
 
   if {$help} {
     puts [format {
-  Usage: report_failfast
+  Usage: tb::report_failfast
               [-file <filename>]
               [-append]
+              [-config_file <filename>]
+              [-export_config <filename>]
               [-verbose|-v]
               [-help|-h]
 
   Description: Generate a fast fail/pass report
 
+    Use -export_config to export configuration file
+    Use -config_file to import user configuration file
+
   Example:
-     report_failfast
-     report_failfast -file failfast.rpt
+     tb::report_failfast
+     tb::report_failfast -file failfast.rpt
+     tb::report_failfast -export_config report_failfast.cfg
+     tb::report_failfast -config_file report_failfast.cfg -file failfast.rpt
 } ]
     # HELP -->
     return -code ok
+  }
+
+  if {($userConfigFilename != {}) && ![file exists $userConfigFilename]} {
+    puts " -E- config file '$userConfigFilename' does not exist"
+    incr error
   }
 
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
   }
 
+  # Reset internal data structures
   reset
+
+  if {$userConfigFilename != {}} {
+    # Read the user config file
+    puts " -I- reading user config file [file normalize $userConfigFilename]"
+    source $userConfigFilename
+  } else {
+    # Set the default config requirements
+    config
+  }
 
   set startTime [clock seconds]
   set output [list]
@@ -216,7 +267,7 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
     ##
     ########################################################################################
 
-    if {1} {
+    if {1 && [llength [array names requirements utilization.*]]} {
       set stepStartTime [clock seconds]
       # Get report
       set report [report_utilization -quiet -return_string]
@@ -422,7 +473,7 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
     ##
     ########################################################################################
 
-    if {1} {
+    if {1 && [llength [array names requirements utilization.*]]} {
       set stepStartTime [clock seconds]
       # Get report
       set report [report_control_sets -quiet -return_string]
@@ -441,7 +492,7 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
     ##
     ########################################################################################
 
-    if {1} {
+    if {1 && [llength [array names requirements methodology.*]]} {
       set stepStartTime [clock seconds]
       addMetric {methodology.timing-6}   {TIMING-6}
       addMetric {methodology.timing-7}   {TIMING-7}
@@ -474,14 +525,17 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
     ##
     ########################################################################################
 
-    if {1} {
+    if {1 && ([llength [array names requirements design.cells.maxavgfo*]] == 2)} {
       set stepStartTime [clock seconds]
-      addMetric {design.cells.maxavgfo}   {Average Fanout for modules > 100k cells}
+      # Make the 100K threshold as a parameter
+      set limit $requirements(design.cells.maxavgfo.limit)
+#       addMetric {design.cells.maxavgfo}   "Average Fanout for modules > [expr $requirements(design.cells.maxavgfo.limit) / 1000]k cells"
+      addMetric {design.cells.maxavgfo}   "Average Fanout for modules > [expr $limit / 1000]k cells"
 
       catch {unset data}
       # Key '-' holds the list of average fanout for modules > 100K
       set data(-) [list 0]
-      calculateAvgFanout . 100000
+      calculateAvgFanout . $limit
       set maxfo [lindex [lsort -decreasing -real $data(-)] 0]
 
 #       set cells [getModules . 0 100000]
@@ -505,11 +559,14 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
     ##
     ########################################################################################
 
-    if {1} {
+    if {1 && ([llength [array names requirements design.nets.nonfdhfn*]] == 2)} {
       set stepStartTime [clock seconds]
-      addMetric {design.nets.nonfdhfn}   {Non-FD high fanout nets > 10k loads}
+      # Make the 10K threshold as a parameter
+      set limit $requirements(design.nets.nonfdhfn.limit)
+#       addMetric {design.nets.nonfdhfn}   "Non-FD high fanout nets > [expr $requirements(design.nets.nonfdhfn.limit) / 1000]k loads"
+      addMetric {design.nets.nonfdhfn}   "Non-FD high fanout nets > [expr $limit / 1000]k loads"
 
-      set nets [get_nets -quiet -hierarchical -top_net_of_hierarchical_group -filter {(FLAT_PIN_COUNT >= 10000) && (TYPE == SIGNAL)}]
+      set nets [get_nets -quiet -hierarchical -top_net_of_hierarchical_group -filter "(FLAT_PIN_COUNT >= $limit) && (TYPE == SIGNAL)"]
       set drivers [get_pins -quiet -of $nets -filter {IS_LEAF && (REF_NAME !~ FD*) && (DIRECTION == OUT)}]
       setMetric {design.nets.nonfdhfn}  [llength $drivers]
       set stepStopTime [clock seconds]
@@ -522,7 +579,7 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
     ##
     ########################################################################################
 
-    if {1} {
+    if {1 && ([llength [array names requirements design.device.maxlvls*]] == 2)} {
       set stepStartTime [clock seconds]
 
       # Timing budget per LUT: 300ps (UltraScale Plus / Speedgrade -2)
@@ -593,6 +650,11 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
         }
       }
 
+      # Override the LUT budgeting if provided as part as the configuration
+      if {$requirements(design.device.maxlvls.lutbudget) != {}} {
+        set timBudgetPerLUT $requirements(design.device.maxlvls.lutbudget)
+      }
+
       addMetric {design.device.maxlvls}   "Number of paths above max LUT budgeting (${timBudgetPerLUT}ns)"
 
       set spaths [get_timing_paths -quiet -setup -sort_by group -nworst 1 -max 20 -slack_less_than 2.0]
@@ -639,6 +701,8 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
       setMetric {design.device.maxlvls}  $num
       set stepStopTime [clock seconds]
       puts " -I- max level metrics completed in [expr $stepStopTime - $stepStartTime] seconds"
+    } else {
+      set timBudgetPerLUT {}
     }
 
     ########################################################################################
@@ -695,28 +759,38 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
   set tbl [::Table::Create "Design Summary\n[get_property -quiet NAME [current_design]]\n[get_property -quiet PART [current_design]]"]
   $tbl indent 1
   $tbl header [list {Criteria} {Requirement} {Actual} {Status}]
-  $tbl addrow [generateRow {utilization.clb.lut.pct}    {<=70%}   {LUT}]
-  $tbl addrow [generateRow {utilization.clb.ff.pct}     {<=50%}   {FD}]
-  $tbl addrow [generateRow {utilization.clb.lutmem.pct} {<=25%}   {LUTRAM+SRL}]
-  $tbl addrow [generateRow {utilization.clb.carry8.pct} {<=25%}   {CARRY8}]
-  $tbl addrow [generateRow {utilization.clb.f7mux.pct}  {<=15%}   {MUXF7}]
-  $tbl addrow [generateRow {utilization.clb.f8mux.pct}  {<=7%}    {MUXF8}]
-  $tbl addrow [generateRow {design.cells.hlutnm.pct}    {<=20%}   {HLUTNM}]
-  $tbl addrow [generateRow {utilization.dsp.pct}        {<=80%}   {DSP48}]
-  $tbl addrow [generateRow {utilization.ram.tile.pct}   {<=80%}   {RAMB36/FIFO36}]
-  $tbl addrow [generateRow {utilization.bigblocks.pct}  {<=140%}  {DSP48+RAMB38}]
-  $tbl addrow [generateRow {utilization.clk.all}        {<=24}    {BUFGCE* + BUFGCTRL}]
-  $tbl addrow [generateRow {utilization.ctrlsets.uniq}  {<=10000} {Control Sets}]
-  $tbl addrow [generateRow {design.cells.maxavgfo}      {<=4}     {Average Fanout for modules > 100k cells}]
-  $tbl addrow [generateRow {design.nets.nonfdhfn}       {=0}      {Non-FD high fanout nets > 10k loads}]
-  $tbl separator
-  $tbl addrow [generateRow {methodology.timing-6}  {=0}  {TIMING-6}]
-  $tbl addrow [generateRow {methodology.timing-7}  {=0}  {TIMING-7}]
-  $tbl addrow [generateRow {methodology.timing-8}  {=0}  {TIMING-8}]
-  $tbl addrow [generateRow {methodology.timing-14} {=0}  {TIMING-14}]
-  $tbl addrow [generateRow {methodology.timing-35} {=0}  {TIMING-35}]
-  $tbl separator
-  $tbl addrow [generateRow {design.device.maxlvls} "=0"]
+  generateTableRow tbl {utilization.clb.lut.pct}    {LUT}
+  generateTableRow tbl {utilization.clb.ff.pct}     {FD}
+  generateTableRow tbl {utilization.clb.lutmem.pct} {LUTRAM+SRL}
+  generateTableRow tbl {utilization.clb.carry8.pct} {CARRY8}
+  generateTableRow tbl {utilization.clb.f7mux.pct}  {MUXF7}
+  generateTableRow tbl {utilization.clb.f8mux.pct}  {MUXF8}
+  generateTableRow tbl {design.cells.hlutnm.pct}    {HLUTNM}
+  generateTableRow tbl {utilization.dsp.pct}        {DSP48}
+  generateTableRow tbl {utilization.ram.tile.pct}   {RAMB36/FIFO36}
+  generateTableRow tbl {utilization.bigblocks.pct}  {DSP48+RAMB38}
+  generateTableRow tbl {utilization.clk.all}        {BUFGCE* + BUFGCTRL}
+  generateTableRow tbl {utilization.ctrlsets.uniq}  {Control Sets}
+  if {[llength [array names requirements design.cells.maxavgfo*]] == 2} {
+#     generateTableRow tbl {design.cells.maxavgfo}      {Average Fanout for modules > 100k cells}
+    generateTableRow tbl {design.cells.maxavgfo}      "Average Fanout for modules > [expr $requirements(design.cells.maxavgfo.limit) / 1000]k cells"
+  }
+  if {[llength [array names requirements design.nets.nonfdhfn*]] == 2} {
+#     generateTableRow tbl {design.nets.nonfdhfn}       {Non-FD high fanout nets > 10k loads}
+    generateTableRow tbl {design.nets.nonfdhfn}       "Non-FD high fanout nets > [expr $requirements(design.nets.nonfdhfn.limit) / 1000]k loads"
+  }
+  if {[llength [array names requirements methodology.*]]} {
+    $tbl separator
+    generateTableRow tbl {methodology.timing-6}       {TIMING-6}
+    generateTableRow tbl {methodology.timing-7}       {TIMING-7}
+    generateTableRow tbl {methodology.timing-8}       {TIMING-8}
+    generateTableRow tbl {methodology.timing-14}      {TIMING-14}
+    generateTableRow tbl {methodology.timing-35}      {TIMING-35}
+  }
+  if {[llength [array names requirements design.device.maxlvls*]] == 2} {
+    $tbl separator
+    generateTableRow tbl {design.device.maxlvls}
+  }
 
 #   puts [$tbl print]
 #   set output [concat $output [split [$tbl print] \n] ]
@@ -807,6 +881,58 @@ proc ::tb::utils::report_failfast::report_failfast {args} {
 ## Helper Procs
 ##
 ########################################################################################
+
+# Configuration for various requirement thresholds
+proc ::tb::utils::report_failfast::config {} {
+  variable requirements
+  # Threshold (PASS) for LUT
+  set requirements(utilization.clb.lut.pct)         {<=70%}
+  # Threshold (PASS) for FD
+  set requirements(utilization.clb.ff.pct)          {<=50%}
+  # Threshold (PASS) for LUTRAM+SRL
+  set requirements(utilization.clb.lutmem.pct)      {<=25%}
+  # Threshold (PASS) for CARRY8
+  set requirements(utilization.clb.carry8.pct)      {<=25%}
+  # Threshold (PASS) for MUXF7
+  set requirements(utilization.clb.f7mux.pct)       {<=15%}
+  # Threshold (PASS) for MUXF8
+  set requirements(utilization.clb.f8mux.pct)       {<=7%}
+  # Threshold (PASS) for HLUTNM
+  set requirements(design.cells.hlutnm.pct)         {<=20%}
+  # Threshold (PASS) for DSP48
+  set requirements(utilization.dsp.pct)             {<=80%}
+  # Threshold (PASS) for RAMB36/FIFO36
+  set requirements(utilization.ram.tile.pct)        {<=80%}
+  # Threshold (PASS) for DSP48+RAMB38
+  set requirements(utilization.bigblocks.pct)       {<=140%}
+  # Threshold (PASS) for BUFGCE* + BUFGCTRL
+  set requirements(utilization.clk.all)             {<=24}
+  # Threshold (PASS) for Control Sets
+  set requirements(utilization.ctrlsets.uniq)       {<=10000}
+  # Limit for 'Average Fanout for modules > ...k cells' calculation
+  set requirements(design.cells.maxavgfo.limit)     {100000}
+  # Threshold (PASS) for Average Fanout for modules > 100k cells
+  set requirements(design.cells.maxavgfo)           {<=4}
+  # Limit for 'Non-FD high fanout nets > ...k loads' calculation
+  set requirements(design.nets.nonfdhfn.limit)      {10000}
+  # Threshold (PASS) for Non-FD high fanout nets > 10k loads
+  set requirements(design.nets.nonfdhfn)            {=0}
+  # Threshold (PASS) for TIMING-6
+  set requirements(methodology.timing-6)            {=0}
+  # Threshold (PASS) for TIMING-7
+  set requirements(methodology.timing-7)            {=0}
+  # Threshold (PASS) for TIMING-8
+  set requirements(methodology.timing-8)            {=0}
+  # Threshold (PASS) for TIMING-14
+  set requirements(methodology.timing-14)           {=0}
+  # Threshold (PASS) for TIMING-35
+  set requirements(methodology.timing-35)           {=0}
+  # LUT budgeting. If empty, LUT budgeting is based on FPGA family and speedgrade
+  set requirements(design.device.maxlvls.lutbudget) {}
+  # Threshold (PASS) for LUT budgeting
+  set requirements(design.device.maxlvls)           "=0"
+  return -code ok
+}
 
 proc ::tb::utils::report_failfast::calculateAvgFanout {cell minCellCount} {
   variable data
@@ -942,16 +1068,28 @@ proc ::tb::utils::report_failfast::getModules {level min hmin} {
   return $L
 }
 
-proc ::tb::utils::report_failfast::generateRow {name requirement {description {}}} {
+proc ::tb::utils::report_failfast::generateTableRow {&tbl name {description {}}} {
+  variable requirements
   variable metrics
   variable params
   if {![info exists metrics(${name}:def)]} {
-    puts " -E- metric '$name' does not exist"
-    return {}
+    if {$params(debug)} {
+      puts " -E- metric '$name' does not exist"
+    }
+    return -code ok
   }
+  if {![info exists requirements(${name})]} {
+    if {$params(debug)} {
+      puts " -E- requirement for '$name' does not exist"
+    }
+    return -code ok
+  }
+  upvar 1 ${&tbl} tbl
 #   set status {PASS}
   set status {OK}
   set suffix {}
+  # Get requirement for metric $name
+  set requirement $requirements($name)
   # Is the requirement expressed in %?
   if {[regexp {%$} $requirement]} {
     set suffix {%}
@@ -1011,17 +1149,21 @@ proc ::tb::utils::report_failfast::generateRow {name requirement {description {}
       incr params(failed)
     }
   }
-  return $row
+  # Add row to table
+  $tbl addrow $row
+  return -code ok
 }
 
 proc ::tb::utils::report_failfast::reset { {force 0} } {
   variable metrics
   variable params
+  variable requirements
   if {$params(debug) && !$force} {
     # Do not remove arrays in debug mode
     return -code ok
   }
   catch { unset metrics }
+  catch { unset requirements }
   array set reports [list]
   array set metrics [list]
   return -code ok
@@ -1043,8 +1185,11 @@ proc ::tb::utils::report_failfast::addMetric {name {description {}}} {
 
 proc ::tb::utils::report_failfast::getMetric {name} {
   variable metrics
+  variable params
   if {![info exists metrics(${name}:def)]} {
-    puts " -E- metric '$name' does not exist"
+    if {$params(debug)} {
+      puts " -E- metric '$name' does not exist"
+    }
     return {}
   }
   return $metrics(${name}:val)

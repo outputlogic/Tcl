@@ -18,12 +18,16 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.07.25
+## Version:        2016.11.21
 ## Description:    Compare design summary reports
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.11.21 - Added support for -config_file
+##            - Added support for configurable metrics thresholds for pass/fail
+##              through configuration file
+## 2016.11.07 - Updated ordered metrics for few metrics
 ## 2016.07.25 - Updated ordered metrics for methodology.* metrics
 ## 2016.07.18 - Updated ordered metrics for congestion.estimated.*,
 ##              design.cells.ratiofdlut, vivado.os.description metrics
@@ -40,7 +44,40 @@ exec tclsh "$0" -- ${1+"$@"}
 ## 2016.01.18 - Initial release
 ########################################################################################
 
-# Example of report:
+# Example of configuration file:
+# ------------------------------
+#    # Threshold (PASS) for LUT
+#    set requirements(utilization.clb.lut.pct)         {<=70%}
+#    # Threshold (PASS) for FD
+#    set requirements(utilization.clb.ff.pct)          {<=50%}
+#    # Threshold (PASS) for LUTRAM+SRL
+#    set requirements(utilization.clb.lutmem.pct)      {<=25%}
+#    # Threshold (PASS) for CARRY8
+#    set requirements(utilization.clb.carry8.pct)      {<=25%}
+#    # Threshold (PASS) for MUXF7
+#    set requirements(utilization.clb.f7mux.pct)       {<=15%}
+#    # Threshold (PASS) for MUXF8
+#    set requirements(utilization.clb.f8mux.pct)       {<=7%}
+#    # Threshold (PASS) for HLUTNM
+#    set requirements(design.cells.hlutnm.pct)         {<=20%}
+#    # Threshold (PASS) for DSP48
+#    set requirements(utilization.dsp.pct)             {<=80%}
+#    # Threshold (PASS) for RAMB36/FIFO36
+#    set requirements(utilization.ram.tile.pct)        {<=80%}
+#    # Threshold (PASS) for BUFGCE* + BUFGCTRL
+#    set requirements(utilization.clk.all)             {<=24}
+#    # Threshold (PASS) for Control Sets
+#    set requirements(utilization.ctrlsets.uniq)       {<=10000}
+#    # Threshold (PASS) for TIMING-6
+#    set requirements(methodology.timing-6)            {=0}
+#    # Threshold (PASS) for TIMING-7
+#    set requirements(methodology.timing-7)            {=0}
+#    # Threshold (PASS) for TIMING-8
+#    set requirements(methodology.timing-8)            {=0}
+#    # Threshold (PASS) for TIMING-14
+#    set requirements(methodology.timing-14)           {=0}
+#    # Threshold (PASS) for TIMING-35
+#    set requirements(methodology.timing-35)           {=0}
 
 namespace eval ::tb {
 #   namespace export -force compare_design_summary
@@ -52,14 +89,16 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::compare_design_summary {
   namespace export -force compare_design_summary
-  variable version {2016.07.25}
+  variable version {2016.11.21}
   variable params
   variable output {}
   variable reports
   variable metrics
+  variable requirements
   array set params [list format {table} verbose 0 debug 0]
   array set reports [list]
   array set metrics [list]
+  catch {unset requirements}
 }
 
 proc ::tb::utils::compare_design_summary::lshift {inputlist} {
@@ -72,6 +111,7 @@ proc ::tb::utils::compare_design_summary::lshift {inputlist} {
 proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
   variable reports
   variable metrics
+  variable requirements
   variable params
   variable output
   catch {unset metrics}
@@ -87,6 +127,7 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
   set returnstring 0
   set format {default}
   set refColumn 0
+  set userConfigFilename {}
   set returnstring 0
   set standalone 0
   set error 0
@@ -129,6 +170,10 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
       {^-re(f(e(r(e(n(ce?)?)?)?)?)?)?$} {
         set refColumn [lshift args]
       }
+      {^-co(n(f(i(g(_(f(i(le?)?)?)?)?)?)?)?)?$} {
+        set userConfigFilename [lshift args]
+        set format {status}
+      }
       {^-ap(p(e(nd?)?)?)?$} {
         set filemode {a}
       }
@@ -168,7 +213,7 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
   }
 
   if {$help} {
-    puts [format {
+    set help [format {
   Usage: compare_design_summary
               [<pattern>][-input <filename>][-input <pattern>]
               [-format <default|diff|percent|diffpercent>]
@@ -178,14 +223,15 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
               [-append]
               [-csv]
               [-return_string]
+              [-config_file <filename>]
               [-verbose|-v]
               [-help|-h]
 
   Description: Compare design summary reports
 
     Use -reference to select the reference column. To be used with -format
-    Use -suppress to suppress rows that have identical values accross all
-    summary files
+    Use -suppress to suppress rows that have identical values accross all summary files
+    Use -config_file to specify a configuration file with metrics requirements
 
   Example:
      tb::compare_design_summary *_sum.csv
@@ -193,6 +239,13 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
      tb::compare_design_summary -input *.csv -format percent -reference 1 -file compare.csv -csv
 } ]
     # HELP -->
+    if {$standalone} {
+      regsub -all {tb::} $help {} help
+      regsub -all {\{} $help {'} help
+      regsub -all {\}} $help {'} help
+    }
+    puts $help
+
     return -code ok
   }
 
@@ -201,7 +254,8 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
     incr error
   }
 
-  if {[lsearch [list default diff percent diffpercent] $format] == -1} {
+  if {[lsearch [list default diff percent diffpercent status] $format] == -1} {
+    # Do not include 'status' in the message below as it is stealth and set by -config_file
     puts " -E- invalid format '$format'. Expected values: default diff percent diffpercent"
     incr error
   }
@@ -216,8 +270,20 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
     incr error
   }
 
+  if {($userConfigFilename != {}) && ![file exists $userConfigFilename]} {
+    puts " -E- config file '$userConfigFilename' does not exist"
+    incr error
+  }
+
   if {$error} {
     error " -E- some error(s) happened. Cannot continue"
+  }
+
+  catch { unset requirements}
+  if {$userConfigFilename != {}} {
+    # Read the user config file
+    puts " -I- reading user config file [file normalize $userConfigFilename]"
+    source $userConfigFilename
   }
 
   set startTime [clock seconds]
@@ -282,6 +348,10 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
     $tbl indent 1
 #     $tbl configure -indent 2
     set header [list {Id} {Description}]
+    if {$format == {status}} {
+      # If -config_file is specified, then add the requirement column
+      lappend header {Requirement}
+    }
     set index -1
     foreach file $ifilenames {
       incr index
@@ -322,7 +392,12 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
         switch -regexp -- $id {
           ^tag\. {
             # Ids vivado.* and tag.* don't need to be reformated
-            $tbl addrow [concat [list $id $descriptions($id)] $row]
+            if {$format != {status}} {
+              $tbl addrow [concat [list $id $descriptions($id)] $row]
+            } else {
+              # If -config_file, then add the requirement column
+              $tbl addrow [concat [list $id $descriptions($id) {-}] $row]
+            }
           }
           ^vivado\. {
             if {$suppress} {
@@ -332,7 +407,12 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
               if {([llength $ifilenames] >= 2) && ([llength [lsort -unique $row]] == 1)} { continue }
             }
             # Ids vivado.* and tag.* don't need to be reformated
-            $tbl addrow [concat [list $id $descriptions($id)] $row]
+            if {$format != {status}} {
+              $tbl addrow [concat [list $id $descriptions($id)] $row]
+            } else {
+              # If -config_file, then add the requirement column
+              $tbl addrow [concat [list $id $descriptions($id) {-}] $row]
+            }
           }
           default {
             if {$suppress} {
@@ -341,7 +421,21 @@ proc ::tb::utils::compare_design_summary::compare_design_summary {args} {
               #   2- all the metric values are the same from all the files
               if {([llength $ifilenames] >= 2) && ([llength [lsort -unique $row]] == 1)} { continue }
             }
-            $tbl addrow [concat [list $id $descriptions($id)] [format_list $row $format $refColumn]]
+            if {$format != {status}} {
+              $tbl addrow [concat [list $id $descriptions($id)] [format_list $row $format $refColumn]]
+            } else {
+              # -config_file has been specified
+              if {![info exists requirements($id)]} {
+                # If the metric $id has no requirement (from config file), then skip it
+                continue
+              }
+              set L [list]
+              foreach el $row {
+                lappend L [get_status $requirements($id) $el]
+              }
+              set row $L
+              $tbl addrow [concat [list $id $descriptions($id) $requirements($id)] $row]
+            }
           }
         }
       }
@@ -596,6 +690,64 @@ proc ::tb::utils::compare_design_summary::format_list { list { format default } 
     }
   }
   return $l
+}
+
+proc ::tb::utils::compare_design_summary::get_status { requirement value } {
+  set status {OK}
+  set suffix {}
+  # Is the requirement expressed in %?
+  if {[regexp {%$} $requirement]} {
+    set suffix {%}
+    regsub {%$} $requirement {} requirement
+  }
+  if {[regexp {^([^0-9]+)([0-9].*)$} $requirement - mode m]} {
+    set requirement $m
+  } else {
+    set mode {<=}
+  }
+  switch $mode {
+    "<=" {
+      if {$value > $requirement} {
+        set status {FAIL}
+      }
+    }
+    "<" {
+      if {$value >= $requirement} {
+        set status {FAIL}
+      }
+    }
+    ">=" {
+      if {$value < $requirement} {
+        set status {FAIL}
+      }
+    }
+    ">" {
+      if {$value <= $requirement} {
+        set status {FAIL}
+      }
+    }
+    "=" -
+    "==" {
+      if {$value != $requirement} {
+        set status {FAIL}
+      }
+    }
+    "!=" {
+      if {$value == $requirement} {
+        set status {FAIL}
+      }
+    }
+  }
+  if {$value == {n/a}} { set status {ERROR} }
+#   return [format {%s %s %s} ${requirement}${suffix} ${value}${suffix} $status]
+  # E.g:
+  #   FAIL (65.02%)
+  #   OK (54.06%)
+  return [format {%s (%s)} $status ${value}${suffix}]
+  # E.g:
+  #   FAIL
+  #   OK
+#   return [format {%s} $status]
 }
 
 namespace eval ::tb::utils {
@@ -909,6 +1061,8 @@ proc ::tb::utils::compare_design_summary::orderedMetrics {} {
           design.cells.blackbox \
           design.cells.hier \
           design.cells.primitive \
+          design.cells.hlutnm \
+          design.cells.hlutnm.pct \
           design.cells.ratiofdlut \
           design.clocks \
           design.clocks.primary \
@@ -927,8 +1081,28 @@ proc ::tb::utils::compare_design_summary::orderedMetrics {} {
           utilization.clb.ff.pct \
           utilization.clb.lut \
           utilization.clb.lut.pct \
+          utilization.clb.lutmem \
+          utilization.clb.lutmem.pct \
+          utilization.clb.carry8 \
+          utilization.clb.carry8.pct \
+          utilization.clb.f7mux \
+          utilization.clb.f7mux.pct \
+          utilization.clb.f8mux \
+          utilization.clb.f8mux.pct \
+          utilization.clb.f9mux \
+          utilization.clb.f9mux.pct \
           utilization.ctrlsets.lost \
           utilization.ctrlsets.uniq \
+          utilization.clk.bufgce \
+          utilization.clk.bufgce.pct \
+          utilization.clk.bufgcediv \
+          utilization.clk.bufgcediv.pct \
+          utilization.clk.bufggt \
+          utilization.clk.bufggt.pct \
+          utilization.clk.bufgps \
+          utilization.clk.bufgps.pct \
+          utilization.clk.bufgctrl \
+          utilization.clk.bufgctrl.pct \
           utilization.dsp \
           utilization.dsp.pct \
           utilization.io \
@@ -944,12 +1118,14 @@ proc ::tb::utils::compare_design_summary::orderedMetrics {} {
           timing.tnsTotalEp \
           timing.wns.spclock \
           timing.wns.epclock \
+          timing.wns.path \
           timing.whs \
           timing.ths \
           timing.thsFallingEp \
           timing.thsTotalEp \
           timing.whs.spclock \
           timing.whs.epclock \
+          timing.whs.path \
           timing.wpws \
           timing.tpws \
           timing.tpwsFailingEp \
@@ -1023,10 +1199,10 @@ proc ::tb::utils::compare_design_summary::orderedMetrics {} {
     lappend L [format {cdc.cdc-%s} $idx]
   }
 
-  # Trick to order DRC metrics (drc.*)
+  # Trick to order methodology check metrics (drc.*)
   foreach name [list ckld clkc pdrc synth timing xdcb xdcc xdch xdcv] {
     foreach idx [iota 0 500] {
-      lappend L [format {drc.%s-%s} $name $idx]
+      lappend L [format {methodology.%s-%s} $name $idx]
     }
   }
 

@@ -18,12 +18,13 @@ exec tclsh "$0" -- ${1+"$@"}
 ## Company:        Xilinx, Inc.
 ## Created by:     David Pefourque
 ##
-## Version:        2016.07.25
+## Version:        2016.11.07
 ## Description:    Report the design summary metrics organized by project/experiment
 ##
 ########################################################################################
 
 ########################################################################################
+## 2016.11.07 - Added 'WNS Path' column to post-route metrics
 ## 2016.07.25 - Fixed issue with -hide_empty
 ## 2016.07.18 - Added support for congestion.estimated.* metrics
 ##            - Added support for -hide_empty
@@ -50,7 +51,7 @@ namespace eval ::tb::utils {
 
 namespace eval ::tb::utils::report_summary {
   namespace export -force report_summary
-  variable version {2016.07.25}
+  variable version {2016.11.07}
   variable params
   variable metrics
   variable output {}
@@ -62,7 +63,7 @@ namespace eval ::tb::utils::report_summary {
   set metrics(place)            [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {{N-S-E-W} congestion.placer} {Runtime tag.runtime} ]
   set metrics(physopt)          [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {{N-S-E-W} congestion.placer} {Runtime tag.runtime} ]
 #   set metrics(route)            [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {Overlaps route.errors} {{N-S-E-W} congestion.router} {SLLs design.slls} {Runtime tag.runtime} ]
-  set metrics(route)            [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {Overlaps route.errors} {{Router (N-S-E-W)} congestion.router} {{Global (N-S-E-W)} congestion.estimated.global} {{Long (N-S-E-W)} congestion.estimated.long} {{Short (N-S-E-W)} congestion.estimated.short} {SLLs design.slls} {Runtime tag.runtime} ]
+  set metrics(route)            [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {Overlaps route.errors} {{Router (N-S-E-W)} congestion.router} {{Global (N-S-E-W)} congestion.estimated.global} {{Long (N-S-E-W)} congestion.estimated.long} {{Short (N-S-E-W)} congestion.estimated.short} {{WNS Path} timing.wns.path} {SLLs design.slls} {Runtime tag.runtime} ]
   set metrics(postroutephysopt) [list {WNS timing.wns} {TNS timing.tns} {# timing.tnsFallingEp} {WHS timing.whs} {THS timing.ths} {# timing.thsFallingEp} {Overlaps route.errors} {{N-S-E-W} congestion.router} {SLLs design.slls} {Runtime tag.runtime} ]
 }
 
